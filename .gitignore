@@ -1,0 +1,15 @@
+# Data
+data/
+*.csv
+*.parquet
+*.zip
+
+# Secrets
+.env
+*.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
