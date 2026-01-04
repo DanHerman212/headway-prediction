@@ -4,3 +4,7 @@ pandas
 db-dtypes
 pyarrow
 python-dotenv
+tensorflow
+matplotlib
+seaborn
+numpy
