@@ -7,12 +7,24 @@ To implement a production-grade streaming pipeline that transforms raw GTFS-Real
 
 ```mermaid
 graph LR
+    %% 1. Define your styles (Classes)
+    %% "compute" = Blue fill, solid blue border
+    classDef compute fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000;
+    
+    %% "queue" = Orange fill, dashed orange border (visual cue for data buffers)
+    classDef queue fill:#fff3e0,stroke:#ef6c00,stroke-width:2px,stroke-dasharray: 5 5,color:#000;
+
+    %% 2. Define the Graph
     A["GTFS Poller VM"] -->|Protobuf| B["Pub/Sub: raw-arrivals"]
-    C["Cloud Scheduler"] -->|"1-min Tick"| D["Pub/Sub: clock-ticks"]
+    C["Cloud Scheduler"] -->|1-min Tick| D["Pub/Sub: clock-ticks"]
     B --> E["Dataflow / Apache Beam"]
     D --> E
-    E -->|"Tensor 1x30x156x2"| F["Vertex AI Endpoint"]
+    E -->|"Tensor (1, 30, 156, 2)"| F["Vertex AI Endpoint"]
     F -->|Prediction| G["Pub/Sub: predictions"]
+
+    %% 3. Apply styles to specific nodes
+    class A,C,E,F compute;
+    class B,D,G queue;
 ```
 
 ## 3. Core Challenges & Solutions
