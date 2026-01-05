@@ -25,7 +25,7 @@ class HeadwayConvLSTM:
         # we use None for stations to allow flexiblity (156 stations)
         # shape: (Time, Stations, Directions, Channels)
         input_headway = layers.Input(
-            shape=(self.config.LOOKBACK_MINS, None, 2, 1),
+            shape=(self.config.LOOKBACK_MINS, self.config.NUM_STATIONS, 2, 1),
             name="headway_input"
         )
 
@@ -70,11 +70,18 @@ class HeadwayConvLSTM:
             # tile: (Batch, Steps, Stations, Dirs, Filters)
             return tf.tile(expanded, [1, steps, 1, 1, 1])
         
+        # Explicitly define output shape for Keras 3 compatibility
+        def repeat_output_shape(input_shape):
+            # input_shape: (Batch, Stations, Dirs, Filters)
+            # output_shape: (Batch, Steps, Stations, Dirs, Filters)
+            return (input_shape[0], forecast_steps, input_shape[1], input_shape[2], input_shape[3])
+
         x_repeated = layers.Lambda(
             repeat_spatial_state, 
+            output_shape=repeat_output_shape,
             arguments={'steps': forecast_steps},
             name="repeat_state"
-        )([state])
+        )(state)
 
         # fusion (add schedule)
         # we need to broadcast the (batch 15, 2, 1) schedule to match (Batch, 15, 2, 1)
@@ -90,8 +97,17 @@ class HeadwayConvLSTM:
             # tile along station dim
             return tf.tile(sched_exp, [1, 1, stations, 1, 1])
         
+        # Explicitly define output shape for Keras 3 compatibility
+        def broadcast_output_shape(input_shapes):
+            # input_shapes[0]: schedule (Batch, Time, Dirs, 1)
+            # input_shapes[1]: ref_tensor (Batch, Time, Stations, Dirs, Filters)
+            # output: (Batch, Time, Stations, Dirs, 1)
+            sched_shape, ref_shape = input_shapes
+            return (sched_shape[0], sched_shape[1], ref_shape[2], sched_shape[2], sched_shape[3])
+
         schedule_broadcasted = layers.Lambda(
             broadcast_schedule,
+            output_shape=broadcast_output_shape,
             name="broadcast_schedule"
         )([input_schedule, x_repeated])
 

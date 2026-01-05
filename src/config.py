@@ -16,6 +16,7 @@ class Config:
    # architecture
    FILTERS: int = 64
    KERNEL_SIZE: tuple = (3, 3)
+   NUM_STATIONS: int = 66
 
    # data paths
    # default to local 'data/' folder but allow overide via .env
