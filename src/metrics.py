@@ -1,0 +1,29 @@
+import tensorflow as tf
+
+def rmse_seconds(y_true, y_pred):
+    """
+    Computes Root Mean Squared Error (RMSE) converted to seconds.
+    Assumes data is normalized such that 1.0 = 30 minutes.
+    """
+    # Ensure float32 for stability, especially if mixed_precision is on
+    y_true = tf.cast(y_true, tf.float32)
+    y_pred = tf.cast(y_pred, tf.float32)
+    
+    mse = tf.reduce_mean(tf.square(y_true - y_pred))
+    rmse = tf.sqrt(mse)
+    
+    # Conversion: 1.0 (norm) = 30 mins = 1800 seconds
+    return rmse * 1800.0
+
+def mae_seconds(y_true, y_pred):
+    """
+    Computes Mean Absolute Error (MAE) converted to seconds.
+    Assumes data is normalized such that 1.0 = 30 minutes.
+    """
+    y_true = tf.cast(y_true, tf.float32)
+    y_pred = tf.cast(y_pred, tf.float32)
+    
+    mae = tf.reduce_mean(tf.abs(y_true - y_pred))
+    
+    # Conversion: 1.0 (norm) = 30 mins = 1800 seconds
+    return mae * 1800.0
