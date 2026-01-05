@@ -27,51 +27,45 @@ class Evaluator:
 
     def plot_spatiotemporal_prediction(self, model, dataset, sample_idx=0, direction=0):
         """
-        generates side by side comparison of ground truth vs predictions
-
-        args:
-            model: trained keras model
-            dataset: tf.data.Dataset to draw a batch from
-            sample_idx: which sample in the batch to vizualize
-            direction: 0 for northbound, 1 for southbound
+        Generates side-by-side comparison of ground truth vs predictions in 'Micrograph' style.
+        (a) Actual, (b) Predicted.
         """
-
-        # 1. fetch a single batch
-        # we use .take(1) to get just one batch of data
+        # 1. Fetch a single batch
         for inputs, targets in dataset.take(1):
-            # inputs: ((headway, schedule), terminal target headway)
-            # targets (batch, 15, stations, 2, 1)
-
-            # 2 generate prediction
             preds = model.predict(inputs, verbose=0)
 
-            # 3 extract the specific sample and direction
-            # shape (15, stations) -> transpose to (Stations, 15) for plotting
-            # we multiply by 230 to convert back to minutes (denormalize)
+            # Extract sample and convert to minutes (denormalize)
+            # targets shape: (batch, time, stations, directions, channels)
             y_true = targets[sample_idx, :, :, direction, 0].numpy().T * 30
             y_pred = preds[sample_idx, :, :, direction, 0].T * 30
 
-            # 4 plot
-            fig, axes = plt.subplots(1, 2, figsize=(18, 8))
+            # 2. Setup Plot
+            fig, axes = plt.subplots(1, 2, figsize=(12, 5), dpi=150)
+            
+            # Common settings
+            cmap = 'RdYlGn_r'  # Red-Yellow-Green reversed
+            vmin, vmax = 0, 30
+            
+            # Plot A: Actual
+            im1 = axes[0].imshow(y_true, aspect='auto', cmap=cmap, origin='lower', 
+                               vmin=vmin, vmax=vmax, interpolation='nearest')
+            axes[0].set_title("(a) Actual", fontsize=12, pad=10)
+            axes[0].set_xlabel("Time (Future Steps)", fontsize=10)
+            axes[0].set_ylabel("Station Index", fontsize=10)
+            axes[0].grid(False)
+            
+            # Plot B: Predicted
+            im2 = axes[1].imshow(y_pred, aspect='auto', cmap=cmap, origin='lower', 
+                               vmin=vmin, vmax=vmax, interpolation='nearest')
+            axes[1].set_title("(b) Predicted", fontsize=12, pad=10)
+            axes[1].set_xlabel("Time (Future Steps)", fontsize=10)
+            axes[1].set_yticks([])  # Hide Y axis for second plot
+            axes[1].grid(False)
 
-            # plot ground truth
-            # vmin/vmax ensures the color scale is consistent (0 to 30 mins)
-            im1 = axes[0].imshow(y_true, aspect='auto', cmap='RdYlGn_r', origin='lower', vmin=0, vmax=30)
-            axes[0].set_title(f"Ground Truth (Next {self.config.FORECAST_MINS} min)")
-            axes[0].set_xlabel("Time Steps (Future)")
-            axes[0].set_ylabel("Station Index")
-            plt.colorbar(im1, ax=axes[0], label='Headway (min)')
-
-            # Plot Prediction
-            im2 = axes[1].imshow(y_pred, aspect='auto', cmap='RdYlGn_r', origin='lower', vmin=0, vmax=30)
-            axes[1].set_title(f"Model Prediction (Next {self.config.FORECAST_MINS} min)")
-            axes[1].set_xlabel("Time Steps (Future)")
-            axes[1].set_ylabel("Station Index")
-            plt.colorbar(im2, ax=axes[1], label='Headway (min)')
-
-            plt.suptitle(f"Spatiotemporal Forecast (Direction {direction})")
+            # Add single colorbar
+            cbar = fig.colorbar(im2, ax=axes.ravel().tolist(), pad=0.02, aspect=30)
+            cbar.set_label('Headway (min)', rotation=270, labelpad=15)
+            
             plt.tight_layout()
             plt.show()
-
-            # stop after 1 batch
             break
