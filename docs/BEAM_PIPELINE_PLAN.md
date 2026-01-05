@@ -8,10 +8,10 @@ To implement a production-grade streaming pipeline that transforms raw GTFS-Real
 ```mermaid
 graph LR
     A["GTFS Poller VM"] -->|Protobuf| B["Pub/Sub: raw-arrivals"]
-    C["Cloud Scheduler"] -->|1-min Tick| D["Pub/Sub: clock-ticks"]
+    C["Cloud Scheduler"] -->|"1-min Tick"| D["Pub/Sub: clock-ticks"]
     B --> E["Dataflow / Apache Beam"]
     D --> E
-    E -->|"Tensor (1, 30, 156, 2)"| F["Vertex AI Endpoint"]
+    E -->|"Tensor 1x30x156x2"| F["Vertex AI Endpoint"]
     F -->|Prediction| G["Pub/Sub: predictions"]
 ```
 
