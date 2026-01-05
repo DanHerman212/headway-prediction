@@ -2,6 +2,44 @@
 
 This document outlines the step-by-step plan to implement the Spatio-Temporal Convolutional Network (ST-ConvNet) baseline for subway headway prediction.
 
+## ML Workflow Overview
+
+```mermaid
+graph TD
+    subgraph Data["Data Ingestion"]
+        H["Headway Matrix .npy"]
+        S["Schedule Matrix .npy"]
+    end
+
+    subgraph Pipeline["Data Pipeline"]
+        Gen["SubwayDataGenerator"]
+        H --> Gen
+        S --> Gen
+        Gen -->|"Sliding Window"| X1["X1: Past Headway (30m)"]
+        Gen -->|"Sliding Window"| X2["X2: Future Schedule (15m)"]
+        Gen -->|"Target"| Y["Y: Future Headway (15m)"]
+    end
+
+    subgraph Model["ST-ConvNet Model"]
+        X1 --> Enc["Encoder: ConvLSTM2D"]
+        X2 --> Fusion["Fusion Layer"]
+        Enc --> Fusion
+        Fusion --> Dec["Decoder: Conv2D"]
+        Dec --> Pred["Prediction (15m)"]
+    end
+
+    subgraph Training["Training Loop"]
+        Pred --> Loss{"Calculate Loss"}
+        Y --> Loss
+        Loss --> Opt["Optimizer Update"]
+    end
+
+    subgraph Deploy["Deployment"]
+        Code["Source Code"] --> Docker["Docker Image"]
+        Docker --> Vertex["Vertex AI Training Job"]
+    end
+```
+
 ## Phase 1: Project Scaffolding & Configuration
 
 **Goal:** Structure the code into a modular `src/` package to ensure it is clean, reusable, and container-ready.
