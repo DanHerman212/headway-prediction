@@ -22,7 +22,7 @@ class HeadwayConvLSTM:
         self.lookback = lookback
         self.forecast = forecast
 
-    def built_model(self):
+    def build_model(self):
         """
         Builds the optimized spatio-temporal convulational lstm model (V2).
 
