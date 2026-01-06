@@ -1,9 +1,11 @@
-# v2 architecture updates
-# 1 encoder - sequential convlstm structure
-# 2 batch norm - correctly placed between convolution and activation
-# 3 schedule processing - assymetric conv3d kernels, spatial (1, 3, 3) the temporal (3, 1, 1)
-# 4 skip connections - schedule features inject at fusion and output
-# 5 output linear activation avoid saturation
+# v2 architecture updates (FIXED VERSION)
+# Key fixes from original broken V2:
+# 1. Use return_sequences=False in encoder to create bottleneck (like V1)
+# 2. Repeat state instead of slicing (proper seq2seq pattern)
+# 3. Single decoder ConvLSTM (reduce depth, improve gradient flow)
+# 4. Sigmoid output for [0,1] normalized data
+# 5. Removed redundant skip connection
+
 import tensorflow as tf
 from tensorflow.keras import layers, models, Input, backend as K
 from tensorflow.keras.layers import(
@@ -11,119 +13,145 @@ from tensorflow.keras.layers import(
     BatchNormalization,
     Conv3D,
     Concatenate,
-    TimeDistributed,
-    Activation,
     Lambda
 )
 
 class HeadwayConvLSTM:
-    def __init__(self, n_stations, lookback=30, forecast=15):
+    def __init__(self, n_stations, lookback=30, forecast=15, output_activation='linear'):
+        """
+        Args:
+            n_stations: Number of stations in the network
+            lookback: Historical timesteps (default 30)
+            forecast: Future timesteps to predict (default 15)
+            output_activation: 'sigmoid' for [0,1] normalized data, 'linear' for RobustScaler
+        """
         self.n_stations = n_stations
         self.lookback = lookback
         self.forecast = forecast
+        self.output_activation = output_activation
 
     def build_model(self):
         """
-        Builds the optimized spatio-temporal convulational lstm model (V2).
+        Builds the optimized spatio-temporal convolutional LSTM model (V2 - Fixed).
 
-        Key improvements:
-        - Asymmetric kernels for scheudle processing (spearating space/time)
-        - BatchNormalization applied before activation
-        - Skip connections for residual learning
-        - Linear output activation
+        Architecture: Encoder-Bottleneck-Decoder with schedule fusion
+        - Encoder: 2 ConvLSTM layers, second compresses to single state
+        - Bridge: Repeat state for forecast steps (NOT temporal slicing)
+        - Schedule: Asymmetric Conv3D kernels for space/time processing
+        - Decoder: Single ConvLSTM layer (prevents over-depth)
+        - Output: Sigmoid activation for [0,1] normalized headways
         """
-        # inputs
-        # shape (batch, lookback, stations, direcctions, 1)
+        # === INPUTS ===
+        # Headway history: (batch, lookback, stations, directions, 1)
         input_headway = Input(shape=(self.lookback, self.n_stations, 2, 1), name="headway_input")
-
-        # shape: (batch, forecasts, distrctions, 1) -> will be broadcasted
+        
+        # Future schedule: (batch, forecast, directions, 1)
         input_schedule = Input(shape=(self.forecast, 2, 1), name="schedule_input")
 
-        # encoder (CuDNN Accelerated)
-        # layer 1: low level features
-        # note: activation=None allows us to place BN before the activation fucntion
-        x = ConvLSTM2D(filters=32, kernel_size=(3, 3), padding="same",
-                       return_sequences=True, 
-                       activation='tanh',                # mandatory for cudnn
-                       recurrent_activation='sigmoid',  # mandatory for cudnn
-                       recurrent_dropout=0              # mandatory for cudnn
-                       )(input_headway)
+        # === ENCODER (CuDNN Accelerated) ===
+        # Layer 1: Extract low-level spatiotemporal features
+        x = ConvLSTM2D(
+            filters=32, 
+            kernel_size=(3, 3), 
+            padding="same",
+            return_sequences=True,  # Keep sequence for layer 2
+            activation='tanh',
+            recurrent_activation='sigmoid',
+            recurrent_dropout=0
+        )(input_headway)
         x = BatchNormalization()(x)
 
-        # layer 2: high level features and time compression
-        # return_sequences=True to preserve temporal dynamics across all 30 steps
-        x = ConvLSTM2D(filters=64, kernel_size=(3, 3), padding="same",
-                       return_sequences=True, 
-                       activation='tanh',                # mandatory for cudnn
-                       recurrent_activation='sigmoid',  # mandatory for cudnn
-                       recurrent_dropout=0              # mandatory for cudnn
-                       )(x)
-        encoded_sequence = BatchNormalization()(x)
-        
+        # Layer 2: Compress to single context state (CRITICAL FIX)
+        # return_sequences=False creates the bottleneck that enables learning
+        state = ConvLSTM2D(
+            filters=64, 
+            kernel_size=(3, 3), 
+            padding="same",
+            return_sequences=False,  # ← KEY: Compress 30 steps to 1 state
+            activation='tanh',
+            recurrent_activation='sigmoid',
+            recurrent_dropout=0
+        )(x)
+        state = BatchNormalization()(state)
+        # state shape: (batch, stations, 2, 64)
 
-        # bridge (Temporal Slicing)
-        # instead of repeating a static state, we slice the last 'forecast' steps
-        # this feeds the decoder the actual motion/trends of the most recent 15 minutes
-        def slice_last_steps(x):
-            # calculate start index explicitly (30 - 15 = 15)
-            start_index = self.lookback - self.forecast
-            return x[:, start_index:self.lookback, :, :, :]
+        # === BRIDGE (Repeat State) ===
+        # Expand context state into forecast timesteps
+        def repeat_state(tensor):
+            # tensor: (batch, stations, dirs, filters)
+            expanded = tf.expand_dims(tensor, axis=1)  # (batch, 1, stations, dirs, filters)
+            return tf.tile(expanded, [1, self.forecast, 1, 1, 1])  # (batch, forecast, ...)
         
-        # output shape: (batch, 15, stations, 2 64)
-        bridge_output = Lambda(slice_last_steps,
-                               output_shape=(self.forecast, self.n_stations, 2, 64),
-                               name="slice_temporal_state")(encoded_sequence)
-        
-        # schedule processing (assymetic kernels)
-        # 1. broadcast scheudle to match spatial dimensions
-        # (batch, Time, 2, 1) -> (Batch, Time Stations, 2, 1)
-        sch_broadcast = Lambda(lambda x: K.tile(K.expand_dims(x, axis=2), [1, 1, self.n_stations, 1, 1]),
-                               output_shape=(self.forecast, self.n_stations, 2, 1),
-                               name="broadcast_schedule")(input_schedule)
-        
-        # 2 factored convolution (the pro experiment)
-        # branch A: spatial correlations (1, 3, 3)
-        # looks at neighboring stations at the same time step
-        sch_spatial = Conv3D(filters=8, kernel_size=(1, 3, 3), padding="same",
-                             activation="relu", name="sched_spatial_conv")(sch_broadcast)
-        
-        # branch B: Temporal dynamics (3, 1, 1) on top of spatial features
-        # looks at history of specific station/direction
-        sch_features = Conv3D(filters=16, kernel_size=(3, 1, 1), padding="same",
-                              activation="relu", name="sched_temporal_conv")(sch_spatial)
-        
-        # fusion
-        # combine the recent historical motion (bridge) with future schedule
-        decoder_input = Concatenate(axis=-1, name="fusion_concat")([bridge_output, sch_features])
+        state_repeated = Lambda(
+            repeat_state,
+            output_shape=(self.forecast, self.n_stations, 2, 64),
+            name="repeat_state"
+        )(state)
+        # state_repeated shape: (batch, 15, stations, 2, 64)
 
-        # decoder cudnn accelerated
-        # layer 1 refine predictions based on combined state
-        d = ConvLSTM2D(filters=64, kernel_size=(3, 3), padding="same",
-                       return_sequences=True,
-                       activation='tanh',
-                       recurrent_activation='sigmoid',
-                       recurrent_dropout=0
-                       )(decoder_input)
-        d = BatchNormalization()(d)
-
-        # layer 2 final feature extraction
-        d = ConvLSTM2D(filters=32, kernel_size=(3, 3), padding="same",
-                       return_sequences=True,
-                       activation='tanh',
-                       recurrent_activation='sigmoid',
-                       recurrent_dropout=0
-                       )(d)
-        decoded = BatchNormalization()(d)
-
-        # skip connection and output
-        # inject scheudle features again so the model directly sees the baseline it should deviate from
-        final_input_stack = Concatenate(axis=-1, name="skip_connection")([decoded, sch_features])
-
-        # final projection to signal (regression)
-        # linear activation allows for unbound values
-        output = Conv3D(filters=1, kernel_size=(1, 1, 1), activation="linear",
-                        padding="same", name="main_output")(final_input_stack)
+        # === SCHEDULE PROCESSING (Asymmetric Kernels) ===
+        # Broadcast schedule to match spatial dimensions
+        # (batch, forecast, 2, 1) → (batch, forecast, stations, 2, 1)
+        sch_broadcast = Lambda(
+            lambda x: K.tile(K.expand_dims(x, axis=2), [1, 1, self.n_stations, 1, 1]),
+            output_shape=(self.forecast, self.n_stations, 2, 1),
+            name="broadcast_schedule"
+        )(input_schedule)
         
-        model = models.Model(inputs=[input_headway, input_schedule], outputs=output, name="HeadwayConvLSTM_V2")
+        # Spatial convolution: learn cross-station patterns
+        sch_spatial = Conv3D(
+            filters=8, 
+            kernel_size=(1, 3, 3),  # No temporal, 3x3 spatial
+            padding="same",
+            activation="relu", 
+            name="sched_spatial_conv"
+        )(sch_broadcast)
+        
+        # Temporal convolution: learn time dynamics
+        sch_features = Conv3D(
+            filters=16, 
+            kernel_size=(3, 1, 1),  # 3 temporal, no spatial
+            padding="same",
+            activation="relu", 
+            name="sched_temporal_conv"
+        )(sch_spatial)
+        # sch_features shape: (batch, 15, stations, 2, 16)
+
+        # === FUSION ===
+        # Combine encoded state with schedule features
+        # (batch, 15, stations, 2, 64) + (batch, 15, stations, 2, 16) → 80 channels
+        decoder_input = Concatenate(axis=-1, name="fusion_concat")([state_repeated, sch_features])
+
+        # === DECODER (Single Layer - Prevents Over-Depth) ===
+        decoded = ConvLSTM2D(
+            filters=32, 
+            kernel_size=(3, 3), 
+            padding="same",
+            return_sequences=True,  # Output all 15 timesteps
+            activation='tanh',
+            recurrent_activation='sigmoid',
+            recurrent_dropout=0
+        )(decoder_input)
+        decoded = BatchNormalization()(decoded)
+        # decoded shape: (batch, 15, stations, 2, 32)
+
+        # === OUTPUT ===
+        # Project to single channel
+        # Use 'sigmoid' for [0,1] MinMax normalized data
+        # Use 'linear' for RobustScaler or StandardScaler (unbounded range)
+        output = Conv3D(
+            filters=1, 
+            kernel_size=(1, 1, 1), 
+            activation=self.output_activation,
+            padding="same", 
+            name="headway_output"
+        )(decoded)
+        # output shape: (batch, 15, stations, 2, 1)
+        
+        model = models.Model(
+            inputs=[input_headway, input_schedule], 
+            outputs=output, 
+            name="HeadwayConvLSTM_V2"
+        )
 
         return model

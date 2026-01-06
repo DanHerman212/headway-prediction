@@ -7,9 +7,17 @@ class SubwayDataGenerator:
         self.config = config
         self.headway_data = None
         self.schedule_data = None
+        self.scaler = None  # Optional: set externally for custom scaling
 
-    def load_data(self):
-        """Loads from disk"""
+    def load_data(self, normalize=False, max_headway=30.0):
+        """
+        Loads data from disk.
+        
+        Args:
+            normalize: If True, applies simple [0,1] normalization (divide by max_headway)
+                      If False, returns raw data (use external scaler like RobustScaler)
+            max_headway: Maximum headway value for normalization (default 30 minutes)
+        """
         print(f"Loading data from {self.config.DATA_DIR}...")
 
         # load raw numpy arrays
@@ -18,6 +26,11 @@ class SubwayDataGenerator:
 
         print(f"Headway Shape: {self.headway_data.shape}")
         print(f"Schedule Shape: {self.schedule_data.shape}")
+        
+        if normalize:
+            print(f"Normalizing data to [0, 1] range (max={max_headway})")
+            self.headway_data = np.clip(self.headway_data / max_headway, 0, 1)
+            self.schedule_data = np.clip(self.schedule_data / max_headway, 0, 1)
 
     def make_dataset(self, start_index=0, end_index=None, shuffle=False):
         """
