@@ -42,8 +42,10 @@ class SubwayDataGenerator:
         print(f"Creating dataset from index {start_index} to {end_index}")
 
         # 1. convert to TF constants (moves to GPU if available)
-        headway_tensor = tf.constant(self.headway_data)
-        schedule_tensor = tf.constant(self.schedule_data)
+        # force data to stay on cpu to prevent "GPU Ping pong"
+        with tf.device('/cpu:0'):
+            headway_tensor = tf.constant(self.headway_data)
+            schedule_tensor = tf.constant(self.schedule_data)
 
         # 2. create index Dataset
         indices_ds = tf.data.Dataset.range(start_index, end_index)
@@ -74,7 +76,7 @@ class SubwayDataGenerator:
 
         # optimization pipeline
         # 1 cache: load mapped data into RAM once (after 1st epoch)
-        ds = ds.cache() 
+        ds = ds.cache("subway_cache_temp") 
 
         # 2 suffle: randomize the cached examples every epoch
         if shuffle:
