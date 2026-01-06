@@ -19,7 +19,7 @@ class SubwayDataGenerator:
         print(f"Headway Shape: {self.headway_data.shape}")
         print(f"Schedule Shape: {self.schedule_data.shape}")
 
-    def make_dataset(self, start_index=0, end_index=None):
+    def make_dataset(self, start_index=0, end_index=None, shuffle=False):
         """
         creates a tf.dataDatset using the Index-Map pattern
         """
@@ -67,6 +67,20 @@ class SubwayDataGenerator:
         
         # 4. map the slice function and batch
         ds = indices_ds.map(split_window, num_parallel_calls=tf.data.AUTOTUNE)
+
+        
+        # Crucial Logic Change:To prevent the "Cache" from locking the Shuffle order (which would give you the exact same batches every epoch), the correct order must be:
+        # Map -> Cache -> Shuffle -> Batch -> Prefetch.
+
+        # optimization pipeline
+        # 1 cache: load mapped data into RAM once (after 1st epoch)
+        ds = ds.cache() 
+
+        # 2 suffle: randomize the cached examples every epoch
+        if shuffle:
+            ds = ds.shuffle(buffer_size=1000)
+        
+        # 3 batch and prefetch
         ds = ds.batch(batch_size, drop_remainder=True)
         ds = ds.prefetch(tf.data.AUTOTUNE)
 
