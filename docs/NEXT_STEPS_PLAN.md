@@ -1,7 +1,112 @@
 # Next Steps: Model Optimization & Experiment Framework
 
 **Date:** January 6, 2026  
-**Status:** Ready for tomorrow's session
+**Status:** Training complete - optimization needed
+
+---
+
+## Training Results Summary
+
+| Metric | Train (Epoch 17) | Val (Best @ Epoch 12) | Target | Gap |
+|--------|-----------------|----------------------|--------|-----|
+| RMSE | 159s | **170s** | ≤90s | 80s short |
+| R² | 0.82 | **0.75** | ≥0.90 | 0.15 short |
+
+### Observations
+1. Validation plateaued at epoch 6-7 (~170s RMSE, 0.74 R²)
+2. Training continues improving → **overfitting**
+3. Train/Val gap grows over time
+4. ReduceLROnPlateau hasn't triggered yet (patience=7)
+
+---
+
+## Priority 1: Model Optimization (Critical)
+
+### Experiment A: Lower Learning Rate
+**Hypothesis:** LR 0.001 is overshooting the optimal minimum
+
+```python
+config.LEARNING_RATE = 0.0003  # or 0.0001
+```
+
+Expected: Slower convergence but better final val_loss
+
+### Experiment B: Smaller Batch Size
+**Hypothesis:** Batch 128 provides noisy gradients, hurting generalization
+
+```python
+config.BATCH_SIZE = 64  # or 32 (paper setting)
+```
+
+Expected: More gradient updates, better generalization, but 2-4x slower
+
+### Experiment C: Add Regularization
+**Hypothesis:** Model overfits due to lack of regularization
+
+```python
+# In st_convnet.py, add dropout after ConvLSTM layers
+from tensorflow.keras.layers import SpatialDropout3D
+
+x = ConvLSTM2D(32, ...)(inputs)
+x = SpatialDropout3D(0.2)(x)  # Add dropout
+x = BatchNormalization()(x)
+```
+
+### Experiment D: Reduce Model Capacity
+**Hypothesis:** 371K params may be too much for this dataset
+
+```python
+# Reduce filters from 32/64/32 to 16/32/16
+encoder_filters = [16, 32]
+decoder_filters = 16
+```
+
+Expected: Fewer params, less overfitting
+
+### Experiment E: Weight Decay (L2 Regularization)
+```python
+optimizer = keras.optimizers.Adam(
+    learning_rate=0.001,
+    weight_decay=1e-4  # Add L2 penalty
+)
+```
+
+---
+
+## Recommended Experiment Order
+
+| Priority | Experiment | Time | Expected Impact |
+|----------|-----------|------|-----------------|
+| 1 | Lower LR (0.0003) | 30 min | Medium |
+| 2 | Add Dropout (0.2) | 30 min | High |
+| 3 | Batch size 64 | 60 min | Medium-High |
+| 4 | Weight decay | 30 min | Medium |
+| 5 | Reduce capacity | 30 min | Medium |
+
+### Quick Test Strategy
+Run each experiment for 30 epochs with patience=10. Compare:
+- Best val_rmse_seconds
+- Best val_r_squared
+- Epoch where best occurs
+
+---
+
+## Understanding the 170s RMSE Floor
+
+The current 170s (~2.8 min) RMSE might be hitting a **noise ceiling**:
+
+1. **Inherent unpredictability:** Subway headways have randomness (passenger delays, door issues, etc.)
+2. **Data resolution:** 1-minute resolution may limit prediction accuracy
+3. **Schedule deviation:** Actual vs scheduled may have unavoidable variance
+
+### Diagnostic: Check Schedule Baseline
+```python
+# What's the RMSE if we just predict scheduled headways?
+schedule_rmse = np.sqrt(np.mean((actual - scheduled)**2)) * 60
+print(f"Schedule baseline RMSE: {schedule_rmse:.1f}s")
+```
+
+If schedule baseline is ~150-180s, then 170s is actually close to optimal!
 
 ---
 
