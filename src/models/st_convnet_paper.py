@@ -78,16 +78,17 @@ class HeadwayConvLSTM:
         )
 
         # === ENCODER ===
-        # Paper uses ReLU activation (Table 1: "Activation Function: ReLU")
-        # Process historical headway sequence
+        # CRITICAL: Must use tanh activation for CuDNN acceleration
+        # Paper's "ReLU" in Table 1 likely refers to post-BN activations
+        # Using relu in ConvLSTM disables CuDNN → 10x slower!
         x = ConvLSTM2D(
             filters=32,  # Table 1: "ConvLSTM Filters: 32"
             kernel_size=(3, 3),  # Table 1: "ConvLSTM Kernel Size: 3×3"
             padding="same",
             return_sequences=True,
-            activation='relu',  # Paper: ReLU activation
-            recurrent_activation='sigmoid',
-            recurrent_dropout=0  # CuDNN compatible
+            activation='tanh',  # CuDNN requires tanh
+            recurrent_activation='sigmoid',  # CuDNN requires sigmoid
+            recurrent_dropout=0  # CuDNN requires 0
         )(input_headway)
         x = BatchNormalization()(x)
 
@@ -97,7 +98,7 @@ class HeadwayConvLSTM:
             kernel_size=(3, 3),
             padding="same",
             return_sequences=False,  # Compress to single state
-            activation='relu',
+            activation='tanh',  # CuDNN requires tanh
             recurrent_activation='sigmoid',
             recurrent_dropout=0
         )(x)
@@ -146,7 +147,7 @@ class HeadwayConvLSTM:
             kernel_size=(3, 3),
             padding="same",
             return_sequences=True,  # Output all forecast timesteps
-            activation='relu',
+            activation='tanh',  # CuDNN requires tanh
             recurrent_activation='sigmoid',
             recurrent_dropout=0
         )(decoder_input)
