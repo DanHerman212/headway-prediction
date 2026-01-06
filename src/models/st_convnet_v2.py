@@ -58,8 +58,9 @@ class HeadwayConvLSTM:
         # instead of repeating a static state, we slice the last 'forecast' steps
         # this feeds the decoder the actual motion/trends of the most recent 15 minutes
         def slice_last_steps(x):
-            # x_shape: (batch, lookback, H, W, C) -> take last 'forecast' steps
-            return x[:, -self.forecast:, :, :, :]
+            # calculate start index explicitly (30 - 15 = 15)
+            start_index = self.lookback - self.forecast
+            return x[:, start_index:self.lookback, :, :, :]
         
         # output shape: (batch, 15, stations, 2 64)
         bridge_output = Lambda(slice_last_steps,

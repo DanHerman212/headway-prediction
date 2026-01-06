@@ -7,7 +7,7 @@ import os
 # Add project root to python path to allow imports from src
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src.models.st_covnet_v2 import HeadwayConvLSTM
+from src.models.st_convnet_v2 import HeadwayConvLSTM
 
 class TestHeadwayConvLSTMV2(unittest.TestCase):
     
