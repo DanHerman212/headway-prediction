@@ -43,17 +43,18 @@ class HeadwayConvLSTM:
         # layer 1: low level features
         # note: activation=None allows us to place BN before the activation fucntion
         x = ConvLSTM2D(filters=32, kernel_size=(3, 3), padding="same",
-                       return_squences=True, 
-                       acivation='tanh',                # mandatory for cudnn
+                       return_sequences=True, 
+                       activation='tanh',                # mandatory for cudnn
                        recurrent_activation='sigmoid',  # mandatory for cudnn
                        recurrent_dropout=0              # mandatory for cudnn
                        )(input_headway)
+        x = BatchNormalization()(x)
 
         # layer 2: high level features and time compression
         # return_sequences=True to preserve temporal dynamics across all 30 steps
         x = ConvLSTM2D(filters=64, kernel_size=(3, 3), padding="same",
-                       return_squences=True, 
-                       acivation='tanh',                # mandatory for cudnn
+                       return_sequences=True, 
+                       activation='tanh',                # mandatory for cudnn
                        recurrent_activation='sigmoid',  # mandatory for cudnn
                        recurrent_dropout=0              # mandatory for cudnn
                        )(x)
