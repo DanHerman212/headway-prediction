@@ -39,34 +39,27 @@ class HeadwayConvLSTM:
         # shape: (batch, forecasts, distrctions, 1) -> will be broadcasted
         input_schedule = Input(shape=(self.forecast, 2, 1), name="schedule_input")
 
-        # encoder (CuDNN Accelerated)
+        # encoder ( fully sequential)
         # layer 1: low level features
         # note: activation=None allows us to place BN before the activation fucntion
-        x = ConvLSTM2D(filters=32, kernel_size=(3, 3), padding="same",
-                       return_squences=True, 
-                       acivation='tanh',                # mandatory for cudnn
-                       recurrent_activation='sigmoid',  # mandatory for cudnn
-                       recurrent_dropout=0              # mandatory for cudnn
-                       )(input_headway)
+        x = ConvLSTM2D(filters=32, kernel_size=(3, 3), padding='same',
+                       return_sequences=True, activation=None)(input_headway)
+        x = TimeDistributed(BatchNormalization())(x)
+        x = Activation('tanh')(x)
 
         # layer 2: high level features and time compression
         # return_sequences=True to preserve temporal dynamics across all 30 steps
         x = ConvLSTM2D(filters=64, kernel_size=(3, 3), padding="same",
-                       return_squences=True, 
-                       acivation='tanh',                # mandatory for cudnn
-                       recurrent_activation='sigmoid',  # mandatory for cudnn
-                       recurrent_dropout=0              # mandatory for cudnn
-                       )(x)
-        encoded_sequence = BatchNormalization()(x)
-        
+                       return_sequences=True, activation=None)(x)
+        x = TimeDistributed(BatchNormalization())(x)
+        encoded_sequence = Activation('tanh')(x) # shape (batch, 30, stations, 2, 64)
 
         # bridge (Temporal Slicing)
         # instead of repeating a static state, we slice the last 'forecast' steps
         # this feeds the decoder the actual motion/trends of the most recent 15 minutes
         def slice_last_steps(x):
-            # calculate start index explicitly (30 - 15 = 15)
-            start_index = self.lookback - self.forecast
-            return x[:, start_index:self.lookback, :, :, :]
+            # x_shape: (batch, lookback, H, W, C) -> take last 'forecast' steps
+            return x[:, -self.forecast:, :, :, :]
         
         # output shape: (batch, 15, stations, 2 64)
         bridge_output = Lambda(slice_last_steps,
@@ -95,24 +88,18 @@ class HeadwayConvLSTM:
         # combine the recent historical motion (bridge) with future schedule
         decoder_input = Concatenate(axis=-1, name="fusion_concat")([bridge_output, sch_features])
 
-        # decoder cudnn accelerated
+        # decoder
         # layer 1 refine predictions based on combined state
         d = ConvLSTM2D(filters=64, kernel_size=(3, 3), padding="same",
-                       return_sequences=True,
-                       activation='tanh',
-                       recurrent_activation='sigmoid',
-                       recurrent_dropout=0
-                       )(decoder_input)
-        d = BatchNormalization()(d)
+                       return_sequences=True, activation=None)(decoder_input)
+        d = TimeDistributed(BatchNormalization())(d)
+        d = Activation("tanh")(d)
 
         # layer 2 final feature extraction
         d = ConvLSTM2D(filters=32, kernel_size=(3, 3), padding="same",
-                       return_sequences=True,
-                       activation='tanh',
-                       recurrent_activation='sigmoid',
-                       recurrent_dropout=0
-                       )(d)
-        decoded = BatchNormalization()(d)
+                       return_sequences=True, activation=None)(d)
+        d = TimeDistributed(BatchNormalization())(d)
+        decoded = Activation("tanh")(d)
 
         # skip connection and output
         # inject scheudle features again so the model directly sees the baseline it should deviate from
