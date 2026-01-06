@@ -6,7 +6,7 @@
 # 5 output linear activation avoid saturation
 import tensorflow as tf
 from tensorflow.keras import layers, models, Input, backend as K
-from tensorflow.keras.layrs import(
+from tensorflow.keras.layers import(
     ConvLSTM2D, 
     BatchNormalization,
     Conv3D,
