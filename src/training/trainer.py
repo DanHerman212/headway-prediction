@@ -3,6 +3,7 @@ import os
 import tensorflow as tf
 from tensorflow import keras
 from src.config import Config
+from src.metrics import rmse_seconds, r_squared
 
 class Trainer:
     def __init__(self, model, config: Config, checkpoint_dir: str = "models"):
@@ -11,16 +12,17 @@ class Trainer:
         self.checkpoint_dir = checkpoint_dir
 
     def compile_model(self):
-        """configures model for training"""
+        """Configures model for training with production-relevant metrics."""
         optimizer = keras.optimizers.Adam(learning_rate=self.config.LEARNING_RATE)
 
-        # We use MSE (mean squared error) for the loss because we want to
-        # penalize large outliers (major delays) heavily
-        # we track MAE (mean absolute error) because it's easier to read ("off by X minutes")
+        # Loss: MSE (penalizes large outliers/delays heavily)
+        # Metrics: 
+        #   - rmse_seconds: RMSE in real units (seconds) for interpretability
+        #   - r_squared: Coefficient of determination (0-1, higher is better)
         self.model.compile(
             optimizer=optimizer,
             loss='mse',
-            metrics=['mae']
+            metrics=[rmse_seconds, r_squared]
         )
 
     def fit(self, train_dataset, val_dataset, patience=5, reduce_lr_patience=3):
@@ -41,19 +43,19 @@ class Trainer:
                 monitor='val_loss',
                 patience=patience,
                 restore_best_weights=True,
-                verbose=1
+                verbose=0
             ),
             keras.callbacks.ReduceLROnPlateau(
                 monitor='val_loss',
                 factor=0.5,
                 patience=reduce_lr_patience,
-                verbose=1
+                verbose=0
             ),
             keras.callbacks.ModelCheckpoint(
                 filepath=checkpoint_path,
                 monitor="val_loss",
                 save_best_only=True,
-                verbose=1
+                verbose=0
             )
         ]
 

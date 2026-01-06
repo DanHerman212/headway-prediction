@@ -60,49 +60,62 @@ class Evaluator:
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
         epochs = range(1, len(history.history['loss']) + 1)
         
-        # --- Loss Curve (MSE → RMSE in seconds) ---
+        # --- RMSE Curve (already in seconds from custom metric) ---
         ax1 = axes[0]
-        ax1.plot(epochs, history.history['loss'], 'b-', label='Train Loss', linewidth=2)
-        ax1.plot(epochs, history.history['val_loss'], 'r-', label='Val Loss', linewidth=2)
+        
+        # Check if using custom rmse_seconds metric or raw loss
+        if 'rmse_seconds' in history.history:
+            ax1.plot(epochs, history.history['rmse_seconds'], 'b-', label='Train RMSE', linewidth=2)
+            ax1.plot(epochs, history.history['val_rmse_seconds'], 'r-', label='Val RMSE', linewidth=2)
+            ax1.set_ylabel('RMSE (seconds)', fontsize=11)
+            # Add target lines
+            ax1.axhline(y=60, color='g', linestyle='--', label='60s target', alpha=0.7)
+            ax1.axhline(y=90, color='orange', linestyle='--', label='90s target', alpha=0.7)
+        else:
+            # Fallback: convert MSE loss to RMSE seconds
+            ax1.plot(epochs, history.history['loss'], 'b-', label='Train Loss', linewidth=2)
+            ax1.plot(epochs, history.history['val_loss'], 'r-', label='Val Loss', linewidth=2)
+            ax1.set_ylabel('MSE (normalized)', fontsize=11)
+            # Secondary y-axis for RMSE in seconds
+            ax1_right = ax1.twinx()
+            ax1_right.set_ylabel('RMSE (seconds)', color='gray', fontsize=10)
+            y_lim = ax1.get_ylim()
+            ax1_right.set_ylim(self._mse_to_rmse_seconds(y_lim[0]), 
+                               self._mse_to_rmse_seconds(y_lim[1]))
+            ax1_right.tick_params(axis='y', labelcolor='gray')
+        
         ax1.set_xlabel('Epoch', fontsize=11)
-        ax1.set_ylabel('MSE (normalized)', fontsize=11)
-        ax1.set_title('Training & Validation Loss', fontsize=12)
+        ax1.set_title('RMSE (seconds)', fontsize=12)
         ax1.legend(loc='upper right')
         ax1.grid(True, alpha=0.3)
         
-        # Secondary y-axis for RMSE in seconds
-        ax1_right = ax1.twinx()
-        ax1_right.set_ylabel('RMSE (seconds)', color='gray', fontsize=10)
-        y_lim = ax1.get_ylim()
-        ax1_right.set_ylim(self._mse_to_rmse_seconds(y_lim[0]), 
-                           self._mse_to_rmse_seconds(y_lim[1]))
-        ax1_right.tick_params(axis='y', labelcolor='gray')
-        
-        # --- MAE Curve (normalized → seconds) ---
+        # --- R² Curve ---
         ax2 = axes[1]
-        if 'mae' in history.history:
+        if 'r_squared' in history.history:
+            ax2.plot(epochs, history.history['r_squared'], 'b-', label='Train R²', linewidth=2)
+            ax2.plot(epochs, history.history['val_r_squared'], 'r-', label='Val R²', linewidth=2)
+            ax2.axhline(y=0.9, color='g', linestyle='--', label='0.9 target', alpha=0.7)
+            ax2.axhline(y=0.95, color='orange', linestyle='--', label='0.95 target', alpha=0.7)
+            ax2.set_ylabel('R²', fontsize=11)
+            ax2.set_title('R² (Coefficient of Determination)', fontsize=12)
+            ax2.set_ylim(0, 1.05)
+        elif 'mae' in history.history:
+            # Fallback to MAE if R² not available
             ax2.plot(epochs, history.history['mae'], 'b-', label='Train MAE', linewidth=2)
             ax2.plot(epochs, history.history['val_mae'], 'r-', label='Val MAE', linewidth=2)
-            
-            # Add target lines (in normalized space)
-            target_60s = 60.0 / (self.data_range * 60.0)  # 60 seconds
-            target_90s = 90.0 / (self.data_range * 60.0)  # 90 seconds
-            ax2.axhline(y=target_60s, color='g', linestyle='--', label='60s target', alpha=0.7)
-            ax2.axhline(y=target_90s, color='orange', linestyle='--', label='90s target', alpha=0.7)
+            ax2.set_ylabel('MAE (normalized)', fontsize=11)
+            ax2.set_title('Mean Absolute Error', fontsize=12)
+            # Secondary y-axis for MAE in seconds
+            ax2_right = ax2.twinx()
+            ax2_right.set_ylabel('MAE (seconds)', color='gray', fontsize=10)
+            y_lim = ax2.get_ylim()
+            ax2_right.set_ylim(self._mae_to_seconds(y_lim[0]), 
+                               self._mae_to_seconds(y_lim[1]))
+            ax2_right.tick_params(axis='y', labelcolor='gray')
         
         ax2.set_xlabel('Epoch', fontsize=11)
-        ax2.set_ylabel('MAE (normalized)', fontsize=11)
-        ax2.set_title('Mean Absolute Error', fontsize=12)
-        ax2.legend(loc='upper right')
+        ax2.legend(loc='lower right' if 'r_squared' in history.history else 'upper right')
         ax2.grid(True, alpha=0.3)
-        
-        # Secondary y-axis for MAE in seconds
-        ax2_right = ax2.twinx()
-        ax2_right.set_ylabel('MAE (seconds)', color='gray', fontsize=10)
-        y_lim = ax2.get_ylim()
-        ax2_right.set_ylim(self._mae_to_seconds(y_lim[0]), 
-                           self._mae_to_seconds(y_lim[1]))
-        ax2_right.tick_params(axis='y', labelcolor='gray')
         
         plt.tight_layout()
         if save_path:
@@ -113,17 +126,26 @@ class Evaluator:
     def print_metrics_summary(self, history):
         """
         Prints a formatted summary of training metrics in real-world units.
-        Includes production readiness assessment.
+        Includes production readiness assessment using RMSE and R².
         """
-        best_val_mae = min(history.history['val_mae'])
-        best_val_loss = min(history.history['val_loss'])
-        final_val_mae = history.history['val_mae'][-1]
-        final_val_loss = history.history['val_loss'][-1]
+        # Extract metrics - handle both new (rmse_seconds, r_squared) and legacy (mae) formats
+        if 'val_rmse_seconds' in history.history:
+            # New metrics: already in seconds
+            best_rmse_sec = min(history.history['val_rmse_seconds'])
+            final_rmse_sec = history.history['val_rmse_seconds'][-1]
+        else:
+            # Legacy: convert from MSE loss
+            best_val_loss = min(history.history['val_loss'])
+            final_val_loss = history.history['val_loss'][-1]
+            best_rmse_sec = self._mse_to_rmse_seconds(best_val_loss)
+            final_rmse_sec = self._mse_to_rmse_seconds(final_val_loss)
         
-        best_mae_sec = self._mae_to_seconds(best_val_mae)
-        best_rmse_sec = self._mse_to_rmse_seconds(best_val_loss)
-        final_mae_sec = self._mae_to_seconds(final_val_mae)
-        final_rmse_sec = self._mse_to_rmse_seconds(final_val_loss)
+        if 'val_r_squared' in history.history:
+            best_r2 = max(history.history['val_r_squared'])
+            final_r2 = history.history['val_r_squared'][-1]
+        else:
+            best_r2 = None
+            final_r2 = None
         
         print("=" * 60)
         print("📊 TRAINING METRICS SUMMARY")
@@ -133,34 +155,50 @@ class Evaluator:
         print(f"   Data span: {self.data_range:.1f} minutes ({self.data_range * 60:.0f} seconds)")
         
         print(f"\n🎯 Best Validation Performance:")
-        print(f"   MAE:  {best_mae_sec:.1f} seconds ({best_mae_sec/60:.2f} minutes)")
         print(f"   RMSE: {best_rmse_sec:.1f} seconds ({best_rmse_sec/60:.2f} minutes)")
+        if best_r2 is not None:
+            print(f"   R²:   {best_r2:.4f}")
         
         print(f"\n📉 Final Epoch Performance:")
-        print(f"   MAE:  {final_mae_sec:.1f} seconds ({final_mae_sec/60:.2f} minutes)")
         print(f"   RMSE: {final_rmse_sec:.1f} seconds ({final_rmse_sec/60:.2f} minutes)")
+        if final_r2 is not None:
+            print(f"   R²:   {final_r2:.4f}")
         
-        # Production readiness criteria (using seconds like the paper)
+        # Production readiness criteria (using RMSE in seconds)
         print(f"\n" + "=" * 60)
         print("🚦 PRODUCTION READINESS ASSESSMENT")
         print("=" * 60)
         
-        criteria = [
+        # RMSE criteria
+        rmse_criteria = [
             ("Excellent (real-time displays)", 60),   # ≤ 60 seconds
             ("Good (trip planning)", 90),             # ≤ 90 seconds
             ("Acceptable (general info)", 120),       # ≤ 2 minutes
             ("Needs improvement", 180),               # > 3 minutes
         ]
         
-        for level, threshold in criteria:
-            status = "✅" if best_mae_sec <= threshold else "❌"
-            print(f"   {status} {level}: MAE ≤ {threshold}s ({threshold/60:.1f} min)")
+        print("\n📏 RMSE Thresholds:")
+        for level, threshold in rmse_criteria:
+            status = "✅" if best_rmse_sec <= threshold else "❌"
+            print(f"   {status} {level}: RMSE ≤ {threshold}s ({threshold/60:.1f} min)")
+        
+        # R² criteria
+        if best_r2 is not None:
+            print("\n📐 R² Thresholds:")
+            r2_criteria = [
+                ("Excellent", 0.95),
+                ("Good", 0.90),
+                ("Acceptable", 0.80),
+            ]
+            for level, threshold in r2_criteria:
+                status = "✅" if best_r2 >= threshold else "❌"
+                print(f"   {status} {level}: R² ≥ {threshold}")
         
         return {
-            'best_mae_seconds': best_mae_sec,
             'best_rmse_seconds': best_rmse_sec,
-            'final_mae_seconds': final_mae_sec,
             'final_rmse_seconds': final_rmse_sec,
+            'best_r_squared': best_r2,
+            'final_r_squared': final_r2,
         }
 
     # Keep legacy method for backward compatibility
@@ -322,18 +360,30 @@ class Evaluator:
         print("📋 PRODUCTION DEPLOYMENT RECOMMENDATION")
         print("=" * 60)
         
-        mae_sec = metrics['best_mae_seconds']
-        if mae_sec <= 60:
+        rmse_sec = metrics['best_rmse_seconds']
+        r2 = metrics.get('best_r_squared')
+        
+        if rmse_sec <= 60:
             print(f"\n✅ READY FOR PRODUCTION")
-            print(f"   Model achieves {mae_sec:.1f}s MAE - suitable for real-time displays")
-        elif mae_sec <= 90:
+            print(f"   Model achieves {rmse_sec:.1f}s RMSE - suitable for real-time displays")
+        elif rmse_sec <= 90:
             print(f"\n✅ PRODUCTION VIABLE") 
-            print(f"   Model achieves {mae_sec:.1f}s MAE - good for trip planning applications")
-        elif mae_sec <= 120:
+            print(f"   Model achieves {rmse_sec:.1f}s RMSE - good for trip planning applications")
+        elif rmse_sec <= 120:
             print(f"\n⚠️ ACCEPTABLE WITH CAVEATS")
-            print(f"   Model achieves {mae_sec:.1f}s MAE - consider for general information only")
+            print(f"   Model achieves {rmse_sec:.1f}s RMSE - consider for general information only")
         else:
             print(f"\n❌ NEEDS IMPROVEMENT")
-            print(f"   Model achieves {mae_sec:.1f}s MAE - consider hyperparameter tuning")
+            print(f"   Model achieves {rmse_sec:.1f}s RMSE - consider hyperparameter tuning")
+        
+        if r2 is not None:
+            if r2 >= 0.95:
+                print(f"   R² = {r2:.4f} - Excellent explanatory power")
+            elif r2 >= 0.90:
+                print(f"   R² = {r2:.4f} - Good explanatory power")
+            elif r2 >= 0.80:
+                print(f"   R² = {r2:.4f} - Acceptable explanatory power")
+            else:
+                print(f"   R² = {r2:.4f} - Consider model improvements")
         
         return metrics

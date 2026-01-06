@@ -27,3 +27,26 @@ def mae_seconds(y_true, y_pred):
     
     # Conversion: 1.0 (norm) = 30 mins = 1800 seconds
     return mae * 1800.0
+
+
+def r_squared(y_true, y_pred):
+    """
+    Computes R² (coefficient of determination).
+    R² = 1 - (SS_res / SS_tot)
+    
+    R² = 1.0 means perfect prediction
+    R² = 0.0 means model is as good as predicting the mean
+    R² < 0.0 means model is worse than predicting the mean
+    """
+    y_true = tf.cast(y_true, tf.float32)
+    y_pred = tf.cast(y_pred, tf.float32)
+    
+    # Residual sum of squares
+    ss_res = tf.reduce_sum(tf.square(y_true - y_pred))
+    
+    # Total sum of squares
+    y_mean = tf.reduce_mean(y_true)
+    ss_tot = tf.reduce_sum(tf.square(y_true - y_mean))
+    
+    # R² with epsilon to avoid division by zero
+    return 1.0 - (ss_res / (ss_tot + tf.keras.backend.epsilon()))
