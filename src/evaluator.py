@@ -25,10 +25,13 @@ class Evaluator:
         plt.grid(True)
         plt.show()
 
-    def plot_spatiotemporal_prediction(self, model, dataset, sample_idx=0, direction=0):
+    def plot_spatiotemporal_prediction(self, model, dataset, scaler=None, sample_idx=0, direction=0):
         """
         Plots predictions stitched with history: Input (30m) + Prediction (15m).
         Matches the style of the research abstract with a dotted line separating past/future.
+        
+        Args:
+            scaler (RobustScaler): Scikit-learn scaler to inverse transform data.
         """
         # 1. Fetch a single batch
         for inputs, targets in dataset.take(1):
@@ -38,17 +41,34 @@ class Evaluator:
             # inputs is a dict: {'headway_input': ..., 'schedule_input': ...}
             past_data = inputs['headway_input']
 
-            # Extract sample, direction, channel 0, and denormalize (* 30 min)
+            # --- Helper to Inverse Transform ---
+            def inverse_transform(tensor):
+                data = tensor.numpy() if hasattr(tensor, 'numpy') else tensor
+                if scaler:
+                    # RobustScaler expects (n_samples, n_features)
+                    # We treat every point in space-time as a sample with 1 feature
+                    original_shape = data.shape
+                    flat_data = data.reshape(-1, 1)
+                    transformed_flat = scaler.inverse_transform(flat_data)
+                    return transformed_flat.reshape(original_shape)
+                return data * 30.0 # Fallback for backward compatibility (naive scaling) if scaler missing
+
+            # Apply Inverse Transform to all data chunks
+            past_data_real = inverse_transform(past_data)
+            targets_real = inverse_transform(targets)
+            preds_real = inverse_transform(preds)
+
+            # Extract sample, direction, channel 0, and denormalize
             # Shape: (Time, Stations) -> Transpose to (Stations, Time) for imshow
             
             # Past: (30, Stations)
-            past = past_data[sample_idx, :, :, direction, 0].numpy().T * 30
+            past = past_data_real[sample_idx, :, :, direction, 0].T
             
             # Future True: (15, Stations)
-            future_true = targets[sample_idx, :, :, direction, 0].numpy().T * 30
+            future_true = targets_real[sample_idx, :, :, direction, 0].T
             
             # Future Pred: (15, Stations)
-            future_pred = preds[sample_idx, :, :, direction, 0].T * 30
+            future_pred = preds_real[sample_idx, :, :, direction, 0].T
 
             # Stitch them together along the time axis (axis 1)
             # Result: (Stations, 45)
