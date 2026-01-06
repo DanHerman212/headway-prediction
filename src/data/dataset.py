@@ -84,18 +84,19 @@ class SubwayDataGenerator:
         ds = indices_ds.map(split_window, num_parallel_calls=tf.data.AUTOTUNE)
 
         
-        # Crucial Logic Change:To prevent the "Cache" from locking the Shuffle order (which would give you the exact same batches every epoch), the correct order must be:
-        # Map -> Cache -> Shuffle -> Batch -> Prefetch.
+        # Optimization pipeline order:
+        # Map -> Cache -> Shuffle -> Batch -> Prefetch
+        # This prevents cache from locking shuffle order
 
-        # optimization pipeline
-        # 1 cache: load mapped data into RAM once (after 1st epoch)
-        ds = ds.cache("subway_cache_temp") 
+        # 1. Cache in MEMORY (no filename = RAM cache)
+        # Using disk cache ("subway_cache_temp") is SLOW on Google Drive!
+        ds = ds.cache()  # ← Memory cache, not disk
 
-        # 2 suffle: randomize the cached examples every epoch
+        # 2. Shuffle: randomize cached examples every epoch
         if shuffle:
             ds = ds.shuffle(buffer_size=1000)
         
-        # 3 batch and prefetch
+        # 3. Batch and prefetch
         ds = ds.batch(batch_size, drop_remainder=True)
         ds = ds.prefetch(tf.data.AUTOTUNE)
 
