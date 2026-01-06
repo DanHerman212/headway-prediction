@@ -1,12 +1,14 @@
 # this class handles the compilation (optimizer/loss) and training loop with callbacks
+import os
 import tensorflow as tf
 from tensorflow import keras
 from src.config import Config
 
 class Trainer:
-    def __init__(self, model, config: Config):
+    def __init__(self, model, config: Config, checkpoint_dir: str = "models"):
         self.model = model
         self.config = config
+        self.checkpoint_dir = checkpoint_dir
 
     def compile_model(self):
         """configures model for training"""
@@ -21,24 +23,43 @@ class Trainer:
             metrics=['mae']
         )
 
-    def fit(self, train_dataset, val_dataset):
-        """runs training loop with callbacks"""
+    def fit(self, train_dataset, val_dataset, patience=5, reduce_lr_patience=3):
+        """
+        Runs training loop with callbacks.
+        
+        Args:
+            train_dataset: Training tf.data.Dataset
+            val_dataset: Validation tf.data.Dataset
+            patience: Early stopping patience (default 5, paper uses 50)
+            reduce_lr_patience: ReduceLROnPlateau patience (default 3)
+        """
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+        checkpoint_path = os.path.join(self.checkpoint_dir, "best_model.keras")
+        
         callbacks = [
             keras.callbacks.EarlyStopping(
                 monitor='val_loss',
-                patience=5,
+                patience=patience,
                 restore_best_weights=True,
                 verbose=1
             ),
+            keras.callbacks.ReduceLROnPlateau(
+                monitor='val_loss',
+                factor=0.5,
+                patience=reduce_lr_patience,
+                verbose=1
+            ),
             keras.callbacks.ModelCheckpoint(
-            filepath="best_model.keras",
-            monitor="val_loss",
-            save_best_only=True,
-            verbose=1
+                filepath=checkpoint_path,
+                monitor="val_loss",
+                save_best_only=True,
+                verbose=1
             )
         ]
 
         print(f"Starting training for {self.config.EPOCHS} epochs...")
+        print(f"  Early stopping patience: {patience}")
+        print(f"  Checkpoint path: {checkpoint_path}")
 
         history = self.model.fit(
             train_dataset,
