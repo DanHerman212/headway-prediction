@@ -192,8 +192,9 @@ def run_parallel_experiments(
             accelerator_count=accelerator_count,
         )
         
-        # Submit job (non-blocking by default)
-        job.run(sync=False)
+        # Submit job (non-blocking)
+        # Note: run() submits the job and returns immediately when sync=False
+        job.submit()
         jobs.append(job)
         
         print(f"  ✓ Job submitted: {job.display_name}")

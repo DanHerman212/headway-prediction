@@ -113,7 +113,7 @@ submit_pipeline() {
     log "Output: ${OUTPUT_DIR}"
     
     # Run the pipeline submission script
-    python -m src.experiments.vertex_pipeline \
+    python3 -m src.experiments.vertex_pipeline \
         --project ${PROJECT_ID} \
         --bucket ${BUCKET} \
         --region ${REGION} \
