@@ -37,8 +37,8 @@ PIPELINE_ROOT = f"gs://{BUCKET}/pipeline-runs"
 TENSORBOARD_LOG_ROOT = f"gs://{BUCKET}/tensorboard"
 SERVICE_ACCOUNT = f"vertex-ai-sa@{PROJECT}.iam.gserviceaccount.com"
 
-# Container with all dependencies
-TRAINING_IMAGE = f"gcr.io/{PROJECT}/headway-trainer:latest"
+# Container with all dependencies (Artifact Registry)
+TRAINING_IMAGE = f"{REGION}-docker.pkg.dev/{PROJECT}/headway-prediction/training:latest"
 
 
 # =============================================================================
@@ -547,7 +547,7 @@ def submit_pipeline(run_name: str):
     )
     
     print(f"Submitting pipeline: {run_name}")
-    job.submit(service_account=SERVICE_ACCOUNT)
+    job.submit()  # Uses default compute service account
     
     print(f"Pipeline submitted: {job.resource_name}")
     print(f"TensorBoard logs: {TENSORBOARD_LOG_ROOT}/{run_name}")
