@@ -109,16 +109,16 @@ build_cloud() {
 # -----------------------------------------------------------------------------
 submit_pipeline() {
     log "Submitting Kubeflow Pipeline to Vertex AI..."
-    log "Container: ${FULL_IMAGE_URI}"
+    log "Container: ${LATEST_IMAGE_URI}"
     log "Data: ${DATA_DIR}"
     log "Output: ${OUTPUT_DIR}"
     
-    # Run the KFP pipeline submission script
+    # Run the KFP pipeline submission script (use :latest tag)
     python3 -m src.experiments.kfp_pipeline \
         --project ${PROJECT_ID} \
         --bucket ${BUCKET} \
         --region ${REGION} \
-        --container ${FULL_IMAGE_URI}
+        --container ${LATEST_IMAGE_URI}
     
     log "Pipeline submitted!"
     log "Monitor at: https://console.cloud.google.com/vertex-ai/pipelines?project=${PROJECT_ID}"
