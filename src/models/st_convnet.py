@@ -10,8 +10,16 @@ from tensorflow.keras import layers
 from src.config import Config
 
 class HeadwayConvLSTM:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, spatial_dropout_rate: float = 0.0):
+        """
+        Args:
+            config: Model configuration
+            spatial_dropout_rate: Dropout rate for SpatialDropout3D layers (0.0-0.5).
+                                  Applied after each ConvLSTM+BatchNorm block.
+                                  Set to 0.0 to disable (CuDNN compatible).
+        """
         self.config = config
+        self.spatial_dropout_rate = spatial_dropout_rate
 
     def build_model(self):
         """
@@ -47,6 +55,10 @@ class HeadwayConvLSTM:
         )(input_headway)
 
         x = layers.BatchNormalization()(x)
+        
+        # Regularization: SpatialDropout3D (CuDNN-safe, applied between layers)
+        if self.spatial_dropout_rate > 0:
+            x = layers.SpatialDropout3D(self.spatial_dropout_rate)(x)
 
         # compress time to a single spatial state
         # output (Batch, STations, 2, 64)
@@ -124,6 +136,12 @@ class HeadwayConvLSTM:
             return_sequences=True,
             activation='tanh'
         )(x_fused)
+        
+        x = layers.BatchNormalization()(x)
+        
+        # Regularization: SpatialDropout3D after decoder (CuDNN-safe)
+        if self.spatial_dropout_rate > 0:
+            x = layers.SpatialDropout3D(self.spatial_dropout_rate)(x)
 
         # final projection to 1 channel (headway)
         # we use conv3D to map features to output value (0 - 1 range)
