@@ -193,6 +193,7 @@ def regularization_pipeline(
     location: str,
     bucket: str,
     tensorboard_id: str = "3732815588020453376",
+    service_account: str = "156116751740-compute@developer.gserviceaccount.com",
     container_uri: str = "us-docker.pkg.dev/vertex-ai/training/tf-gpu.2-14.py310:latest",
     machine_type: str = "a2-highgpu-1g",
     accelerator_type: str = "NVIDIA_TESLA_A100",
@@ -224,6 +225,7 @@ def regularization_pipeline(
             accelerator_type=accelerator_type,
             accelerator_count=accelerator_count,
             tensorboard_id=tensorboard_id,
+            service_account=service_account,
         )
         exp_tasks.append(task)
     
@@ -250,6 +252,7 @@ def compile_and_run(
     accelerator_type: str,
     accelerator_count: int,
     tensorboard_id: str = "3732815588020453376",
+    service_account: str = "156116751740-compute@developer.gserviceaccount.com",
     pipeline_root: str = None,
 ):
     """Compile the pipeline and submit to Vertex AI Pipelines."""
@@ -280,6 +283,7 @@ def compile_and_run(
             "location": location,
             "bucket": bucket,
             "tensorboard_id": tensorboard_id,
+            "service_account": service_account,
             "container_uri": container_uri,
             "machine_type": machine_type,
             "accelerator_type": accelerator_type,
