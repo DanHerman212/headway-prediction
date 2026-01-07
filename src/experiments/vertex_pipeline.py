@@ -62,8 +62,8 @@ def create_training_job(
     exp_id: int,
     exp_name: str,
     container_uri: str,
-    machine_type: str = "n1-standard-4",
-    accelerator_type: str = "NVIDIA_TESLA_T4",
+    machine_type: str = "a2-highgpu-1g",
+    accelerator_type: str = "NVIDIA_TESLA_A100",
     accelerator_count: int = 1,
 ) -> aiplatform.CustomJob:
     """
@@ -245,14 +245,14 @@ def main():
     parser.add_argument(
         "--machine-type",
         type=str,
-        default="n1-standard-4",
-        help="Compute Engine machine type (default: n1-standard-4)"
+        default="a2-highgpu-1g",
+        help="Compute Engine machine type (default: a2-highgpu-1g)"
     )
     parser.add_argument(
         "--accelerator-type",
         type=str,
-        default="NVIDIA_TESLA_T4",
-        help="GPU type (default: NVIDIA_TESLA_T4)"
+        default="NVIDIA_TESLA_A100",
+        help="GPU type (default: NVIDIA_TESLA_A100)"
     )
     parser.add_argument(
         "--accelerator-count",

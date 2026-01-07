@@ -184,8 +184,8 @@ def regularization_pipeline(
     location: str,
     bucket: str,
     container_uri: str = "us-docker.pkg.dev/vertex-ai/training/tf-gpu.2-14.py310:latest",
-    machine_type: str = "n1-standard-4",
-    accelerator_type: str = "NVIDIA_TESLA_T4",
+    machine_type: str = "a2-highgpu-1g",
+    accelerator_type: str = "NVIDIA_TESLA_A100",
     accelerator_count: int = 1,
 ):
     """
@@ -302,8 +302,8 @@ def main():
         default="us-docker.pkg.dev/vertex-ai/training/tf-gpu.2-14.py310:latest",
         help="Container image URI",
     )
-    parser.add_argument("--machine-type", type=str, default="n1-standard-4")
-    parser.add_argument("--accelerator-type", type=str, default="NVIDIA_TESLA_T4")
+    parser.add_argument("--machine-type", type=str, default="a2-highgpu-1g")
+    parser.add_argument("--accelerator-type", type=str, default="NVIDIA_TESLA_A100")
     parser.add_argument("--accelerator-count", type=int, default=1)
     
     args = parser.parse_args()
