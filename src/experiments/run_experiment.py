@@ -40,14 +40,12 @@ class VertexExperimentCallback(tf.keras.callbacks.Callback):
     - Programmatic querying of results
     """
     
-    def __init__(self, run, log_every_n_epochs: int = 1):
+    def __init__(self, log_every_n_epochs: int = 1):
         """
         Args:
-            run: Vertex AI ExperimentRun object (from experiment.start_run())
             log_every_n_epochs: How often to log metrics (default: every epoch)
         """
         super().__init__()
-        self.run = run
         self.log_every_n_epochs = log_every_n_epochs
     
     def on_epoch_end(self, epoch, logs=None):
@@ -85,7 +83,7 @@ class VertexExperimentCallback(tf.keras.callbacks.Callback):
         
         # Log to Vertex AI Experiments
         try:
-            self.run.log_time_series_metrics(metrics_to_log, step=epoch + 1)
+            aiplatform.log_time_series_metrics(metrics_to_log, step=epoch + 1)
         except Exception as e:
             print(f"Warning: Failed to log metrics to Vertex AI: {e}")
 
@@ -369,7 +367,7 @@ def run_experiment(
         
         # Create callbacks - use local output dir + Vertex AI Experiments callback
         callbacks = create_callbacks(exp_config, local_output_dir)
-        callbacks.append(VertexExperimentCallback(run))
+        callbacks.append(VertexExperimentCallback())
         
         # Train
         print(f"\nStarting training for {exp_config.epochs} epochs...")
@@ -394,7 +392,7 @@ def run_experiment(
         total_epochs = len(history.history['loss'])
         
         # Log final summary metrics to Vertex AI Experiments
-        run.log_metrics({
+        aiplatform.log_metrics({
             "best_val_loss": best_val_loss,
             "best_val_rmse_seconds": best_val_rmse,
             "best_val_r_squared": best_val_r2,
@@ -433,24 +431,32 @@ def run_experiment(
         # Upload to GCS if needed
         if gcs_output_dir:
             upload_to_gcs(local_output_dir, gcs_output_dir)
-    
-    # End of experiment run context
-    print("\n" + "=" * 60)
-    print("EXPERIMENT COMPLETE")
-    print("=" * 60)
-    print(f"Experiment Run: {run_name}")
-    print(f"Best Val Loss: {results['results']['best_val_loss']:.6f}")
-    print(f"Best Val RMSE (seconds): {results['results']['best_val_rmse_seconds']:.2f}")
-    print(f"Best Val R²: {results['results']['best_val_r_squared']:.4f}")
-    print(f"Best Epoch: {results['results']['best_epoch']}")
-    print(f"Results saved to: {results_path}")
-    if gcs_output_dir:
-        print(f"Uploaded to: {gcs_output_dir}")
-    print(f"\nView in Vertex AI Console:")
-    print(f"  https://console.cloud.google.com/vertex-ai/experiments/{experiment_name}?project={project}")
-    print("=" * 60)
-    
-    return results
+        
+        # End of experiment run
+        print("\n" + "=" * 60)
+        print("EXPERIMENT COMPLETE")
+        print("=" * 60)
+        print(f"Experiment Run: {run_name}")
+        print(f"Best Val Loss: {results['results']['best_val_loss']:.6f}")
+        print(f"Best Val RMSE (seconds): {results['results']['best_val_rmse_seconds']:.2f}")
+        print(f"Best Val R²: {results['results']['best_val_r_squared']:.4f}")
+        print(f"Best Epoch: {results['results']['best_epoch']}")
+        print(f"Results saved to: {results_path}")
+        if gcs_output_dir:
+            print(f"Uploaded to: {gcs_output_dir}")
+        print(f"\nView in Vertex AI Console:")
+        print(f"  https://console.cloud.google.com/vertex-ai/experiments/{experiment_name}?project={project}")
+        print("=" * 60)
+        
+        return results
+        
+    except Exception as e:
+        print(f"\nExperiment FAILED: {e}")
+        aiplatform.log_params({"status": "failed", "error": str(e)})
+        raise
+    finally:
+        # Always end the experiment run
+        aiplatform.end_run()
 
 
 def main():
