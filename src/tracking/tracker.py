@@ -57,12 +57,13 @@ class Tracker:
             model.fit(x, y, callbacks=tracker.keras_callbacks())
     """
     
-    def __init__(self, config: Union[TrackerConfig, Dict, str]):
+    def __init__(self, config: Union[TrackerConfig, Dict, str], use_vertex_experiments: bool = True):
         """
         Initialize the Tracker.
         
         Args:
             config: TrackerConfig object, dict, or path to YAML file
+            use_vertex_experiments: Whether to log to Vertex AI Experiments (default: True)
         """
         # Parse config
         if isinstance(config, str):
@@ -71,7 +72,11 @@ class Tracker:
             config = TrackerConfig.from_dict(config)
         
         self.config = config
+        self.use_vertex_experiments = use_vertex_experiments
+        self._vertex_run = None
+        
         self._init_writer()
+        self._init_vertex_experiments()
         self._log_initial_info()
     
     def _init_writer(self):
@@ -79,6 +84,43 @@ class Tracker:
         self.log_dir = self.config.log_dir
         self.writer = tf.summary.create_file_writer(self.log_dir)
         print(f"TensorBoard logging to: {self.log_dir}")
+    
+    def _init_vertex_experiments(self):
+        """Initialize Vertex AI Experiments tracking."""
+        if not self.use_vertex_experiments:
+            return
+            
+        try:
+            from google.cloud import aiplatform
+            
+            # Initialize Vertex AI if not already done
+            aiplatform.init()
+            
+            # Get or create experiment
+            experiment = aiplatform.Experiment.get_or_create(
+                experiment_name=self.config.experiment_name,
+                description=self.config.description or f"Experiment: {self.config.experiment_name}",
+            )
+            
+            # Start a run within the experiment
+            self._vertex_run = aiplatform.start_run(
+                run=self.config.run_name,
+                experiment=self.config.experiment_name,
+                tensorboard=self.log_dir,
+            )
+            
+            # Log hyperparameters to Vertex AI
+            if self.config.hparams_dict:
+                aiplatform.log_params(self.config.hparams_dict)
+            
+            print(f"Vertex AI Experiments: {self.config.experiment_name}/{self.config.run_name}")
+            
+        except ImportError:
+            print("Warning: google-cloud-aiplatform not available, skipping Vertex AI Experiments")
+            self.use_vertex_experiments = False
+        except Exception as e:
+            print(f"Warning: Failed to initialize Vertex AI Experiments: {e}")
+            self.use_vertex_experiments = False
     
     def _log_initial_info(self):
         """Log initial experiment information."""
@@ -127,15 +169,26 @@ Tracking Configuration:
     
     def log_scalar(self, name: str, value: float, step: int):
         """
-        Log a scalar metric.
+        Log a scalar metric to both TensorBoard and Vertex AI Experiments.
         
         Args:
             name: Metric name (e.g., "train/loss", "val/accuracy")
             value: Scalar value
             step: Training step or epoch
         """
+        # Log to TensorBoard
         with self.writer.as_default():
             tf.summary.scalar(name, value, step=step)
+        
+        # Log to Vertex AI Experiments
+        if self.use_vertex_experiments and self._vertex_run:
+            try:
+                from google.cloud import aiplatform
+                # Convert name to valid metric key (replace / with _)
+                metric_key = name.replace("/", "_")
+                aiplatform.log_metrics({metric_key: float(value)})
+            except Exception as e:
+                pass  # Silently fail for Vertex AI logging
     
     def log_scalars(self, metrics: Dict[str, float], step: int, prefix: str = ""):
         """
@@ -363,9 +416,19 @@ Tracking Configuration:
         self.close()
     
     def close(self):
-        """Flush and close the summary writer."""
+        """Flush and close the summary writer and Vertex AI run."""
         self.flush()
         self.writer.close()
+        
+        # End Vertex AI Experiments run
+        if self.use_vertex_experiments and self._vertex_run:
+            try:
+                from google.cloud import aiplatform
+                aiplatform.end_run()
+                print(f"Vertex AI Experiment run ended: {self.config.experiment_name}/{self.config.run_name}")
+            except Exception as e:
+                print(f"Warning: Failed to end Vertex AI run: {e}")
+        
         print(f"TensorBoard writer closed. View with:\n  tensorboard --logdir={self.log_dir}")
     
     def flush(self):

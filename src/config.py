@@ -35,7 +35,6 @@ class Config:
 
    HEADWAY_FILE: str = "headway_matrix_full.npy"
    SCHEDULE_FILE: str = "schedule_matrix_full.npy"
-   STATION_MAP_FILE: str = "a_line_station_distances.csv"
 
    @property
    def headway_path(self):
@@ -44,7 +43,3 @@ class Config:
    @property
    def schedule_path(self):
       return os.path.join(self.DATA_DIR, self.SCHEDULE_FILE)
-   
-   @property
-   def station_map_path(self):
-      return os.path.join(self.DATA_DIR, self.STATION_MAP_FILE)

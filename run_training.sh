@@ -114,11 +114,9 @@ submit_pipeline() {
     log "Output: ${OUTPUT_DIR}"
     
     # Run the KFP pipeline submission script (use :latest tag)
-    python3 -m src.experiments.kfp_pipeline \
-        --project ${PROJECT_ID} \
-        --bucket ${BUCKET} \
-        --region ${REGION} \
-        --container ${LATEST_IMAGE_URI}
+    python3 -m src.experiments.pipeline \
+        --submit \
+        --run_name "run-${TAG}"
     
     log "Pipeline submitted!"
     log "Monitor at: https://console.cloud.google.com/vertex-ai/pipelines?project=${PROJECT_ID}"

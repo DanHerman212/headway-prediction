@@ -48,7 +48,8 @@ TRAINING_IMAGE = f"{REGION}-docker.pkg.dev/{PROJECT}/headway-prediction/training
 @dsl.component(base_image=TRAINING_IMAGE)
 def data_component(
     config_json: str,
-    data_info_output: dsl.OutputPath(str),
+    run_name: str,
+    data_info_output: dsl.Output[dsl.Artifact],
 ):
     """
     Load and prepare data using SubwayDataGenerator with proper scaling.
@@ -143,7 +144,7 @@ def data_component(
     headway_scaled = np.clip(headway_scaled, 0, 1)
     schedule_scaled = np.clip(schedule_scaled, 0, 1)
     
-    # Save scaled data to temp files
+    # Save scaled data locally first
     scaled_dir = os.path.join(config.DATA_DIR, "scaled")
     os.makedirs(scaled_dir, exist_ok=True)
     
@@ -152,11 +153,19 @@ def data_component(
     
     np.save(headway_path, headway_scaled)
     np.save(schedule_path, schedule_scaled)
-    print(f"Saved scaled data to {scaled_dir}")
+    print(f"Saved scaled data locally to {scaled_dir}")
     
-    # Output data info for downstream components
+    # Upload scaled data to GCS so training component can access it
+    gcs_scaled_dir = f"gs://{bucket_name}/headway-prediction/scaled/{run_name}"
+    for local_file, filename in [(headway_path, "headway_scaled.npy"), (schedule_path, "schedule_scaled.npy")]:
+        gcs_blob_path = f"headway-prediction/scaled/{run_name}/{filename}"
+        blob = bucket.blob(gcs_blob_path)
+        blob.upload_from_filename(local_file)
+        print(f"Uploaded: {local_file} -> gs://{bucket_name}/{gcs_blob_path}")
+    
+    # Output data info for downstream components (with GCS paths)
     data_info = {
-        "scaled_data_dir": scaled_dir,
+        "scaled_data_gcs": gcs_scaled_dir,
         "headway_file": "headway_scaled.npy",
         "schedule_file": "schedule_scaled.npy",
         "total_samples": total_samples,
@@ -170,7 +179,7 @@ def data_component(
     
     print(f"Data preparation complete: {json.dumps(data_info, indent=2)}")
     
-    with open(data_info_output, "w") as f:
+    with open(data_info_output.path, "w") as f:
         json.dump(data_info, f)
 
 
@@ -180,10 +189,10 @@ def data_component(
 
 @dsl.component(base_image=TRAINING_IMAGE)
 def training_component(
-    data_info_path: dsl.InputPath(str),
+    data_info: dsl.Input[dsl.Artifact],
     tensorboard_log_dir: str,
     model_output_dir: str,
-    training_info_output: dsl.OutputPath(str),
+    training_info_output: dsl.Output[dsl.Artifact],
 ):
     """
     Train model using Trainer with tracking integration.
@@ -197,26 +206,46 @@ def training_component(
     """
     import json
     import os
+    import tempfile
     import numpy as np
     import tensorflow as tf
+    from google.cloud import storage
     from src.config import Config
     from src.models.baseline_convlstm import HeadwayConvLSTM
     from src.training.trainer import Trainer
     from src.tracking import Tracker, TrackerConfig
     
-    # Load data info
-    with open(data_info_path, "r") as f:
-        data_info = json.load(f)
+    # Load data info from artifact
+    with open(data_info.path, "r") as f:
+        data_info_dict = json.load(f)
+    
+    # Download scaled data from GCS
+    gcs_scaled_dir = data_info_dict["scaled_data_gcs"]
+    local_dir = tempfile.mkdtemp()
+    
+    path = gcs_scaled_dir.replace("gs://", "")
+    bucket_name = path.split("/")[0]
+    prefix = "/".join(path.split("/")[1:])
+    
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    
+    for filename in [data_info_dict["headway_file"], data_info_dict["schedule_file"]]:
+        blob_path = f"{prefix}/{filename}"
+        blob = bucket.blob(blob_path)
+        local_path = os.path.join(local_dir, filename)
+        blob.download_to_filename(local_path)
+        print(f"Downloaded: gs://{bucket_name}/{blob_path} -> {local_path}")
     
     # Reconstruct Config from data_info
-    config_dict = data_info["config"]
+    config_dict = data_info_dict["config"]
     config = Config(**{k: v for k, v in config_dict.items() 
                        if hasattr(Config, k) and not k.startswith('_')})
     
-    # Override DATA_DIR with scaled data location
-    config.DATA_DIR = data_info["scaled_data_dir"]
-    config.HEADWAY_FILE = data_info["headway_file"]
-    config.SCHEDULE_FILE = data_info["schedule_file"]
+    # Override DATA_DIR with local scaled data location
+    config.DATA_DIR = local_dir
+    config.HEADWAY_FILE = data_info_dict["headway_file"]
+    config.SCHEDULE_FILE = data_info_dict["schedule_file"]
     
     # Load scaled data
     from src.data.dataset import SubwayDataGenerator
@@ -226,12 +255,12 @@ def training_component(
     # Create datasets using split indices from data_info
     train_ds = gen.make_dataset(
         start_index=0,
-        end_index=data_info["train_end"],
+        end_index=data_info_dict["train_end"],
         shuffle=True
     )
     val_ds = gen.make_dataset(
-        start_index=data_info["train_end"],
-        end_index=data_info["val_end"],
+        start_index=data_info_dict["train_end"],
+        end_index=data_info_dict["val_end"],
         shuffle=False
     )
     
@@ -239,7 +268,14 @@ def training_component(
     model_builder = HeadwayConvLSTM(config)
     model = model_builder.build_model()
     
-    # Setup tracking
+    # Initialize Vertex AI for experiment tracking
+    from google.cloud import aiplatform
+    aiplatform.init(
+        project="time-series-478616",
+        location="us-east1",
+    )
+    
+    # Setup tracking with Vertex AI Experiments integration
     run_name = os.path.basename(tensorboard_log_dir)
     tracker_config = TrackerConfig(
         experiment_name="headway-prediction",
@@ -261,7 +297,7 @@ def training_component(
             "val_split": config.VAL_SPLIT,
         }
     )
-    tracker = Tracker(tracker_config)
+    tracker = Tracker(tracker_config, use_vertex_experiments=True)
     
     # Train using Trainer (handles compilation with Config params)
     trainer = Trainer(model, config, checkpoint_dir=model_output_dir)
@@ -283,19 +319,19 @@ def training_component(
     tracker.close()
     
     # Output training info
-    training_info = {
+    training_info_data = {
         "model_path": os.path.join(model_output_dir, "best_model.keras"),
         "tensorboard_log_dir": tensorboard_log_dir,
         "epochs_run": len(history.history["loss"]),
         "best_val_loss": float(min(history.history["val_loss"])),
         "final_train_loss": float(history.history["loss"][-1]),
-        "data_info": data_info,  # Pass through for evaluation
+        "data_info": data_info_dict,  # Pass through for evaluation
     }
     
-    print(f"Training complete: {json.dumps(training_info, indent=2)}")
+    print(f"Training complete: {json.dumps(training_info_data, indent=2)}")
     
-    with open(training_info_output, "w") as f:
-        json.dump(training_info, f)
+    with open(training_info_output.path, "w") as f:
+        json.dump(training_info_data, f)
 
 
 # =============================================================================
@@ -304,9 +340,9 @@ def training_component(
 
 @dsl.component(base_image=TRAINING_IMAGE)
 def evaluation_component(
-    training_info_path: dsl.InputPath(str),
+    training_info: dsl.Input[dsl.Artifact],
     tensorboard_log_dir: str,
-    eval_info_output: dsl.OutputPath(str),
+    eval_info_output: dsl.Output[dsl.Artifact],
 ):
     """
     Evaluate model on TEST set using Evaluator.
@@ -320,33 +356,65 @@ def evaluation_component(
     """
     import json
     import os
+    import tempfile
     import numpy as np
     import tensorflow as tf
+    from google.cloud import aiplatform, storage
     from sklearn.preprocessing import MinMaxScaler
     from src.config import Config
     from src.data.dataset import SubwayDataGenerator
     from src.evaluator import Evaluator
     from src.tracking import Tracker, TrackerConfig
     
-    # Load training info (includes data_info)
-    with open(training_info_path, "r") as f:
-        training_info = json.load(f)
+    # Load training info (includes data_info) from artifact
+    with open(training_info.path, "r") as f:
+        training_info_dict = json.load(f)
     
-    data_info = training_info["data_info"]
+    data_info_dict = training_info_dict["data_info"]
+    
+    # Download scaled data from GCS
+    gcs_scaled_dir = data_info_dict["scaled_data_gcs"]
+    local_dir = tempfile.mkdtemp()
+    
+    path = gcs_scaled_dir.replace("gs://", "")
+    bucket_name = path.split("/")[0]
+    prefix = "/".join(path.split("/")[1:])
+    
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    
+    for filename in [data_info_dict["headway_file"], data_info_dict["schedule_file"]]:
+        blob_path = f"{prefix}/{filename}"
+        blob = bucket.blob(blob_path)
+        local_path = os.path.join(local_dir, filename)
+        blob.download_to_filename(local_path)
+        print(f"Downloaded: gs://{bucket_name}/{blob_path} -> {local_path}")
     
     # Reconstruct Config
-    config_dict = data_info["config"]
+    config_dict = data_info_dict["config"]
     config = Config(**{k: v for k, v in config_dict.items() 
                        if hasattr(Config, k) and not k.startswith('_')})
     
-    # Point to scaled data
-    config.DATA_DIR = data_info["scaled_data_dir"]
-    config.HEADWAY_FILE = data_info["headway_file"]
-    config.SCHEDULE_FILE = data_info["schedule_file"]
+    # Point to local scaled data
+    config.DATA_DIR = local_dir
+    config.HEADWAY_FILE = data_info_dict["headway_file"]
+    config.SCHEDULE_FILE = data_info_dict["schedule_file"]
     
-    # Load model
-    model = tf.keras.models.load_model(training_info["model_path"])
-    print(f"Loaded model from {training_info['model_path']}")
+    # Load model from GCS
+    model_gcs_path = training_info_dict["model_path"]
+    local_model_path = os.path.join(tempfile.mkdtemp(), "best_model.keras")
+    
+    model_path = model_gcs_path.replace("gs://", "")
+    model_bucket_name = model_path.split("/")[0]
+    model_blob_path = "/".join(model_path.split("/")[1:])
+    
+    model_bucket = client.bucket(model_bucket_name)
+    model_blob = model_bucket.blob(model_blob_path)
+    model_blob.download_to_filename(local_model_path)
+    print(f"Downloaded model: {model_gcs_path} -> {local_model_path}")
+    
+    model = tf.keras.models.load_model(local_model_path)
+    print(f"Loaded model from {local_model_path}")
     
     # Load scaled data
     gen = SubwayDataGenerator(config)
@@ -354,23 +422,29 @@ def evaluation_component(
     
     # Create TEST dataset (val_end to end)
     test_ds = gen.make_dataset(
-        start_index=data_info["val_end"],
+        start_index=data_info_dict["val_end"],
         end_index=None,  # Use all remaining data
         shuffle=False
     )
     
     # Reconstruct scaler for inverse transform
     scaler = MinMaxScaler()
-    scaler.data_min_ = np.array([data_info["scaler_params"]["data_min"]])
-    scaler.data_max_ = np.array([data_info["scaler_params"]["data_max"]])
-    scaler.scale_ = np.array([data_info["scaler_params"]["scale"]])
-    scaler.min_ = np.array([data_info["scaler_params"]["min_"]])
+    scaler.data_min_ = np.array([data_info_dict["scaler_params"]["data_min"]])
+    scaler.data_max_ = np.array([data_info_dict["scaler_params"]["data_max"]])
+    scaler.scale_ = np.array([data_info_dict["scaler_params"]["scale"]])
+    scaler.min_ = np.array([data_info_dict["scaler_params"]["min_"]])
     
     # Evaluate on test set
     test_results = model.evaluate(test_ds, return_dict=True)
     print(f"Test set results: {test_results}")
     
-    # Setup tracker for visualization logging
+    # Initialize Vertex AI for experiment tracking
+    aiplatform.init(
+        project="time-series-478616",
+        location="us-east1",
+    )
+    
+    # Setup tracker for visualization logging with Vertex AI Experiments
     run_name = os.path.basename(tensorboard_log_dir)
     tracker_config = TrackerConfig(
         experiment_name="headway-prediction",
@@ -381,7 +455,7 @@ def evaluation_component(
         graphs=False,
         hparams=False,
     )
-    tracker = Tracker(tracker_config)
+    tracker = Tracker(tracker_config, use_vertex_experiments=True)
     
     # Log test metrics
     for name, value in test_results.items():
@@ -438,8 +512,8 @@ def evaluation_component(
     
     # Output evaluation info
     eval_info = {
-        "model_path": training_info["model_path"],
-        "test_samples": data_info["total_samples"] - data_info["val_end"],
+        "model_path": training_info_dict["model_path"],
+        "test_samples": data_info_dict["total_samples"] - data_info_dict["val_end"],
         "test_loss": float(test_results.get("loss", 0)),
         "test_rmse_seconds": float(rmse_seconds),
         "test_r_squared": float(r_squared),
@@ -448,7 +522,7 @@ def evaluation_component(
     
     print(f"Evaluation complete: {json.dumps(eval_info, indent=2)}")
     
-    with open(eval_info_output, "w") as f:
+    with open(eval_info_output.path, "w") as f:
         json.dump(eval_info, f)
 
 
@@ -487,11 +561,11 @@ def headway_pipeline(
     model_output_dir = f"gs://{BUCKET}/models/{run_name}"
     
     # Step 1: Data preparation (scaling fit on train only)
-    data_task = data_component(config_json=config_json)
+    data_task = data_component(config_json=config_json, run_name=run_name)
     
     # Step 2: Training
     training_task = training_component(
-        data_info_path=data_task.outputs["data_info_output"],
+        data_info=data_task.outputs["data_info_output"],
         tensorboard_log_dir=tensorboard_log_dir,
         model_output_dir=model_output_dir,
     )
@@ -502,7 +576,7 @@ def headway_pipeline(
     
     # Step 3: Evaluation on held-out test set
     eval_task = evaluation_component(
-        training_info_path=training_task.outputs["training_info_output"],
+        training_info=training_task.outputs["training_info_output"],
         tensorboard_log_dir=tensorboard_log_dir,
     )
 
