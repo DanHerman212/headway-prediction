@@ -40,6 +40,7 @@ def train_experiment(
     machine_type: str,
     accelerator_type: str,
     accelerator_count: int,
+    tensorboard_id: str,
     metrics: Output[Metrics],
 ) -> NamedTuple("Outputs", [("job_name", str), ("output_dir", str)]):
     """
@@ -59,7 +60,10 @@ def train_experiment(
     data_dir = f"gs://{bucket}/headway-prediction/data"
     output_dir = f"gs://{bucket}/headway-prediction/outputs/{timestamp}/exp_{exp_id:02d}_{exp_name}"
     
-    # Create and run job
+    # TensorBoard resource name
+    tensorboard_resource = f"projects/{project}/locations/{location}/tensorboards/{tensorboard_id}"
+    
+    # Create and run job with TensorBoard integration
     job = aiplatform.CustomJob(
         display_name=job_name,
         worker_pool_specs=[
@@ -84,8 +88,12 @@ def train_experiment(
         staging_bucket=f"gs://{bucket}/staging",
     )
     
-    # Run synchronously (wait for completion)
-    job.run(sync=True)
+    # Run synchronously with TensorBoard streaming
+    job.run(
+        sync=True,
+        tensorboard=tensorboard_resource,
+        service_account=None,  # Uses default service account
+    )
     
     # Log metrics
     metrics.log_metric("exp_id", exp_id)
@@ -183,6 +191,7 @@ def regularization_pipeline(
     project: str,
     location: str,
     bucket: str,
+    tensorboard_id: str = "3732815588020453376",
     container_uri: str = "us-docker.pkg.dev/vertex-ai/training/tf-gpu.2-14.py310:latest",
     machine_type: str = "a2-highgpu-1g",
     accelerator_type: str = "NVIDIA_TESLA_A100",
@@ -213,6 +222,7 @@ def regularization_pipeline(
             machine_type=machine_type,
             accelerator_type=accelerator_type,
             accelerator_count=accelerator_count,
+            tensorboard_id=tensorboard_id,
         )
         exp_tasks.append(task)
     
@@ -238,6 +248,7 @@ def compile_and_run(
     machine_type: str,
     accelerator_type: str,
     accelerator_count: int,
+    tensorboard_id: str = "3732815588020453376",
     pipeline_root: str = None,
 ):
     """Compile the pipeline and submit to Vertex AI Pipelines."""
@@ -267,6 +278,7 @@ def compile_and_run(
             "project": project,
             "location": location,
             "bucket": bucket,
+            "tensorboard_id": tensorboard_id,
             "container_uri": container_uri,
             "machine_type": machine_type,
             "accelerator_type": accelerator_type,
@@ -278,13 +290,16 @@ def compile_and_run(
     print("Submitting Kubeflow Pipeline")
     print("=" * 60)
     print(f"Pipeline root: {pipeline_root}")
-    print(f"Display name: {job.display_name}")
+    print(f"TensorBoard: {tensorboard_id}")
     print("=" * 60)
     
     job.submit()
     
     print("\nPipeline submitted!")
-    print(f"View at: https://console.cloud.google.com/vertex-ai/pipelines")
+    print(f"Job name: {job.display_name}")
+    print(f"Resource: {job.resource_name}")
+    print(f"\nView at: https://console.cloud.google.com/vertex-ai/pipelines/runs?project={project}")
+    print(f"TensorBoard: https://console.cloud.google.com/vertex-ai/experiments/tensorboard-instances/regions/{location}/{tensorboard_id}?project={project}")
     
     return job
 

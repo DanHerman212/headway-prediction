@@ -24,6 +24,7 @@ TAG=$(date +%Y%m%d-%H%M%S)
 # Derived values
 ARTIFACT_REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}"
 FULL_IMAGE_URI="${ARTIFACT_REGISTRY}/${IMAGE_NAME}:${TAG}"
+LATEST_IMAGE_URI="${ARTIFACT_REGISTRY}/${IMAGE_NAME}:latest"
 LOCAL_IMAGE="headway-training:local"
 
 # GCS paths
