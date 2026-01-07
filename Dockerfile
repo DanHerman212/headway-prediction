@@ -19,8 +19,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source code
 COPY src/ ./src/
 
-# Copy data for local testing (optional - typically mounted via GCS)
-COPY data/ ./data/
+# Note: Data is NOT copied into container
+# In production, data is loaded from GCS (gs://st-convnet-training-configuration/headway-prediction/data)
+# For local testing, mount data via: docker run -v $(pwd)/data:/app/data ...
 
 # Set Python path so modules are discoverable
 ENV PYTHONPATH=/app
@@ -28,9 +29,5 @@ ENV PYTHONPATH=/app
 # Set matplotlib to non-interactive backend
 ENV MPLBACKEND=Agg
 
-# Flexible entrypoint - allows running any experiment script
-# Usage: 
-#   docker run <image> python -m src.experiments.run_baseline --local
-#   docker run <image> python -m src.experiments.run_experiment
-ENTRYPOINT ["python"]
-CMD ["-m", "src.experiments.run_baseline", "--help"]
+# Run the KFP pipeline
+ENTRYPOINT ["python", "-m", "src.experiments.pipeline"]
