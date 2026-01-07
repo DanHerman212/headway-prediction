@@ -184,7 +184,8 @@ def create_callbacks(config: ExperimentConfig, local_output_dir: str):
     os.makedirs(local_output_dir, exist_ok=True)
     
     # Paths - always use local paths for checkpoints
-    checkpoint_path = os.path.join(local_output_dir, "best_model.keras")
+    # Use .h5 format for better compatibility with TF 2.14
+    checkpoint_path = os.path.join(local_output_dir, "best_model.h5")
     tensorboard_dir = os.path.join(local_output_dir, "tensorboard")
     
     callbacks = [
@@ -203,11 +204,12 @@ def create_callbacks(config: ExperimentConfig, local_output_dir: str):
             min_lr=1e-6,
             verbose=1
         ),
-        # Model checkpointing - save locally
+        # Model checkpointing - save locally with H5 format
         tf.keras.callbacks.ModelCheckpoint(
             filepath=checkpoint_path,
             monitor='val_loss',
             save_best_only=True,
+            save_weights_only=False,
             verbose=1
         ),
         # TensorBoard logging - save locally
