@@ -262,9 +262,11 @@ def run_experiment(
     print("Initializing Vertex AI Experiments...")
     aiplatform.init(project=project, location=location, experiment=experiment_name)
     
-    # Generate unique run name
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_name = f"exp{exp_id:02d}-{exp_config.exp_name}-{timestamp}"
+    # Generate unique run name (only lowercase, numbers, hyphens allowed)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    # Replace underscores with hyphens for Vertex AI compliance
+    safe_exp_name = exp_config.exp_name.replace("_", "-")
+    run_name = f"exp{exp_id:02d}-{safe_exp_name}-{timestamp}"
     print(f"Using experiment: {experiment_name}")
     print()
     
