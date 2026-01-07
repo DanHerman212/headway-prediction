@@ -22,6 +22,51 @@ from src.config import Config
 from src.metrics import rmse_seconds, r_squared
 
 
+def download_gcs_data(gcs_data_dir: str, local_dir: str = "/tmp/data") -> str:
+    """
+    Download data files from GCS to local directory.
+    
+    Args:
+        gcs_data_dir: GCS path like gs://bucket/path/to/data
+        local_dir: Local directory to download to
+        
+    Returns:
+        Local directory path containing the downloaded files
+    """
+    from google.cloud import storage
+    
+    os.makedirs(local_dir, exist_ok=True)
+    
+    # Parse GCS path
+    # gs://bucket-name/path/to/data -> bucket-name, path/to/data
+    path = gcs_data_dir.replace("gs://", "")
+    bucket_name = path.split("/")[0]
+    prefix = "/".join(path.split("/")[1:])
+    
+    print(f"Downloading data from {gcs_data_dir} to {local_dir}...")
+    
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    
+    # Files we need
+    required_files = [
+        "headway_matrix_full.npy",
+        "schedule_matrix_full.npy",
+    ]
+    
+    for filename in required_files:
+        blob_path = f"{prefix}/{filename}" if prefix else filename
+        blob = bucket.blob(blob_path)
+        local_path = os.path.join(local_dir, filename)
+        
+        print(f"  Downloading {blob_path}...")
+        blob.download_to_filename(local_path)
+        print(f"  Saved to {local_path}")
+    
+    print("Download complete!")
+    return local_dir
+
+
 def setup_gcs_auth():
     """Setup GCS authentication if running on Vertex AI."""
     # Vertex AI automatically provides credentials via the environment
@@ -99,9 +144,17 @@ def run_experiment(exp_id: int, data_dir: str = None, output_dir: str = None):
     print(f"Output dir: {exp_config.experiment_output_dir}")
     print()
     
+    # If data is on GCS, download to local /tmp
+    actual_data_dir = exp_config.data_dir
+    if actual_data_dir.startswith("gs://"):
+        actual_data_dir = download_gcs_data(exp_config.data_dir)
+    
+    print(f"Loading data from {actual_data_dir}...")
+    print()
+    
     # Create base config for data generator
     base_config = Config()
-    base_config.DATA_DIR = exp_config.data_dir
+    base_config.DATA_DIR = actual_data_dir  # Use local path (downloaded from GCS if needed)
     base_config.BATCH_SIZE = exp_config.batch_size
     base_config.LOOKBACK_MINS = exp_config.lookback_mins
     base_config.FORECAST_MINS = exp_config.forecast_mins
