@@ -48,7 +48,8 @@ TRAINING_IMAGE = f"{REGION}-docker.pkg.dev/{PROJECT}/headway-prediction/training
 @dsl.component(base_image=TRAINING_IMAGE)
 def data_component(
     config_json: str,
-) -> dsl.OutputPath(str):
+    data_info_output: dsl.OutputPath(str),
+):
     """
     Load and prepare data using SubwayDataGenerator with proper scaling.
     
@@ -169,11 +170,8 @@ def data_component(
     
     print(f"Data preparation complete: {json.dumps(data_info, indent=2)}")
     
-    output_path = "/tmp/data_info.json"
-    with open(output_path, "w") as f:
+    with open(data_info_output, "w") as f:
         json.dump(data_info, f)
-    
-    return output_path
 
 
 # =============================================================================
@@ -185,7 +183,8 @@ def training_component(
     data_info_path: dsl.InputPath(str),
     tensorboard_log_dir: str,
     model_output_dir: str,
-) -> dsl.OutputPath(str):
+    training_info_output: dsl.OutputPath(str),
+):
     """
     Train model using Trainer with tracking integration.
     
@@ -295,11 +294,8 @@ def training_component(
     
     print(f"Training complete: {json.dumps(training_info, indent=2)}")
     
-    output_path = "/tmp/training_info.json"
-    with open(output_path, "w") as f:
+    with open(training_info_output, "w") as f:
         json.dump(training_info, f)
-    
-    return output_path
 
 
 # =============================================================================
@@ -310,7 +306,8 @@ def training_component(
 def evaluation_component(
     training_info_path: dsl.InputPath(str),
     tensorboard_log_dir: str,
-) -> dsl.OutputPath(str):
+    eval_info_output: dsl.OutputPath(str),
+):
     """
     Evaluate model on TEST set using Evaluator.
     
@@ -451,11 +448,8 @@ def evaluation_component(
     
     print(f"Evaluation complete: {json.dumps(eval_info, indent=2)}")
     
-    output_path = "/tmp/eval_info.json"
-    with open(output_path, "w") as f:
+    with open(eval_info_output, "w") as f:
         json.dump(eval_info, f)
-    
-    return output_path
 
 
 # =============================================================================
@@ -497,7 +491,7 @@ def headway_pipeline(
     
     # Step 2: Training
     training_task = training_component(
-        data_info_path=data_task.output,
+        data_info_path=data_task.outputs["data_info_output"],
         tensorboard_log_dir=tensorboard_log_dir,
         model_output_dir=model_output_dir,
     )
@@ -508,7 +502,7 @@ def headway_pipeline(
     
     # Step 3: Evaluation on held-out test set
     eval_task = evaluation_component(
-        training_info_path=training_task.output,
+        training_info_path=training_task.outputs["training_info_output"],
         tensorboard_log_dir=tensorboard_log_dir,
     )
 
