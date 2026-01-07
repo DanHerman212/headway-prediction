@@ -41,6 +41,7 @@ def train_experiment(
     accelerator_type: str,
     accelerator_count: int,
     tensorboard_id: str,
+    service_account: str,
     metrics: Output[Metrics],
 ) -> NamedTuple("Outputs", [("job_name", str), ("output_dir", str)]):
     """
@@ -92,7 +93,7 @@ def train_experiment(
     job.run(
         sync=True,
         tensorboard=tensorboard_resource,
-        service_account=None,  # Uses default service account
+        service_account=service_account,
     )
     
     # Log metrics
