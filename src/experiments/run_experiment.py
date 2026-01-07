@@ -262,18 +262,12 @@ def run_experiment(
     
     # Initialize Vertex AI
     print("Initializing Vertex AI Experiments...")
-    aiplatform.init(project=project, location=location)
-    
-    # Create or get experiment
-    experiment = aiplatform.Experiment.get_or_create(
-        experiment_name=experiment_name,
-        description="Regularization experiments for ConvLSTM headway prediction",
-    )
-    print(f"Using experiment: {experiment_name}")
+    aiplatform.init(project=project, location=location, experiment=experiment_name)
     
     # Generate unique run name
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_name = f"exp{exp_id:02d}-{exp_config.exp_name}-{timestamp}"
+    print(f"Using experiment: {experiment_name}")
     print()
     
     # If data is on GCS, download to local /tmp
@@ -327,9 +321,12 @@ def run_experiment(
     # ========================================================================
     print(f"\nStarting Vertex AI Experiment Run: {run_name}")
     
-    with experiment.start_run(run_name) as run:
+    # Use aiplatform.start_run() - the correct API for experiment runs
+    aiplatform.start_run(run_name)
+    
+    try:
         # Log hyperparameters
-        run.log_params({
+        aiplatform.log_params({
             "exp_id": exp_id,
             "exp_name": exp_config.exp_name,
             "spatial_dropout_rate": exp_config.spatial_dropout_rate,
