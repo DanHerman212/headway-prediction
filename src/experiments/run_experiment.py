@@ -74,14 +74,48 @@ def setup_gcs_auth():
     pass
 
 
-def create_callbacks(config: ExperimentConfig):
-    """Create training callbacks with TensorBoard and GCS checkpointing."""
+def upload_to_gcs(local_dir: str, gcs_dir: str):
+    """
+    Upload local directory contents to GCS.
     
-    os.makedirs(config.experiment_output_dir, exist_ok=True)
+    Args:
+        local_dir: Local directory path
+        gcs_dir: GCS path like gs://bucket/path/to/dir
+    """
+    from google.cloud import storage
     
-    # Paths
-    checkpoint_path = os.path.join(config.experiment_output_dir, "best_model.keras")
-    tensorboard_dir = os.path.join(config.experiment_output_dir, "tensorboard")
+    # Parse GCS path
+    path = gcs_dir.replace("gs://", "")
+    bucket_name = path.split("/")[0]
+    prefix = "/".join(path.split("/")[1:])
+    
+    print(f"Uploading results from {local_dir} to {gcs_dir}...")
+    
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    
+    for root, dirs, files in os.walk(local_dir):
+        for filename in files:
+            local_path = os.path.join(root, filename)
+            # Calculate relative path from local_dir
+            rel_path = os.path.relpath(local_path, local_dir)
+            blob_path = f"{prefix}/{rel_path}" if prefix else rel_path
+            
+            blob = bucket.blob(blob_path)
+            blob.upload_from_filename(local_path)
+            print(f"  Uploaded: {blob_path}")
+    
+    print("Upload complete!")
+
+
+def create_callbacks(config: ExperimentConfig, local_output_dir: str):
+    """Create training callbacks with local checkpointing."""
+    
+    os.makedirs(local_output_dir, exist_ok=True)
+    
+    # Paths - always use local paths for checkpoints
+    checkpoint_path = os.path.join(local_output_dir, "best_model.keras")
+    tensorboard_dir = os.path.join(local_output_dir, "tensorboard")
     
     callbacks = [
         # Early stopping
@@ -99,14 +133,14 @@ def create_callbacks(config: ExperimentConfig):
             min_lr=1e-6,
             verbose=1
         ),
-        # Model checkpointing
+        # Model checkpointing - save locally
         tf.keras.callbacks.ModelCheckpoint(
             filepath=checkpoint_path,
             monitor='val_loss',
             save_best_only=True,
             verbose=1
         ),
-        # TensorBoard logging
+        # TensorBoard logging - save locally
         tf.keras.callbacks.TensorBoard(
             log_dir=tensorboard_dir,
             histogram_freq=1,
@@ -149,7 +183,20 @@ def run_experiment(exp_id: int, data_dir: str = None, output_dir: str = None):
     if actual_data_dir.startswith("gs://"):
         actual_data_dir = download_gcs_data(exp_config.data_dir)
     
+    # Determine local output directory (save locally, upload to GCS after)
+    gcs_output_dir = None
+    if exp_config.experiment_output_dir.startswith("gs://"):
+        gcs_output_dir = exp_config.experiment_output_dir
+        local_output_dir = f"/tmp/exp_{exp_id:02d}_{exp_config.exp_name}"
+    else:
+        local_output_dir = exp_config.experiment_output_dir
+    
+    os.makedirs(local_output_dir, exist_ok=True)
+    
     print(f"Loading data from {actual_data_dir}...")
+    print(f"Local output dir: {local_output_dir}")
+    if gcs_output_dir:
+        print(f"Will upload to: {gcs_output_dir}")
     print()
     
     # Create base config for data generator
@@ -200,8 +247,8 @@ def run_experiment(exp_id: int, data_dir: str = None, output_dir: str = None):
     
     model.summary()
     
-    # Create callbacks
-    callbacks = create_callbacks(exp_config)
+    # Create callbacks - use local output dir
+    callbacks = create_callbacks(exp_config, local_output_dir)
     
     # Train
     print(f"\nStarting training for {exp_config.epochs} epochs...")
@@ -239,10 +286,14 @@ def run_experiment(exp_id: int, data_dir: str = None, output_dir: str = None):
         "timestamp": datetime.now().isoformat(),
     }
     
-    # Save results JSON
-    results_path = os.path.join(exp_config.experiment_output_dir, "results.json")
+    # Save results JSON locally
+    results_path = os.path.join(local_output_dir, "results.json")
     with open(results_path, 'w') as f:
         json.dump(results, f, indent=2)
+    
+    # Upload to GCS if needed
+    if gcs_output_dir:
+        upload_to_gcs(local_output_dir, gcs_output_dir)
     
     print("\n" + "=" * 60)
     print("EXPERIMENT COMPLETE")
@@ -252,6 +303,8 @@ def run_experiment(exp_id: int, data_dir: str = None, output_dir: str = None):
     print(f"Best Val R²: {results['results']['best_val_r_squared']:.4f}")
     print(f"Best Epoch: {results['results']['best_epoch']}")
     print(f"Results saved to: {results_path}")
+    if gcs_output_dir:
+        print(f"Uploaded to: {gcs_output_dir}")
     print("=" * 60)
     
     return results
