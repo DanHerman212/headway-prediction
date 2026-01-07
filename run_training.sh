@@ -107,13 +107,13 @@ build_cloud() {
 # Step 4: Submit pipeline to Vertex AI
 # -----------------------------------------------------------------------------
 submit_pipeline() {
-    log "Submitting training pipeline to Vertex AI..."
+    log "Submitting Kubeflow Pipeline to Vertex AI..."
     log "Container: ${FULL_IMAGE_URI}"
     log "Data: ${DATA_DIR}"
     log "Output: ${OUTPUT_DIR}"
     
-    # Run the pipeline submission script
-    python3 -m src.experiments.vertex_pipeline \
+    # Run the KFP pipeline submission script
+    python3 -m src.experiments.kfp_pipeline \
         --project ${PROJECT_ID} \
         --bucket ${BUCKET} \
         --region ${REGION} \
