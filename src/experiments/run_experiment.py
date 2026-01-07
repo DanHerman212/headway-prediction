@@ -2,6 +2,9 @@
 """
 Single entry point for running training experiments on Vertex AI.
 
+Integrates with Vertex AI Experiments for full experiment tracking,
+including hyperparameters, time-series metrics, and model artifacts.
+
 Usage:
     python -m src.experiments.run_experiment --exp_id 1
     python -m src.experiments.run_experiment --exp_id 2 --data_dir gs://bucket/data
@@ -14,6 +17,7 @@ from datetime import datetime
 
 import tensorflow as tf
 import numpy as np
+from google.cloud import aiplatform
 
 from src.experiments.experiment_config import get_experiment, list_experiments, ExperimentConfig
 from src.models.st_convnet import HeadwayConvLSTM
@@ -21,6 +25,74 @@ from src.data.dataset import SubwayDataGenerator
 from src.config import Config
 from src.metrics import rmse_seconds, r_squared
 
+
+# ============================================================================
+# Vertex AI Experiments Callback
+# ============================================================================
+
+class VertexExperimentCallback(tf.keras.callbacks.Callback):
+    """
+    Keras callback that logs metrics to Vertex AI Experiments in real-time.
+    
+    This enables:
+    - Live tracking of training progress in Vertex AI Console
+    - Comparison of metrics across runs
+    - Programmatic querying of results
+    """
+    
+    def __init__(self, run, log_every_n_epochs: int = 1):
+        """
+        Args:
+            run: Vertex AI ExperimentRun object (from experiment.start_run())
+            log_every_n_epochs: How often to log metrics (default: every epoch)
+        """
+        super().__init__()
+        self.run = run
+        self.log_every_n_epochs = log_every_n_epochs
+    
+    def on_epoch_end(self, epoch, logs=None):
+        """Log metrics at end of each epoch."""
+        if logs is None:
+            return
+        
+        if (epoch + 1) % self.log_every_n_epochs != 0:
+            return
+        
+        # Log time-series metrics
+        metrics_to_log = {}
+        
+        # Map Keras metric names to cleaner names
+        metric_mapping = {
+            'loss': 'train_loss',
+            'val_loss': 'val_loss',
+            'rmse_seconds': 'train_rmse_seconds',
+            'val_rmse_seconds': 'val_rmse_seconds',
+            'r_squared': 'train_r_squared',
+            'val_r_squared': 'val_r_squared',
+        }
+        
+        for keras_name, display_name in metric_mapping.items():
+            if keras_name in logs:
+                metrics_to_log[display_name] = float(logs[keras_name])
+        
+        # Also log learning rate if available
+        if hasattr(self.model.optimizer, 'learning_rate'):
+            lr = self.model.optimizer.learning_rate
+            if hasattr(lr, 'numpy'):
+                metrics_to_log['learning_rate'] = float(lr.numpy())
+            else:
+                metrics_to_log['learning_rate'] = float(lr)
+        
+        # Log to Vertex AI Experiments
+        try:
+            self.run.log_time_series_metrics(metrics_to_log, step=epoch + 1)
+        except Exception as e:
+            print(f"Warning: Failed to log metrics to Vertex AI: {e}")
+
+
+# ============================================================================
+# Data & Model Utilities
+# ============================================================================
 
 def download_gcs_data(gcs_data_dir: str, local_dir: str = "/tmp/data") -> str:
     """
@@ -152,14 +224,24 @@ def create_callbacks(config: ExperimentConfig, local_output_dir: str):
     return callbacks
 
 
-def run_experiment(exp_id: int, data_dir: str = None, output_dir: str = None):
+def run_experiment(
+    exp_id: int, 
+    data_dir: str = None, 
+    output_dir: str = None,
+    project: str = "time-series-478616",
+    location: str = "us-east1",
+    experiment_name: str = "headway-regularization",
+):
     """
-    Run a single training experiment.
+    Run a single training experiment with Vertex AI Experiments tracking.
     
     Args:
         exp_id: Experiment ID (1-4)
         data_dir: Override data directory (for GCS paths)
         output_dir: Override output directory (for GCS paths)
+        project: GCP project ID
+        location: GCP region
+        experiment_name: Name of the Vertex AI Experiment to log to
     """
     # Get experiment config
     exp_config = get_experiment(exp_id)
@@ -176,6 +258,22 @@ def run_experiment(exp_id: int, data_dir: str = None, output_dir: str = None):
     print(f"Description: {exp_config.description}")
     print(f"Data dir: {exp_config.data_dir}")
     print(f"Output dir: {exp_config.experiment_output_dir}")
+    print()
+    
+    # Initialize Vertex AI
+    print("Initializing Vertex AI Experiments...")
+    aiplatform.init(project=project, location=location)
+    
+    # Create or get experiment
+    experiment = aiplatform.Experiment.get_or_create(
+        experiment_name=experiment_name,
+        description="Regularization experiments for ConvLSTM headway prediction",
+    )
+    print(f"Using experiment: {experiment_name}")
+    
+    # Generate unique run name
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_name = f"exp{exp_id:02d}-{exp_config.exp_name}-{timestamp}"
     print()
     
     # If data is on GCS, download to local /tmp
@@ -224,80 +322,126 @@ def run_experiment(exp_id: int, data_dir: str = None, output_dir: str = None):
     train_ds = data_gen.make_dataset(start_index=0, end_index=train_end, shuffle=True)
     val_ds = data_gen.make_dataset(start_index=train_end, end_index=None, shuffle=False)
     
-    # Build model with regularization
-    print("\nBuilding model...")
-    model_builder = HeadwayConvLSTM(
-        config=base_config,
-        spatial_dropout_rate=exp_config.spatial_dropout_rate
-    )
-    model = model_builder.build_model()
+    # ========================================================================
+    # Start Vertex AI Experiment Run
+    # ========================================================================
+    print(f"\nStarting Vertex AI Experiment Run: {run_name}")
     
-    # Compile with AdamW for weight decay support
-    print(f"Compiling with AdamW (lr={exp_config.learning_rate}, weight_decay={exp_config.weight_decay})")
-    optimizer = tf.keras.optimizers.AdamW(
-        learning_rate=exp_config.learning_rate,
-        weight_decay=exp_config.weight_decay
-    )
-    
-    model.compile(
-        optimizer=optimizer,
-        loss='mse',
-        metrics=[rmse_seconds, r_squared]
-    )
-    
-    model.summary()
-    
-    # Create callbacks - use local output dir
-    callbacks = create_callbacks(exp_config, local_output_dir)
-    
-    # Train
-    print(f"\nStarting training for {exp_config.epochs} epochs...")
-    print(f"  Early stopping patience: {exp_config.early_stopping_patience}")
-    print(f"  Spatial dropout rate: {exp_config.spatial_dropout_rate}")
-    print(f"  Weight decay: {exp_config.weight_decay}")
-    print()
-    
-    history = model.fit(
-        train_ds,
-        validation_data=val_ds,
-        epochs=exp_config.epochs,
-        callbacks=callbacks,
-        verbose=1
-    )
-    
-    # Save results
-    results = {
-        "exp_id": exp_id,
-        "exp_name": exp_config.exp_name,
-        "description": exp_config.description,
-        "config": {
+    with experiment.start_run(run_name) as run:
+        # Log hyperparameters
+        run.log_params({
+            "exp_id": exp_id,
+            "exp_name": exp_config.exp_name,
             "spatial_dropout_rate": exp_config.spatial_dropout_rate,
             "weight_decay": exp_config.weight_decay,
             "learning_rate": exp_config.learning_rate,
             "batch_size": exp_config.batch_size,
-        },
-        "results": {
-            "best_val_loss": float(min(history.history['val_loss'])),
-            "best_val_rmse_seconds": float(min(history.history['val_rmse_seconds'])),
-            "best_val_r_squared": float(max(history.history['val_r_squared'])),
-            "best_epoch": int(np.argmin(history.history['val_loss']) + 1),
-            "total_epochs": len(history.history['loss']),
-        },
-        "timestamp": datetime.now().isoformat(),
-    }
+            "epochs": exp_config.epochs,
+            "early_stopping_patience": exp_config.early_stopping_patience,
+            "lookback_mins": exp_config.lookback_mins,
+            "forecast_mins": exp_config.forecast_mins,
+            "filters": exp_config.filters,
+            "num_stations": exp_config.num_stations,
+            "train_samples": train_end,
+            "val_samples": total_samples - train_end,
+        })
+        print("Logged hyperparameters to Vertex AI Experiments")
+        
+        # Build model with regularization
+        print("\nBuilding model...")
+        model_builder = HeadwayConvLSTM(
+            config=base_config,
+            spatial_dropout_rate=exp_config.spatial_dropout_rate
+        )
+        model = model_builder.build_model()
+        
+        # Compile with AdamW for weight decay support
+        print(f"Compiling with AdamW (lr={exp_config.learning_rate}, weight_decay={exp_config.weight_decay})")
+        optimizer = tf.keras.optimizers.AdamW(
+            learning_rate=exp_config.learning_rate,
+            weight_decay=exp_config.weight_decay
+        )
+        
+        model.compile(
+            optimizer=optimizer,
+            loss='mse',
+            metrics=[rmse_seconds, r_squared]
+        )
+        
+        model.summary()
+        
+        # Create callbacks - use local output dir + Vertex AI Experiments callback
+        callbacks = create_callbacks(exp_config, local_output_dir)
+        callbacks.append(VertexExperimentCallback(run))
+        
+        # Train
+        print(f"\nStarting training for {exp_config.epochs} epochs...")
+        print(f"  Early stopping patience: {exp_config.early_stopping_patience}")
+        print(f"  Spatial dropout rate: {exp_config.spatial_dropout_rate}")
+        print(f"  Weight decay: {exp_config.weight_decay}")
+        print()
+        
+        history = model.fit(
+            train_ds,
+            validation_data=val_ds,
+            epochs=exp_config.epochs,
+            callbacks=callbacks,
+            verbose=1
+        )
+        
+        # Calculate final metrics
+        best_val_loss = float(min(history.history['val_loss']))
+        best_val_rmse = float(min(history.history['val_rmse_seconds']))
+        best_val_r2 = float(max(history.history['val_r_squared']))
+        best_epoch = int(np.argmin(history.history['val_loss']) + 1)
+        total_epochs = len(history.history['loss'])
+        
+        # Log final summary metrics to Vertex AI Experiments
+        run.log_metrics({
+            "best_val_loss": best_val_loss,
+            "best_val_rmse_seconds": best_val_rmse,
+            "best_val_r_squared": best_val_r2,
+            "best_epoch": best_epoch,
+            "total_epochs": total_epochs,
+        })
+        print("Logged final metrics to Vertex AI Experiments")
+        
+        # Save results
+        results = {
+            "exp_id": exp_id,
+            "exp_name": exp_config.exp_name,
+            "description": exp_config.description,
+            "run_name": run_name,
+            "config": {
+                "spatial_dropout_rate": exp_config.spatial_dropout_rate,
+                "weight_decay": exp_config.weight_decay,
+                "learning_rate": exp_config.learning_rate,
+                "batch_size": exp_config.batch_size,
+            },
+            "results": {
+                "best_val_loss": best_val_loss,
+                "best_val_rmse_seconds": best_val_rmse,
+                "best_val_r_squared": best_val_r2,
+                "best_epoch": best_epoch,
+                "total_epochs": total_epochs,
+            },
+            "timestamp": datetime.now().isoformat(),
+        }
+        
+        # Save results JSON locally
+        results_path = os.path.join(local_output_dir, "results.json")
+        with open(results_path, 'w') as f:
+            json.dump(results, f, indent=2)
+        
+        # Upload to GCS if needed
+        if gcs_output_dir:
+            upload_to_gcs(local_output_dir, gcs_output_dir)
     
-    # Save results JSON locally
-    results_path = os.path.join(local_output_dir, "results.json")
-    with open(results_path, 'w') as f:
-        json.dump(results, f, indent=2)
-    
-    # Upload to GCS if needed
-    if gcs_output_dir:
-        upload_to_gcs(local_output_dir, gcs_output_dir)
-    
+    # End of experiment run context
     print("\n" + "=" * 60)
     print("EXPERIMENT COMPLETE")
     print("=" * 60)
+    print(f"Experiment Run: {run_name}")
     print(f"Best Val Loss: {results['results']['best_val_loss']:.6f}")
     print(f"Best Val RMSE (seconds): {results['results']['best_val_rmse_seconds']:.2f}")
     print(f"Best Val R²: {results['results']['best_val_r_squared']:.4f}")
@@ -305,16 +449,21 @@ def run_experiment(exp_id: int, data_dir: str = None, output_dir: str = None):
     print(f"Results saved to: {results_path}")
     if gcs_output_dir:
         print(f"Uploaded to: {gcs_output_dir}")
+    print(f"\nView in Vertex AI Console:")
+    print(f"  https://console.cloud.google.com/vertex-ai/experiments/{experiment_name}?project={project}")
     print("=" * 60)
     
     return results
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run a training experiment")
+    parser = argparse.ArgumentParser(description="Run a training experiment with Vertex AI Experiments tracking")
     parser.add_argument("--exp_id", type=int, required=True, help="Experiment ID (1-4)")
     parser.add_argument("--data_dir", type=str, default=None, help="Data directory (local or GCS path)")
     parser.add_argument("--output_dir", type=str, default=None, help="Output directory (local or GCS path)")
+    parser.add_argument("--project", type=str, default="time-series-478616", help="GCP project ID")
+    parser.add_argument("--location", type=str, default="us-east1", help="GCP region")
+    parser.add_argument("--experiment", type=str, default="headway-regularization", help="Vertex AI Experiment name")
     parser.add_argument("--list", action="store_true", help="List available experiments")
     
     args = parser.parse_args()
@@ -323,14 +472,13 @@ def main():
         list_experiments()
         return
     
-    # Setup GCS if needed
-    if args.data_dir and args.data_dir.startswith("gs://"):
-        setup_gcs_auth()
-    
     run_experiment(
         exp_id=args.exp_id,
         data_dir=args.data_dir,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        project=args.project,
+        location=args.location,
+        experiment_name=args.experiment,
     )
 
 
