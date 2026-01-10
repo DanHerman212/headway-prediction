@@ -58,7 +58,7 @@ class Trainer:
             # - weight_decay=0.01: Decoupled from gradient, keeps moment estimates clean
             optimizer = keras.optimizers.AdamW(
                 learning_rate=lr_schedule,
-                weight_decay=0.01,
+                weight_decay=0.02,  # Increased from 0.01 for stronger regularization
                 beta_1=0.9,
                 beta_2=0.95,
                 epsilon=1e-6,
@@ -73,7 +73,7 @@ class Trainer:
             # Fallback to constant LR if steps_per_epoch not provided
             optimizer = keras.optimizers.AdamW(
                 learning_rate=self.config.LEARNING_RATE,
-                weight_decay=0.01,
+                weight_decay=0.02,  # Increased from 0.01 for stronger regularization
                 beta_2=0.95,
                 epsilon=1e-6,
                 clipnorm=1.0
