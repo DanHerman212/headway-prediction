@@ -45,14 +45,14 @@ class Trainer:
                 decay_steps=total_steps,
                 alpha=0.01  # Final LR = 1% of initial (not full zero)
             )
-            optimizer = keras.optimizers.Adam(learning_rate=lr_schedule, clipnorm=1.0)
+            optimizer = keras.optimizers.Adam(learning_rate=lr_schedule, clipnorm=1.0, epsilon=1e-4)
             print(f"Using CosineDecay: {self.config.LEARNING_RATE} → {self.config.LEARNING_RATE * 0.01} over {total_steps} steps")
-            print("Gradient clipping: clipnorm=1.0 (per-layer)")
+            print("Gradient clipping: clipnorm=1.0, epsilon=1e-4 (mixed-precision stable)")
         else:
             # Fallback to constant LR if steps_per_epoch not provided
-            optimizer = keras.optimizers.Adam(learning_rate=self.config.LEARNING_RATE, clipnorm=1.0)
+            optimizer = keras.optimizers.Adam(learning_rate=self.config.LEARNING_RATE, clipnorm=1.0, epsilon=1e-4)
             print(f"Using constant LR: {self.config.LEARNING_RATE} (pass steps_per_epoch for CosineDecay)")
-            print("Gradient clipping: clipnorm=1.0 (per-layer)")
+            print("Gradient clipping: clipnorm=1.0, epsilon=1e-4 (mixed-precision stable)")
 
         # Loss: MSE (penalizes large outliers/delays heavily)
         # Metrics: 

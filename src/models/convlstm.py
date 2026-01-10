@@ -192,7 +192,8 @@ class ConvLSTM:
             name="encoder_convlstm_1"
         )(x)
         
-        x = layers.BatchNormalization(name="encoder_bn_1")(x)
+        # LayerNorm: normalizes per-sample, avoids running stat corruption in mixed precision
+        x = layers.LayerNormalization(axis=[-3, -2, -1], name="encoder_ln_1")(x)
         
         # Encoder Layer 2 - Returns states for decoder
         x, state_h, state_c = layers.ConvLSTM2D(
@@ -206,7 +207,8 @@ class ConvLSTM:
             name="encoder_convlstm_2"
         )(x)
         
-        x = layers.BatchNormalization(name="encoder_bn_2")(x)
+        # LayerNorm: normalizes per-sample, avoids running stat corruption in mixed precision
+        x = layers.LayerNormalization(axis=[-3, -2, -1], name="encoder_ln_2")(x)
         
         return x, state_h, state_c
     
@@ -233,7 +235,8 @@ class ConvLSTM:
             name="decoder_convlstm_1"
         )(x, initial_state=[state_h, state_c])
         
-        x = layers.BatchNormalization(name="decoder_bn_1")(x)
+        # LayerNorm: normalizes per-sample, avoids running stat corruption in mixed precision
+        x = layers.LayerNormalization(axis=[-3, -2, -1], name="decoder_ln_1")(x)
         
         # Decoder Layer 2
         x, _, _ = layers.ConvLSTM2D(
@@ -247,7 +250,8 @@ class ConvLSTM:
             name="decoder_convlstm_2"
         )(x)
         
-        x = layers.BatchNormalization(name="decoder_bn_2")(x)
+        # LayerNorm: normalizes per-sample, avoids running stat corruption in mixed precision
+        x = layers.LayerNormalization(axis=[-3, -2, -1], name="decoder_ln_2")(x)
         
         return x
     
