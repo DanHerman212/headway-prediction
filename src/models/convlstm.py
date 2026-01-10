@@ -271,7 +271,6 @@ class ConvLSTM:
         # GroupNorm: batch-independent normalization, stable for RNNs
         # groups=32 matches filter count (32 filters = 32 groups = per-channel norm)
         x = layers.GroupNormalization(groups=32, name="encoder_gn_1")(x)
-        x = layers.SpatialDropout3D(self.dropout_rate, name="encoder_dropout_1")(x)
         
         # Encoder Layer 2 - Returns states for decoder
         x, state_h, state_c = layers.ConvLSTM2D(
@@ -286,7 +285,6 @@ class ConvLSTM:
         )(x)
         
         x = layers.GroupNormalization(groups=32, name="encoder_gn_2")(x)
-        x = layers.SpatialDropout3D(self.dropout_rate, name="encoder_dropout_2")(x)
         
         return x, state_h, state_c
     

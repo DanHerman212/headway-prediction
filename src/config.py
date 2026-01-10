@@ -17,7 +17,7 @@ class Config:
 
    # Architecture (Paper Table 1)
    FILTERS: int = 32          # Paper: 32 (not 64)
-   KERNEL_SIZE: tuple = (3, 3)
+   KERNEL_SIZE: tuple = (3, 1) # Paper: (3,1) - convolve along track only, not across directions
    NUM_STATIONS: int = 66     # A-line: 66 sequence_ids
 
    # Data splits (60/20/20)
