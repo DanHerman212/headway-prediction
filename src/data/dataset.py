@@ -66,14 +66,19 @@ class SubwayDataGenerator:
         # 3. define slicing function
         def split_window(i):
             # input 1: headway history [t: t+30]
+            # Raw shape: (30, 66, 2, 1), squeeze to (30, 66, 2)
             past_headway = headway_tensor[i : i + lookback]
+            past_headway = tf.squeeze(past_headway, axis=-1)  # Remove trailing channel dim
 
             # input 2: future schedule [t+30 : t+45]
-            # note schedule aligns with the target window
+            # Raw shape: (15, 2, 1), squeeze to (15, 2)
             future_schedule = schedule_tensor[i + lookback : i + total_window_size]
+            future_schedule = tf.squeeze(future_schedule, axis=-1)
 
             # Target: future headway [t+30 : t+45]
+            # Raw shape: (15, 66, 2, 1), squeeze to (15, 66, 2)
             target_headway = headway_tensor[i + lookback : i + total_window_size]
+            target_headway = tf.squeeze(target_headway, axis=-1)
 
             return(
                 {"headway_input": past_headway, "schedule_input": future_schedule},
