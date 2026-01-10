@@ -59,8 +59,10 @@ class Trainer:
         self.model.compile(
             optimizer=optimizer,
             loss='mse',
-            metrics=[rmse_seconds, r_squared]
+            metrics=[rmse_seconds, r_squared],
+            jit_compile=True  # XLA: Fuses kernels, reduces launch overhead
         )
+        print("XLA JIT compilation enabled")
 
     def fit(
         self, 

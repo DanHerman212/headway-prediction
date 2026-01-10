@@ -188,6 +188,7 @@ class ConvLSTM:
             padding="same",
             return_sequences=True,
             activation="relu",
+            unroll=True,  # Static graph: trades memory for speed
             name="encoder_convlstm_1"
         )(x)
         
@@ -201,6 +202,7 @@ class ConvLSTM:
             return_sequences=True,
             return_state=True,
             activation="relu",
+            unroll=True,  # Static graph: trades memory for speed
             name="encoder_convlstm_2"
         )(x)
         
@@ -227,6 +229,7 @@ class ConvLSTM:
             padding="same",
             return_sequences=True,
             activation="relu",
+            unroll=True,  # Static graph: trades memory for speed
             name="decoder_convlstm_1"
         )(x, initial_state=[state_h, state_c])
         
@@ -240,6 +243,7 @@ class ConvLSTM:
             return_sequences=True,
             return_state=True,
             activation="relu",
+            unroll=True,  # Static graph: trades memory for speed
             name="decoder_convlstm_2"
         )(x)
         
