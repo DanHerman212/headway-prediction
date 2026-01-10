@@ -10,10 +10,10 @@ class Config:
    FORECAST_MINS: int = 15   # Paper: 15 min forecast
 
    # Training (Paper Table 1)
-   BATCH_SIZE: int = 32              # Paper: 32
+   BATCH_SIZE: int = 128             # Scaled for A100
    EPOCHS: int = 100                 # Paper: 100
    LEARNING_RATE: float = 1e-3       # Paper: Adam default
-   EARLY_STOPPING_PATIENCE: int = 50 # Paper: 50 epochs
+   EARLY_STOPPING_PATIENCE: int = 20 # Stop if no improvement
 
    # Architecture (Paper Table 1)
    FILTERS: int = 32          # Paper: 32 (not 64)
