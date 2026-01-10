@@ -40,19 +40,47 @@ class Trainer:
         # More stable than step decay for recurrent networks
         if self.steps_per_epoch is not None:
             total_steps = self.steps_per_epoch * self.config.EPOCHS
+            warmup_epochs = 5
+            warmup_steps = self.steps_per_epoch * warmup_epochs
+            
+            # CosineDecay with Warmup: ramp LR from near-zero to target over first 5 epochs
+            # This stabilizes early training before entering high-curvature regions
             lr_schedule = keras.optimizers.schedules.CosineDecay(
-                initial_learning_rate=self.config.LEARNING_RATE,
-                decay_steps=total_steps,
-                alpha=0.01  # Final LR = 1% of initial (not full zero)
+                initial_learning_rate=1e-6,              # Start near zero
+                decay_steps=total_steps - warmup_steps,  # Decay phase
+                alpha=0.01,                              # Final LR = 1% of peak
+                warmup_target=self.config.LEARNING_RATE, # Ramp up to target
+                warmup_steps=warmup_steps                # Over 5 epochs
             )
-            optimizer = keras.optimizers.Adam(learning_rate=lr_schedule, clipnorm=1.0, epsilon=1e-4)
-            print(f"Using CosineDecay: {self.config.LEARNING_RATE} → {self.config.LEARNING_RATE * 0.01} over {total_steps} steps")
-            print("Gradient clipping: clipnorm=1.0, epsilon=1e-4 (mixed-precision stable)")
+            # AdamW with tuned hyperparameters for bfloat16 stability:
+            # - beta_2=0.95: Faster curvature tracking (~20 steps vs 1000) to avoid Edge of Stability spikes
+            # - epsilon=1e-6: Safe buffer above bfloat16 noise floor (was 1e-7)
+            # - weight_decay=0.01: Decoupled from gradient, keeps moment estimates clean
+            optimizer = keras.optimizers.AdamW(
+                learning_rate=lr_schedule,
+                weight_decay=0.01,
+                beta_1=0.9,
+                beta_2=0.95,
+                epsilon=1e-6,
+                clipnorm=1.0
+            )
+            print(f"Using AdamW with CosineDecay + Warmup:")
+            print(f"  Warmup: 1e-6 → {self.config.LEARNING_RATE} over {warmup_steps} steps ({warmup_epochs} epochs)")
+            print(f"  Decay:  {self.config.LEARNING_RATE} → {self.config.LEARNING_RATE * 0.01} over {total_steps - warmup_steps} steps")
+            print(f"  AdamW: beta_2=0.95, epsilon=1e-6, weight_decay=0.01")
+            print("Gradient clipping: clipnorm=1.0")
         else:
             # Fallback to constant LR if steps_per_epoch not provided
-            optimizer = keras.optimizers.Adam(learning_rate=self.config.LEARNING_RATE, clipnorm=1.0, epsilon=1e-4)
-            print(f"Using constant LR: {self.config.LEARNING_RATE} (pass steps_per_epoch for CosineDecay)")
-            print("Gradient clipping: clipnorm=1.0, epsilon=1e-4 (mixed-precision stable)")
+            optimizer = keras.optimizers.AdamW(
+                learning_rate=self.config.LEARNING_RATE,
+                weight_decay=0.01,
+                beta_2=0.95,
+                epsilon=1e-6,
+                clipnorm=1.0
+            )
+            print(f"Using AdamW with constant LR: {self.config.LEARNING_RATE} (pass steps_per_epoch for CosineDecay)")
+            print(f"  AdamW: beta_2=0.95, epsilon=1e-6, weight_decay=0.01")
+            print("Gradient clipping: clipnorm=1.0")
 
         # Loss: MSE (penalizes large outliers/delays heavily)
         # Metrics: 
@@ -95,17 +123,13 @@ class Trainer:
         checkpoint_path = os.path.join(self.checkpoint_dir, "best_model.keras")
         
         # Core callbacks
+        # Note: ReduceLROnPlateau is NOT included because we use CosineDecay schedule.
+        # These are mutually exclusive — CosineDecay controls LR, callbacks can't override it.
         callbacks = [
             keras.callbacks.EarlyStopping(
                 monitor='val_loss',
                 patience=patience,
                 restore_best_weights=True,
-                verbose=1
-            ),
-            keras.callbacks.ReduceLROnPlateau(
-                monitor='val_loss',
-                factor=0.5,
-                patience=reduce_lr_patience,
                 verbose=1
             ),
             keras.callbacks.ModelCheckpoint(

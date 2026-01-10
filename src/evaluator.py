@@ -242,17 +242,27 @@ class Evaluator:
             targets_sec = to_seconds(targets)
             preds_sec = to_seconds(preds)
 
-            # Extract sample, direction, channel 0
+            # Extract sample, direction
+            # Handle both 4D (B, T, S, D) and 5D (B, T, S, D, 1) shapes
             # Shape: (Time, Stations) -> Transpose to (Stations, Time) for imshow
             
             # Past: (30, Stations)
-            past = past_data_sec[sample_idx, :, :, direction, 0].T
+            if past_data_sec.ndim == 5:
+                past = past_data_sec[sample_idx, :, :, direction, 0].T
+            else:
+                past = past_data_sec[sample_idx, :, :, direction].T
             
             # Future True: (15, Stations)
-            future_true = targets_sec[sample_idx, :, :, direction, 0].T
+            if targets_sec.ndim == 5:
+                future_true = targets_sec[sample_idx, :, :, direction, 0].T
+            else:
+                future_true = targets_sec[sample_idx, :, :, direction].T
             
             # Future Pred: (15, Stations)
-            future_pred = preds_sec[sample_idx, :, :, direction, 0].T
+            if preds_sec.ndim == 5:
+                future_pred = preds_sec[sample_idx, :, :, direction, 0].T
+            else:
+                future_pred = preds_sec[sample_idx, :, :, direction].T
 
             # Stitch them together along the time axis (axis 1)
             # Result: (Stations, 45)
@@ -260,28 +270,29 @@ class Evaluator:
             full_pred = np.concatenate([past, future_pred], axis=1)
 
             # 2. Setup Plot (matching paper Figure 7 style)
-            fig, axes = plt.subplots(1, 2, figsize=(14, 6), dpi=150)
+            # Wider figure to accommodate colorbar on the right
+            fig, axes = plt.subplots(1, 2, figsize=(12, 4), dpi=100)
             
             # Paper uses 0-1200 seconds range (0-20 min)
             cmap = 'RdYlGn_r'  # Red=High headway (bad), Green=Low headway (good)
             vmin, vmax = 0, 1200  # Seconds (matches paper Figure 7)
             
-            def style_ax(ax, data, title):
+            def style_ax(ax, data, title, show_predicted_label=False):
                 im = ax.imshow(data, aspect='auto', cmap=cmap, origin='lower', 
                              vmin=vmin, vmax=vmax, interpolation='nearest')
                 
                 # Dotted Line at prediction boundary (between index 29 and 30)
                 ax.axvline(x=29.5, color='black', linestyle=':', linewidth=2, alpha=0.9)
                 
-                # Add "Input" and "Predicted" labels like Figure 7
-                ax.text(14, data.shape[0] + 2, 'Input', ha='center', fontsize=10, fontweight='bold')
-                if 'Predicted' in title:
-                    ax.text(37, data.shape[0] + 2, 'Predicted', ha='center', fontsize=10, fontweight='bold')
+                # Labels and title
+                ax.set_xlabel("Time (relative to prediction point)", fontsize=9)
+                ax.set_ylabel("Station (Distance from Terminal)", fontsize=9)
                 
-                # Labels matching paper style
-                ax.set_title(title, fontsize=12, pad=20)
-                ax.set_xlabel("Time (relative to prediction point)", fontsize=10)
-                ax.set_ylabel("Station (Distance from Terminal)", fontsize=10)
+                # Build title with Input/Predicted spans
+                if show_predicted_label:
+                    ax.set_title(f"{title}\nInput                    Predicted", fontsize=10, linespacing=1.4)
+                else:
+                    ax.set_title(f"{title}\nInput", fontsize=10, linespacing=1.4)
                 
                 # X-axis: show actual time labels
                 # 0-29 = past (-30 to -1 min), 30-44 = future (0 to +14 min)
@@ -293,24 +304,25 @@ class Evaluator:
                 return im
 
             # Plot A: Actual (like paper Figure 7a)
-            style_ax(axes[0], full_true, "(a) Actual")
+            style_ax(axes[0], full_true, "(a) Actual", show_predicted_label=False)
             
             # Plot B: Input + Predicted (like paper Figure 7b)
-            im = style_ax(axes[1], full_pred, "(b) Input + Predicted")
+            im = style_ax(axes[1], full_pred, "(b) Predicted", show_predicted_label=True)
             
             # Simplify right plot y-axis
             axes[1].set_yticks([])
             axes[1].set_ylabel("")
 
-            # Colorbar matching paper (seconds, 0-1200)
-            cbar = fig.colorbar(im, ax=axes.ravel().tolist(), pad=0.02, aspect=30,
-                               ticks=[0, 200, 400, 600, 800, 1000, 1200])
-            cbar.set_label('Headway (seconds)', rotation=270, labelpad=15, fontsize=11)
-            
+            # Adjust layout FIRST, then add colorbar
             direction_name = "Northbound" if direction == 0 else "Southbound"
-            plt.suptitle(f"Headway Heatmaps - {direction_name} Direction", y=0.98, fontsize=13)
+            fig.suptitle(f"Headway Heatmaps - {direction_name} Direction", y=1.02, fontsize=11)
+            fig.subplots_adjust(top=0.88, left=0.08, right=0.78, wspace=0.1)
             
-            plt.tight_layout()
+            # Create dedicated colorbar axis on the right
+            cbar_ax = fig.add_axes([0.82, 0.15, 0.02, 0.65])  # [left, bottom, width, height]
+            cbar = fig.colorbar(im, cax=cbar_ax, ticks=[0, 300, 600, 900, 1200])
+            cbar.set_label('Headway (sec)', fontsize=9)
+            
             if save_path:
                 plt.savefig(save_path, dpi=150, bbox_inches='tight')
                 print(f"💾 Prediction heatmap saved to {save_path}")

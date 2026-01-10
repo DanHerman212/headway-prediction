@@ -1,5 +1,7 @@
 import tensorflow as tf
 
+# Use tf.keras.utils for compatibility with TF 2.x versions
+@tf.keras.utils.register_keras_serializable(package="HeadwayMetrics")
 def rmse_seconds(y_true, y_pred):
     """
     Computes Root Mean Squared Error (RMSE) converted to seconds.
@@ -15,6 +17,7 @@ def rmse_seconds(y_true, y_pred):
     # Conversion: 1.0 (norm) = 30 mins = 1800 seconds
     return rmse * 1800.0
 
+@tf.keras.utils.register_keras_serializable(package="HeadwayMetrics")
 def mae_seconds(y_true, y_pred):
     """
     Computes Mean Absolute Error (MAE) converted to seconds.
@@ -29,6 +32,7 @@ def mae_seconds(y_true, y_pred):
     return mae * 1800.0
 
 
+@tf.keras.utils.register_keras_serializable(package="HeadwayMetrics")
 def r_squared(y_true, y_pred):
     """
     Computes R² (coefficient of determination).
