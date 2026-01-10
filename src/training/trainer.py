@@ -18,20 +18,39 @@ class Trainer:
         Pass callbacks from src/tracking/ to enable TensorBoard logging.
     """
     
-    def __init__(self, model, config: Config, checkpoint_dir: str = "models"):
+    def __init__(self, model, config: Config, checkpoint_dir: str = "models", steps_per_epoch: int = None):
         """
         Args:
             model: Compiled or uncompiled Keras model
             config: Configuration object with hyperparameters
             checkpoint_dir: Directory for model checkpoints
+            steps_per_epoch: Number of training steps per epoch (for LR scheduling).
+                            If None, uses estimate based on typical dataset size.
         """
         self.model = model
         self.config = config
         self.checkpoint_dir = checkpoint_dir
+        self.steps_per_epoch = steps_per_epoch
 
     def compile_model(self):
         """Configures model for training with production-relevant metrics."""
-        optimizer = keras.optimizers.Adam(learning_rate=self.config.LEARNING_RATE)
+        
+        # Cosine Decay Learning Rate Schedule
+        # Smoothly decays LR from initial value to near-zero over training
+        # More stable than step decay for recurrent networks
+        if self.steps_per_epoch is not None:
+            total_steps = self.steps_per_epoch * self.config.EPOCHS
+            lr_schedule = keras.optimizers.schedules.CosineDecay(
+                initial_learning_rate=self.config.LEARNING_RATE,
+                decay_steps=total_steps,
+                alpha=0.01  # Final LR = 1% of initial (not full zero)
+            )
+            optimizer = keras.optimizers.Adam(learning_rate=lr_schedule)
+            print(f"Using CosineDecay: {self.config.LEARNING_RATE} → {self.config.LEARNING_RATE * 0.01} over {total_steps} steps")
+        else:
+            # Fallback to constant LR if steps_per_epoch not provided
+            optimizer = keras.optimizers.Adam(learning_rate=self.config.LEARNING_RATE)
+            print(f"Using constant LR: {self.config.LEARNING_RATE} (pass steps_per_epoch for CosineDecay)")
 
         # Loss: MSE (penalizes large outliers/delays heavily)
         # Metrics: 
