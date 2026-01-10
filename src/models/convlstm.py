@@ -54,6 +54,42 @@ class BroadcastScheduleLayer(layers.Layer):
         return config
 
 
+class BroadcastTemporalLayer(layers.Layer):
+    """
+    Broadcasts temporal features to all stations and directions.
+    
+    Input: (Batch, Time, 4) - cyclical time features (hour_sin, hour_cos, day_sin, day_cos)
+    Output: (Batch, Time, Stations, Directions, 4) - features broadcast spatially
+    
+    This allows the model to know "what time is it" at each spatial location.
+    """
+    
+    def __init__(self, num_stations, num_directions=2, **kwargs):
+        super().__init__(**kwargs)
+        self.num_stations = num_stations
+        self.num_directions = num_directions
+    
+    def call(self, inputs):
+        # inputs shape: (Batch, Time, 4)
+        # We want: (Batch, Time, Stations, Directions, 4)
+        
+        # Expand dims: (B, T, 4) -> (B, T, 1, 1, 4)
+        expanded = tf.expand_dims(tf.expand_dims(inputs, axis=2), axis=3)
+        
+        # Tile: (B, T, 1, 1, 4) -> (B, T, Stations, Directions, 4)
+        broadcasted = tf.tile(expanded, [1, 1, self.num_stations, self.num_directions, 1])
+        
+        return broadcasted
+    
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "num_stations": self.num_stations,
+            "num_directions": self.num_directions
+        })
+        return config
+
+
 class ConvLSTM:
     """
     ConvLSTM Encoder-Decoder with Terminal Schedule Broadcasting.
@@ -77,19 +113,22 @@ class ConvLSTM:
     
     # Class-level registry of custom layers for model loading
     custom_objects = {
-        'BroadcastScheduleLayer': BroadcastScheduleLayer
+        'BroadcastScheduleLayer': BroadcastScheduleLayer,
+        'BroadcastTemporalLayer': BroadcastTemporalLayer
     }
     
-    def __init__(self, config: Config = None):
+    def __init__(self, config: Config = None, use_temporal: bool = False):
         """
         Initialize the ConvLSTM builder.
         
         Args:
             config: Configuration object with hyperparameters.
                    If None, uses default Config().
+            use_temporal: If True, adds temporal_input for cyclical time features
         """
         self.config = config if config is not None else Config()
         self.model = None
+        self.use_temporal = use_temporal
         
         # Extract dimensions from config
         self.lookback = self.config.LOOKBACK_MINS       # 30
@@ -99,15 +138,17 @@ class ConvLSTM:
         self.num_terminals = 2                          # North and South terminals
         self.filters = self.config.FILTERS              # 32
         self.kernel_size = self.config.KERNEL_SIZE      # (3, 3)
+        self.temporal_features = 4                      # hour_sin, hour_cos, day_sin, day_cos
     
     def build_model(self) -> keras.Model:
         """
         Build the ConvLSTM Encoder-Decoder model.
         
         Returns:
-            Keras Functional API model with two inputs:
+            Keras Functional API model with inputs:
                 - headway_input: (B, 30, 66, 2)
                 - schedule_input: (B, 15, 2)
+                - temporal_input (optional): (B, 30, 4)
             Output: (B, 15, 66, 2)
         """
         # =================================================================
@@ -123,6 +164,14 @@ class ConvLSTM:
             name="schedule_input"
         )
         
+        # Optional temporal input
+        input_temporal = None
+        if self.use_temporal:
+            input_temporal = keras.Input(
+                shape=(self.lookback, self.temporal_features),
+                name="temporal_input"
+            )
+        
         # =================================================================
         # Schedule Broadcasting
         # =================================================================
@@ -134,10 +183,29 @@ class ConvLSTM:
         # =================================================================
         # Reshape for ConvLSTM2D (5D input required)
         # =================================================================
+        # Headway: (B, T, 66, 2) -> (B, T, 66, 2, 1)
         headway_5d = layers.Reshape(
             (self.lookback, self.num_stations, self.num_directions, 1),
             name="reshape_headway_5d"
         )(input_headway)
+        
+        # =================================================================
+        # Temporal Feature Fusion (Early Fusion)
+        # =================================================================
+        if self.use_temporal:
+            # Broadcast temporal to (B, T, 66, 2, 4)
+            temporal_broadcast = BroadcastTemporalLayer(
+                num_stations=self.num_stations,
+                num_directions=self.num_directions,
+                name="broadcast_temporal"
+            )(input_temporal)
+            
+            # Concatenate: headway (1 ch) + temporal (4 ch) = 5 channels
+            encoder_input = layers.Concatenate(axis=-1, name="fuse_temporal")(
+                [headway_5d, temporal_broadcast]
+            )
+        else:
+            encoder_input = headway_5d
         
         schedule_5d = layers.Reshape(
             (self.forecast, self.num_stations, self.num_directions, 1),
@@ -145,9 +213,9 @@ class ConvLSTM:
         )(schedule_broadcast)
         
         # =================================================================
-        # Encoder
+        # Encoder (uses fused encoder_input with temporal features)
         # =================================================================
-        encoder_x = self._build_encoder(headway_5d)
+        encoder_x = self._build_encoder(encoder_input)
         state_h, state_c = encoder_x[1], encoder_x[2]
         
         # =================================================================
@@ -163,8 +231,15 @@ class ConvLSTM:
         # =================================================================
         # Build Model
         # =================================================================
+        inputs_dict = {
+            "headway_input": input_headway,
+            "schedule_input": input_schedule
+        }
+        if self.use_temporal:
+            inputs_dict["temporal_input"] = input_temporal
+        
         self.model = keras.Model(
-            inputs={"headway_input": input_headway, "schedule_input": input_schedule},
+            inputs=inputs_dict,
             outputs=output,
             name="ConvLSTM_HeadwayPredictor"
         )
@@ -295,6 +370,7 @@ class ConvLSTM:
             "num_directions": self.num_directions,
             "filters": self.filters,
             "kernel_size": self.kernel_size,
+            "use_temporal": self.use_temporal,
         }
     
     @classmethod

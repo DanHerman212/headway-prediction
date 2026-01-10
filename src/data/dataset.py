@@ -1,15 +1,17 @@
 import numpy as np
 import tensorflow as tf
 from src.config import Config
+from pathlib import Path
 
 class SubwayDataGenerator:
     def __init__(self, config: Config):
         self.config = config
         self.headway_data = None
         self.schedule_data = None
+        self.temporal_data = None  # Cyclical temporal features
         self.scaler = None  # Optional: set externally for custom scaling
 
-    def load_data(self, normalize=False, max_headway=30.0):
+    def load_data(self, normalize=False, max_headway=30.0, load_temporal=True):
         """
         Loads data from disk.
         
@@ -17,6 +19,7 @@ class SubwayDataGenerator:
             normalize: If True, applies simple [0,1] normalization (divide by max_headway)
                       If False, returns raw data (use external scaler like RobustScaler)
             max_headway: Maximum headway value for normalization (default 30 minutes)
+            load_temporal: If True, loads cyclical temporal features (hour/day sin/cos)
         """
         print(f"Loading data from {self.config.DATA_DIR}...")
 
@@ -27,14 +30,31 @@ class SubwayDataGenerator:
         print(f"Headway Shape: {self.headway_data.shape}")
         print(f"Schedule Shape: {self.schedule_data.shape}")
         
+        # Load temporal features if available
+        if load_temporal:
+            temporal_path = Path(self.config.DATA_DIR) / "temporal_features.npy"
+            if temporal_path.exists():
+                self.temporal_data = np.load(temporal_path).astype('float32')
+                print(f"Temporal Features Shape: {self.temporal_data.shape}")
+            else:
+                print(f"⚠️  Temporal features not found at {temporal_path}")
+                print("   Run: python -m src.data.temporal to generate")
+                self.temporal_data = None
+        
         if normalize:
             print(f"Normalizing data to [0, 1] range (max={max_headway})")
             self.headway_data = np.clip(self.headway_data / max_headway, 0, 1)
             self.schedule_data = np.clip(self.schedule_data / max_headway, 0, 1)
 
-    def make_dataset(self, start_index=0, end_index=None, shuffle=False):
+    def make_dataset(self, start_index=0, end_index=None, shuffle=False, include_temporal=True):
         """
-        creates a tf.dataDatset using the Index-Map pattern
+        creates a tf.data.Dataset using the Index-Map pattern
+        
+        Args:
+            start_index: Starting index for slicing
+            end_index: Ending index for slicing
+            shuffle: Whether to shuffle the dataset
+            include_temporal: Whether to include cyclical temporal features
         """
         lookback = self.config.LOOKBACK_MINS
         forecast = self.config.FORECAST_MINS
@@ -53,12 +73,19 @@ class SubwayDataGenerator:
             end_index = min(end_index, max_start_index)
 
         print(f"Creating dataset from index {start_index} to {end_index}")
+        
+        # Check if temporal features are available
+        use_temporal = include_temporal and self.temporal_data is not None
+        if include_temporal and self.temporal_data is None:
+            print("⚠️  Temporal features requested but not loaded. Proceeding without them.")
 
         # 1. convert to TF constants (moves to GPU if available)
         # force data to stay on cpu to prevent "GPU Ping pong"
         with tf.device('/cpu:0'):
             headway_tensor = tf.constant(self.headway_data)
             schedule_tensor = tf.constant(self.schedule_data)
+            if use_temporal:
+                temporal_tensor = tf.constant(self.temporal_data)
 
         # 2. create index Dataset
         indices_ds = tf.data.Dataset.range(start_index, end_index)
@@ -80,10 +107,15 @@ class SubwayDataGenerator:
             target_headway = headway_tensor[i + lookback : i + total_window_size]
             target_headway = tf.squeeze(target_headway, axis=-1)
 
-            return(
-                {"headway_input": past_headway, "schedule_input": future_schedule},
-                target_headway
-            )
+            inputs = {"headway_input": past_headway, "schedule_input": future_schedule}
+            
+            # Add temporal features if available
+            if use_temporal:
+                # Temporal features for the lookback window: (30, 4)
+                past_temporal = temporal_tensor[i : i + lookback]
+                inputs["temporal_input"] = past_temporal
+            
+            return inputs, target_headway
         
         # 4. map the slice function and batch
         ds = indices_ds.map(split_window, num_parallel_calls=tf.data.AUTOTUNE)
