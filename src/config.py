@@ -17,8 +17,8 @@ class Config:
 
    # Architecture (Paper Table 1)
    FILTERS: int = 32          # Paper: 32 (not 64)
-   KERNEL_SIZE: tuple = (3, 1) # Paper: (3,1) - convolve along track only, not across directions
-   NUM_STATIONS: int = 66     # A-line: 66 sequence_ids
+   KERNEL_SIZE: tuple = (3, 1) # (3,1) = 1.5mi with 0.5mi bins
+   NUM_STATIONS: int = 66     # A-line: 66 distance bins (0.5mi each)
 
    # Data splits (60/20/20)
    TRAIN_SPLIT: float = 0.6
@@ -33,8 +33,8 @@ class Config:
    DATA_DIR: str = os.environ.get("DATA_DIR", "data")
    DATA_GCS_PATH: str = os.environ.get("DATA_GCS_PATH", "gs://st-convnet-training-configuration/headway-prediction/data")
 
-   HEADWAY_FILE: str = "headway_matrix_full.npy"
-   SCHEDULE_FILE: str = "schedule_matrix_full.npy"
+   HEADWAY_FILE: str = "headway_matrix_distance.npy"
+   SCHEDULE_FILE: str = "schedule_matrix_distance.npy"
 
    @property
    def headway_path(self):
