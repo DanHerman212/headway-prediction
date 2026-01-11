@@ -6,19 +6,23 @@ from dataclasses import dataclass
 @dataclass
 class Config:
    # Model hyperparameters (Paper Table 1)
-   LOOKBACK_MINS: int = 30   # Paper: 30 min history
+   LOOKBACK_MINS: int = 30   # Extended: full train journey (~45-60 min)
    FORECAST_MINS: int = 15   # Paper: 15 min forecast
 
    # Training (Paper Table 1)
    BATCH_SIZE: int = 128             # Scaled for A100
    EPOCHS: int = 100                 # Paper: 100
-   LEARNING_RATE: float = 1e-3       # Paper: Adam default
-   EARLY_STOPPING_PATIENCE: int = 20 # Stop if no improvement
+   LEARNING_RATE: float = 5e-4     # adapted for stability for 64 filters
+   EARLY_STOPPING_PATIENCE: int = 10 # Stop if no improvement
 
    # Architecture (Paper Table 1)
-   FILTERS: int = 32          # Paper: 32 (not 64)
-   KERNEL_SIZE: tuple = (3, 1) # (3,1) = 1.5mi with 0.5mi bins
-   NUM_STATIONS: int = 66     # A-line: 66 distance bins (0.5mi each)
+   FILTERS: int = 64          # adapted for y-topology
+   KERNEL_SIZE: tuple = (5, 1) # (5, 1) improved receptive field to see across the 6-bin zero buffer
+   NUM_STATIONS: int = 75     # A-line: 66 distance bins (0.5mi each)
+   NUM_SCHEDULE_CHANNELS: int = 4 # inwood, lefferst, far rockaway, rockaway park
+   
+   # Buffer zone indices (for optional masking for reference only
+   # BUFFER_INDICES = [49, 50, 51, 52, 53, 54]  # 6 zero-bins between branches
 
    # Data splits (60/20/20)
    TRAIN_SPLIT: float = 0.6
@@ -33,8 +37,8 @@ class Config:
    DATA_DIR: str = os.environ.get("DATA_DIR", "data")
    DATA_GCS_PATH: str = os.environ.get("DATA_GCS_PATH", "gs://st-convnet-training-configuration/headway-prediction/data")
 
-   HEADWAY_FILE: str = "headway_matrix_distance.npy"
-   SCHEDULE_FILE: str = "schedule_matrix_distance.npy"
+   HEADWAY_FILE: str = "headway_matrix_topology.npy"
+   SCHEDULE_FILE: str = "schedule_matrix_4terminal_planned.npy"
 
    @property
    def headway_path(self):

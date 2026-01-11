@@ -35,17 +35,21 @@ class Trainer:
     def compile_model(self):
         """Configures model for training with production-relevant metrics."""
         
-        # Simple Adam optimizer - paper default
-        optimizer = keras.optimizers.Adam(learning_rate=self.config.LEARNING_RATE)
-        print(f"Optimizer: Adam(lr={self.config.LEARNING_RATE})")
+        # Adam optimizer with aggressive gradient clipping for long sequences
+        # clipnorm=0.5 + lower LR for 60-step BPTT stability
+        optimizer = keras.optimizers.Adam(
+            learning_rate=self.config.LEARNING_RATE,
+            clipnorm=1.0  # Tighter clipping for longer sequences
+        )
+        print(f"Optimizer: Adam(lr={self.config.LEARNING_RATE}, clipnorm=1.0)")
 
-        # Loss: MSE (penalizes large outliers/delays heavily)
+        # Loss: changed to huber loss which is more robust to outliers
         # Metrics: 
         #   - rmse_seconds: RMSE in real units (seconds) for interpretability
         #   - r_squared: Coefficient of determination (0-1, higher is better)
         self.model.compile(
             optimizer=optimizer,
-            loss='mse',
+            loss='huber',
             metrics=[rmse_seconds, r_squared]
         )
 
@@ -78,8 +82,6 @@ class Trainer:
         checkpoint_path = os.path.join(self.checkpoint_dir, "best_model.keras")
         
         # Core callbacks
-        # Note: ReduceLROnPlateau is NOT included because we use CosineDecay schedule.
-        # These are mutually exclusive — CosineDecay controls LR, callbacks can't override it.
         callbacks = [
             keras.callbacks.EarlyStopping(
                 monitor='val_loss',
@@ -92,6 +94,13 @@ class Trainer:
                 monitor="val_loss",
                 save_best_only=True,
                 verbose=0
+            ),
+            keras.callbacks.ReduceLROnPlateau(
+                monitor='val_loss',
+                factor=0.5,        # Halve LR when plateau
+                patience=reduce_lr_patience,
+                min_lr=1e-6,
+                verbose=1
             )
         ]
         

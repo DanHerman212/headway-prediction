@@ -98,9 +98,17 @@ class SubwayDataGenerator:
             past_headway = tf.squeeze(past_headway, axis=-1)  # Remove trailing channel dim
 
             # input 2: future schedule [t+30 : t+45]
-            # Raw shape: (15, 2, 1), squeeze to (15, 2)
+            # Raw shape: (15, 4, 1), squeeze to (15, 4)
+            #
+            # OPTION A: Use future planned schedule (paper's "what-if" dispatcher approach)
             future_schedule = schedule_tensor[i + lookback : i + total_window_size]
             future_schedule = tf.squeeze(future_schedule, axis=-1)
+            #
+            # OPTION B: Use last-known terminal headway repeated (production-realistic)
+            # Uncomment below and comment OPTION A to test production scenario
+            # last_known = schedule_tensor[i + lookback - 1 : i + lookback]  # shape (1, 4, 1)
+            # last_known = tf.squeeze(last_known, axis=-1)                    # shape (1, 4)
+            # future_schedule = tf.repeat(last_known, forecast, axis=0)       # shape (15, 4)
 
             # Target: future headway [t+30 : t+45]
             # Raw shape: (15, 66, 2, 1), squeeze to (15, 66, 2)

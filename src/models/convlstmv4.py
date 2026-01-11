@@ -70,7 +70,7 @@ class ConvLSTM:
             name="headway_input"
         )
         schedule_in = layers.Input(
-            shape=(self.horizon, 2),
+            shape=(self.horizon, 4), # 4 channels inwood, lefferts, far rock, rock park
             name="schedule_input"
         )
         
@@ -104,7 +104,7 @@ class ConvLSTM:
         
         # === DECODER INPUT: Broadcast schedule to spatial dims ===
         sched = BroadcastLayer(self.stations, self.directions, name="broadcast_schedule")(
-            layers.Reshape((self.horizon, 1, 1, 2))(schedule_in)
+            layers.Reshape((self.horizon, 1, 1, 4))(schedule_in) # <- last dim is 4
         )
         # sched shape: (B, 15, 66, 2, 2)
         
