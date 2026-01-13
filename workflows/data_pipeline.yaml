@@ -1,0 +1,229 @@
+# =============================================================================
+# Cloud Workflows - MTA Data Pipeline
+# =============================================================================
+# Orchestrates the 3-stage data pipeline:
+#   1. Ingestion - Download data to Cloud Storage
+#   2. Load & Transform - BigQuery SQL transforms
+#   3. Dataset Creation - Build ML tensors
+#
+# Deploy:
+#   gcloud workflows deploy mta-data-pipeline \
+#     --source=workflows/data_pipeline.yaml \
+#     --location=us-central1
+#
+# Run:
+#   gcloud workflows run mta-data-pipeline
+# =============================================================================
+
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          - region: "us-central1"
+          - bucket: ${project_id + "-mta-data"}
+          - run_ingestion: ${default(map.get(args, "run_ingestion"), true)}
+          - run_transform: ${default(map.get(args, "run_transform"), true)}
+          - run_tensor_build: ${default(map.get(args, "run_tensor_build"), true)}
+
+    # =========================================================================
+    # STAGE 1: INGESTION
+    # =========================================================================
+    - stage1_ingestion:
+        switch:
+          - condition: ${run_ingestion}
+            steps:
+              - log_stage1:
+                  call: sys.log
+                  args:
+                    text: "Starting Stage 1: Data Ingestion"
+                    severity: INFO
+
+              # Download GTFS Static (small, fast)
+              - download_gtfs:
+                  call: googleapis.run.v2.projects.locations.jobs.run
+                  args:
+                    name: ${"projects/" + project_id + "/locations/" + region + "/jobs/download-gtfs"}
+                  result: gtfs_result
+
+              # Download Alerts (medium, fast)
+              - download_alerts:
+                  call: googleapis.run.v2.projects.locations.jobs.run
+                  args:
+                    name: ${"projects/" + project_id + "/locations/" + region + "/jobs/download-alerts"}
+                  result: alerts_result
+
+              # Download Schedules (large, slow - run in parallel with arrivals)
+              - download_large_files:
+                  parallel:
+                    branches:
+                      - download_schedules_branch:
+                          steps:
+                            - download_schedules:
+                                call: googleapis.run.v2.projects.locations.jobs.run
+                                args:
+                                  name: ${"projects/" + project_id + "/locations/" + region + "/jobs/download-schedules"}
+                                result: schedules_result
+                      - download_arrivals_branch:
+                          steps:
+                            - download_arrivals:
+                                call: googleapis.run.v2.projects.locations.jobs.run
+                                args:
+                                  name: ${"projects/" + project_id + "/locations/" + region + "/jobs/download-arrivals"}
+                                result: arrivals_result
+
+              - log_stage1_complete:
+                  call: sys.log
+                  args:
+                    text: "Stage 1 Complete: All data downloaded to Cloud Storage"
+                    severity: INFO
+
+    # =========================================================================
+    # STAGE 2: LOAD & TRANSFORM
+    # =========================================================================
+    - stage2_transform:
+        switch:
+          - condition: ${run_transform}
+            steps:
+              - log_stage2:
+                  call: sys.log
+                  args:
+                    text: "Starting Stage 2: Load & Transform"
+                    severity: INFO
+
+              # Load raw data to BigQuery
+              - load_arrivals:
+                  call: googleapis.bigquery.v2.jobs.insert
+                  args:
+                    projectId: ${project_id}
+                    body:
+                      configuration:
+                        load:
+                          sourceUris:
+                            - ${"gs://" + bucket + "/raw/arrivals/*/*.csv"}
+                          destinationTable:
+                            projectId: ${project_id}
+                            datasetId: "mta_raw"
+                            tableId: "arrivals"
+                          sourceFormat: "CSV"
+                          skipLeadingRows: 1
+                          writeDisposition: "WRITE_TRUNCATE"
+                  result: load_arrivals_result
+
+              - load_gtfs_stops:
+                  call: googleapis.bigquery.v2.jobs.insert
+                  args:
+                    projectId: ${project_id}
+                    body:
+                      configuration:
+                        load:
+                          sourceUris:
+                            - ${"gs://" + bucket + "/raw/gtfs/stops.txt"}
+                          destinationTable:
+                            projectId: ${project_id}
+                            datasetId: "mta_raw"
+                            tableId: "gtfs_stops"
+                          sourceFormat: "CSV"
+                          skipLeadingRows: 1
+                          writeDisposition: "WRITE_TRUNCATE"
+                  result: load_stops_result
+
+              - load_alerts:
+                  call: googleapis.bigquery.v2.jobs.insert
+                  args:
+                    projectId: ${project_id}
+                    body:
+                      configuration:
+                        load:
+                          sourceUris:
+                            - ${"gs://" + bucket + "/raw/alerts/service_alerts.csv"}
+                          destinationTable:
+                            projectId: ${project_id}
+                            datasetId: "mta_raw"
+                            tableId: "alerts"
+                          sourceFormat: "CSV"
+                          skipLeadingRows: 1
+                          writeDisposition: "WRITE_TRUNCATE"
+                  result: load_alerts_result
+
+              # Run SQL transforms in sequence
+              - transform_clean_arrivals:
+                  call: googleapis.bigquery.v2.jobs.query
+                  args:
+                    projectId: ${project_id}
+                    body:
+                      query: "CALL mta_transformed.sp_clean_arrivals()"
+                      useLegacySql: false
+                  result: clean_result
+
+              - transform_compute_headways:
+                  call: googleapis.bigquery.v2.jobs.query
+                  args:
+                    projectId: ${project_id}
+                    body:
+                      query: "CALL mta_transformed.sp_compute_headways()"
+                      useLegacySql: false
+                  result: headways_result
+
+              - transform_aggregate_alerts:
+                  call: googleapis.bigquery.v2.jobs.query
+                  args:
+                    projectId: ${project_id}
+                    body:
+                      query: "CALL mta_transformed.sp_aggregate_alerts()"
+                      useLegacySql: false
+                  result: alerts_agg_result
+
+              - log_stage2_complete:
+                  call: sys.log
+                  args:
+                    text: "Stage 2 Complete: Data transformed in BigQuery"
+                    severity: INFO
+
+    # =========================================================================
+    # STAGE 3: BUILD ML TENSORS
+    # =========================================================================
+    - stage3_tensors:
+        switch:
+          - condition: ${run_tensor_build}
+            steps:
+              - log_stage3:
+                  call: sys.log
+                  args:
+                    text: "Starting Stage 3: Build ML Tensors"
+                    severity: INFO
+
+              # Run Dataflow job to build tensors
+              - build_tensors:
+                  call: googleapis.dataflow.v1b3.projects.locations.templates.launch
+                  args:
+                    projectId: ${project_id}
+                    location: ${region}
+                    body:
+                      jobName: "build-ml-tensors"
+                      parameters:
+                        input_table: "mta_transformed.headways_final"
+                        output_path: ${"gs://" + bucket + "/ml-dataset/"}
+                      environment:
+                        tempLocation: ${"gs://" + bucket + "/temp/"}
+                    gcsPath: ${"gs://" + bucket + "/templates/build_tensors"}
+                  result: dataflow_result
+
+              - log_stage3_complete:
+                  call: sys.log
+                  args:
+                    text: "Stage 3 Complete: ML tensors created"
+                    severity: INFO
+
+    # =========================================================================
+    # COMPLETE
+    # =========================================================================
+    - complete:
+        return:
+          status: "SUCCESS"
+          message: "MTA data pipeline completed successfully"
+          stages_run:
+            ingestion: ${run_ingestion}
+            transform: ${run_transform}
+            tensor_build: ${run_tensor_build}
