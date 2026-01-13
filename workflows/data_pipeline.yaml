@@ -123,7 +123,7 @@ main:
                           destinationTable:
                             projectId: ${project_id}
                             datasetId: "mta_raw"
-                            tableId: "gtfs_stops"
+                            tableId: "stops"
                           sourceFormat: "CSV"
                           skipLeadingRows: 1
                           writeDisposition: "WRITE_TRUNCATE"

@@ -2,7 +2,8 @@
 # =============================================================================
 # Build and Deploy Script
 # =============================================================================
-# Builds Docker images and deploys Cloud Run jobs for the ingestion pipeline.
+# Builds Docker image and deploys Cloud Run job for weekly pipeline.
+# Also sets up Cloud Scheduler to trigger weekly on Tuesday 2pm ET.
 #
 # Usage:
 #   ./scripts/build_and_deploy.sh
@@ -10,26 +11,61 @@
 
 set -e
 
+# Load environment variables from .env if present
+if [[ -f .env ]]; then
+    export $(grep -v '^#' .env | xargs)
+fi
+
 # Configuration
-PROJECT_ID="${GCP_PROJECT_ID:-your-project-id}"
-REGION="${GCP_REGION:-us-central1}"
+PROJECT_ID="${GCP_PROJECT_ID:-}"
+REGION="${GCP_REGION:-us-east1}"
+BUCKET="${GCP_BUCKET:-}"
 REPO_NAME="mta-pipeline"
-IMAGE_NAME="ingestion"
+IMAGE_NAME="weekly-pipeline"
 
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
 NC='\033[0m'
 
 log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-if [[ "$PROJECT_ID" == "your-project-id" ]]; then
-    log_error "Please set GCP_PROJECT_ID environment variable"
+# -----------------------------------------------------------------------------
+# Validate Configuration
+# -----------------------------------------------------------------------------
+if [[ -z "$PROJECT_ID" ]]; then
+    log_error "GCP_PROJECT_ID not set. Please configure .env file."
+    exit 1
+fi
+
+if [[ -z "$BUCKET" ]]; then
+    log_error "GCP_BUCKET not set. Please configure .env file."
     exit 1
 fi
 
 REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}"
+
+echo ""
+echo "=========================================="
+echo "MTA Weekly Pipeline - Build & Deploy"
+echo "=========================================="
+echo "Project:  ${PROJECT_ID}"
+echo "Region:   ${REGION}"
+echo "Bucket:   ${BUCKET}"
+echo "Registry: ${REGISTRY}"
+echo "=========================================="
+echo ""
+
+# -----------------------------------------------------------------------------
+# Copy SQL files to Docker context
+# -----------------------------------------------------------------------------
+log_info "Copying SQL files to Docker context..."
+
+mkdir -p infrastructure/docker/ingestion/sql
+cp pipelines/sql/*.sql infrastructure/docker/ingestion/sql/
 
 # -----------------------------------------------------------------------------
 # Build Docker image
@@ -42,114 +78,85 @@ docker build -t "${REGISTRY}/${IMAGE_NAME}:latest" \
 # -----------------------------------------------------------------------------
 # Push to Artifact Registry
 # -----------------------------------------------------------------------------
-log_info "Pushing image to Artifact Registry..."
-
-# Configure Docker for Artifact Registry
+log_info "Configuring Docker for Artifact Registry..."
 gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
+log_info "Pushing image to Artifact Registry..."
 docker push "${REGISTRY}/${IMAGE_NAME}:latest"
 
 # -----------------------------------------------------------------------------
-# Deploy Cloud Run Jobs
+# Deploy Cloud Run Job
 # -----------------------------------------------------------------------------
-log_info "Deploying Cloud Run Jobs..."
+log_info "Deploying Cloud Run Job: weekly-pipeline..."
 
-BUCKET="${PROJECT_ID}-mta-data"
-
-# Download Arrivals Job
-log_info "  Creating download-arrivals job..."
-gcloud run jobs create download-arrivals \
+gcloud run jobs deploy weekly-pipeline \
     --image="${REGISTRY}/${IMAGE_NAME}:latest" \
     --region="${REGION}" \
-    --task-timeout=3600 \
-    --set-env-vars="GCP_PROJECT_ID=${PROJECT_ID},GCP_BUCKET=${BUCKET}" \
-    --command="python,download_arrivals.py" \
-    --args="--start-date,2025-06-01,--end-date,2025-09-30" \
-    --quiet 2>/dev/null || \
-gcloud run jobs update download-arrivals \
-    --image="${REGISTRY}/${IMAGE_NAME}:latest" \
-    --region="${REGION}" \
-    --task-timeout=3600 \
-    --set-env-vars="GCP_PROJECT_ID=${PROJECT_ID},GCP_BUCKET=${BUCKET}" \
-    --quiet
-
-# Download Schedules Job (long timeout for 9GB file)
-log_info "  Creating download-schedules job..."
-gcloud run jobs create download-schedules \
-    --image="${REGISTRY}/${IMAGE_NAME}:latest" \
-    --region="${REGION}" \
-    --task-timeout=7200 \
-    --memory=2Gi \
-    --set-env-vars="GCP_PROJECT_ID=${PROJECT_ID},GCP_BUCKET=${BUCKET}" \
-    --command="python,download_schedules.py" \
-    --quiet 2>/dev/null || \
-gcloud run jobs update download-schedules \
-    --image="${REGISTRY}/${IMAGE_NAME}:latest" \
-    --region="${REGION}" \
-    --task-timeout=7200 \
-    --memory=2Gi \
-    --set-env-vars="GCP_PROJECT_ID=${PROJECT_ID},GCP_BUCKET=${BUCKET}" \
-    --quiet
-
-# Download Alerts Job
-log_info "  Creating download-alerts job..."
-gcloud run jobs create download-alerts \
-    --image="${REGISTRY}/${IMAGE_NAME}:latest" \
-    --region="${REGION}" \
+    --project="${PROJECT_ID}" \
     --task-timeout=1800 \
-    --set-env-vars="GCP_PROJECT_ID=${PROJECT_ID},GCP_BUCKET=${BUCKET}" \
-    --command="python,download_alerts.py" \
-    --quiet 2>/dev/null || \
-gcloud run jobs update download-alerts \
-    --image="${REGISTRY}/${IMAGE_NAME}:latest" \
-    --region="${REGION}" \
-    --task-timeout=1800 \
-    --set-env-vars="GCP_PROJECT_ID=${PROJECT_ID},GCP_BUCKET=${BUCKET}" \
+    --memory=1Gi \
+    --set-env-vars="GCP_PROJECT_ID=${PROJECT_ID},GCP_BUCKET=${BUCKET},BQ_DATASET_RAW=mta_raw,BQ_DATASET_TRANSFORMED=mta_transformed" \
+    --max-retries=1 \
     --quiet
 
-# Download GTFS Job
-log_info "  Creating download-gtfs job..."
-gcloud run jobs create download-gtfs \
-    --image="${REGISTRY}/${IMAGE_NAME}:latest" \
-    --region="${REGION}" \
-    --task-timeout=600 \
-    --set-env-vars="GCP_PROJECT_ID=${PROJECT_ID},GCP_BUCKET=${BUCKET}" \
-    --command="python,download_gtfs.py" \
-    --quiet 2>/dev/null || \
-gcloud run jobs update download-gtfs \
-    --image="${REGISTRY}/${IMAGE_NAME}:latest" \
-    --region="${REGION}" \
-    --task-timeout=600 \
-    --set-env-vars="GCP_PROJECT_ID=${PROJECT_ID},GCP_BUCKET=${BUCKET}" \
-    --quiet
+log_info "Cloud Run Job deployed successfully!"
 
 # -----------------------------------------------------------------------------
-# Deploy Cloud Workflow
+# Create Cloud Scheduler Job
 # -----------------------------------------------------------------------------
-log_info "Deploying Cloud Workflow..."
+log_info "Setting up Cloud Scheduler (Tuesday 2pm ET)..."
 
-gcloud workflows deploy mta-data-pipeline \
-    --source=workflows/data_pipeline.yaml \
+# Check if scheduler job exists
+if gcloud scheduler jobs describe weekly-pipeline-trigger \
     --location="${REGION}" \
-    --quiet
+    --project="${PROJECT_ID}" &>/dev/null; then
+    
+    log_warn "Scheduler job exists, updating..."
+    gcloud scheduler jobs update http weekly-pipeline-trigger \
+        --location="${REGION}" \
+        --project="${PROJECT_ID}" \
+        --schedule="0 14 * * 2" \
+        --time-zone="America/New_York" \
+        --uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/weekly-pipeline:run" \
+        --http-method=POST \
+        --oauth-service-account-email="${PROJECT_ID}@appspot.gserviceaccount.com" \
+        --quiet
+else
+    log_info "Creating scheduler job..."
+    gcloud scheduler jobs create http weekly-pipeline-trigger \
+        --location="${REGION}" \
+        --project="${PROJECT_ID}" \
+        --schedule="0 14 * * 2" \
+        --time-zone="America/New_York" \
+        --uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/weekly-pipeline:run" \
+        --http-method=POST \
+        --oauth-service-account-email="${PROJECT_ID}@appspot.gserviceaccount.com" \
+        --quiet
+fi
+
+log_info "Cloud Scheduler configured: Every Tuesday at 2pm ET"
 
 # -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
 echo ""
 echo "=========================================="
-echo "Deployment Complete!"
+echo "✅ Deployment Complete!"
 echo "=========================================="
 echo ""
-echo "Cloud Run Jobs:"
-echo "  - download-arrivals"
-echo "  - download-schedules"
-echo "  - download-alerts"
-echo "  - download-gtfs"
+echo "Cloud Run Job:"
+echo "  Name:     weekly-pipeline"
+echo "  Region:   ${REGION}"
+echo "  Image:    ${REGISTRY}/${IMAGE_NAME}:latest"
 echo ""
-echo "Cloud Workflow:"
-echo "  - mta-data-pipeline"
+echo "Cloud Scheduler:"
+echo "  Name:     weekly-pipeline-trigger"
+echo "  Schedule: Every Tuesday at 2:00 PM ET"
+echo "  Cron:     0 14 * * 2"
 echo ""
-echo "Run the pipeline:"
-echo "  gcloud workflows run mta-data-pipeline --location=${REGION}"
+echo "Manual execution:"
+echo "  gcloud run jobs execute weekly-pipeline --region=${REGION}"
+echo ""
+echo "View logs:"
+echo "  gcloud run jobs executions list --job=weekly-pipeline --region=${REGION}"
 echo ""

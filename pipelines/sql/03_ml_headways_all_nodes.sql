@@ -126,5 +126,4 @@ WHERE
   -- Filter out unreasonable headways (> 2 hours likely indicates service gap/overnight)
   AND TIMESTAMP_DIFF(arrival_time, prev_arrival_time, SECOND) / 60.0 < 120
   -- Filter out negative or zero headways (data quality issue)
-  AND TIMESTAMP_DIFF(arrival_time, prev_arrival_time, SECOND) > 0
-ORDER BY arrival_time;
+  AND TIMESTAMP_DIFF(arrival_time, prev_arrival_time, SECOND) > 0;

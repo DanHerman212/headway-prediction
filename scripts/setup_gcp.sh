@@ -16,6 +16,11 @@
 
 set -e  # Exit on error
 
+# Load environment variables from .env if present
+if [[ -f .env ]]; then
+    export $(grep -v '^#' .env | xargs)
+fi
+
 # -----------------------------------------------------------------------------
 # Configuration - EDIT THESE VALUES
 # -----------------------------------------------------------------------------
@@ -152,6 +157,10 @@ if gcloud iam service-accounts describe "$SA_EMAIL" &>/dev/null; then
 else
     gcloud iam service-accounts create "$SA_NAME" \
         --display-name="MTA Pipeline Service Account"
+    
+    # Wait for service account to propagate before granting roles
+    log_info "Waiting for service account to propagate..."
+    sleep 10
 fi
 
 # Grant necessary roles
@@ -168,10 +177,23 @@ ROLES=(
 
 for role in "${ROLES[@]}"; do
     log_info "  Granting $role..."
-    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-        --member="serviceAccount:$SA_EMAIL" \
-        --role="$role" \
-        --quiet
+    # Retry logic for IAM binding (handles propagation delays)
+    for attempt in 1 2 3; do
+        if gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+            --member="serviceAccount:$SA_EMAIL" \
+            --role="$role" \
+            --quiet 2>/dev/null; then
+            break
+        else
+            if [[ $attempt -lt 3 ]]; then
+                log_warn "  Retrying in 5 seconds..."
+                sleep 5
+            else
+                log_error "  Failed to grant $role after 3 attempts"
+                exit 1
+            fi
+        fi
+    done
 done
 
 # -----------------------------------------------------------------------------

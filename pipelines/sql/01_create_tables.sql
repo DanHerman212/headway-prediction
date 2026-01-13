@@ -14,21 +14,21 @@
 
 -- Raw sensor data from subwaydata.nyc archives
 -- Schema matches the CSV files from the archive
-CREATE TABLE IF NOT EXISTS `mta_raw.raw` (
+CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_raw.raw` (
     trip_uid STRING,
     stop_id STRING,
     track STRING,
     arrival_time INT64,      -- Unix timestamp
     departure_time INT64,    -- Unix timestamp  
     last_observed INT64,     -- Unix timestamp
-    marked_past BOOL
+    marked_past INT64
 )
 OPTIONS (
     description = 'Raw subway sensor data from subwaydata.nyc archive'
 );
 
 -- GTFS Static: Stops
-CREATE TABLE IF NOT EXISTS `mta_raw.stops` (
+CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_raw.stops` (
     stop_id STRING,
     stop_name STRING,
     stop_lat FLOAT64,
@@ -41,7 +41,7 @@ OPTIONS (
 );
 
 -- GTFS Static: Routes
-CREATE TABLE IF NOT EXISTS `mta_raw.routes` (
+CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_raw.routes` (
     route_id STRING,
     agency_id STRING,
     route_short_name STRING,
@@ -57,7 +57,7 @@ OPTIONS (
 );
 
 -- Historic Schedules (structure TBD based on actual file)
-CREATE TABLE IF NOT EXISTS `mta_raw.schedules` (
+CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_raw.schedules` (
     trip_id STRING,
     stop_id STRING,
     arrival_time STRING,
@@ -69,7 +69,7 @@ OPTIONS (
 );
 
 -- Service Alerts from NY Open Data
-CREATE TABLE IF NOT EXISTS `mta_raw.alerts` (
+CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_raw.alerts` (
     alert_id INT64,
     event_id INT64,
     update_number INT64,
@@ -90,7 +90,7 @@ OPTIONS (
 -- -----------------------------------------------------------------------------
 
 -- Cleaned arrivals with parsed trip metadata
-CREATE TABLE IF NOT EXISTS `mta_transformed.clean` (
+CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_transformed.clean` (
     trip_uid STRING,
     start_time_dts TIMESTAMP,
     route_id STRING,
@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS `mta_transformed.clean` (
     departure_time INT64,
     last_observed INT64,
     marked_past BOOL,
+    arrival_time_ts TIMESTAMP,
     stop_name STRING,
     stop_lat FLOAT64,
     stop_lon FLOAT64,
@@ -115,7 +116,7 @@ OPTIONS (
 );
 
 -- Headways for all A/C/E nodes
-CREATE TABLE IF NOT EXISTS `mta_transformed.headways_all_nodes` (
+CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_transformed.headways_all_nodes` (
     trip_uid STRING,
     node_id STRING,
     route_id STRING,
@@ -141,8 +142,31 @@ OPTIONS (
     description = 'Headways for all A/C/E nodes for Graph WaveNet training'
 );
 
+-- Headways table for incremental updates (used by stored procedures)
+CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_transformed.headways` (
+    node_id STRING,
+    stop_id STRING,
+    route_id STRING,
+    direction STRING,
+    stop_name STRING,
+    stop_lat FLOAT64,
+    stop_lon FLOAT64,
+    arrival_time_ts TIMESTAMP,
+    prev_arrival_time_ts TIMESTAMP,
+    headway_seconds INT64,
+    headway_minutes FLOAT64,
+    day_type STRING,
+    hour_of_day INT64,
+    day_of_week INT64
+)
+PARTITION BY DATE(arrival_time_ts)
+CLUSTER BY route_id, direction, stop_id
+OPTIONS (
+    description = 'Headways for incremental weekly updates'
+);
+
 -- Alerts aggregated to 5-minute bins
-CREATE TABLE IF NOT EXISTS `mta_transformed.alerts_binned` (
+CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_transformed.alerts_binned` (
     time_bin TIMESTAMP,
     alert_a INT64,
     alert_c INT64,
@@ -156,7 +180,7 @@ OPTIONS (
 );
 
 -- Node mapping for Graph WaveNet
-CREATE TABLE IF NOT EXISTS `mta_transformed.node_mapping` (
+CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_transformed.node_mapping` (
     node_id STRING,
     node_index INT64,
     route_id STRING,

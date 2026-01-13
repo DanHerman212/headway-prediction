@@ -38,7 +38,7 @@ GTFS_FILES = [
 ]
 
 
-def download_gtfs(bucket_name: str, url: str):
+def download_gtfs(project_id: str, bucket_name: str, url: str):
     """
     Download GTFS ZIP, extract, and upload individual files to GCS.
     """
@@ -50,8 +50,8 @@ def download_gtfs(bucket_name: str, url: str):
     
     print(f"Downloaded {len(response.content) / 1024 / 1024:.1f} MB")
     
-    # Initialize GCS client
-    client = storage.Client()
+    # Initialize GCS client with explicit project
+    client = storage.Client(project=project_id)
     bucket = client.bucket(bucket_name)
     
     # Extract and upload each file
@@ -70,13 +70,16 @@ def download_gtfs(bucket_name: str, url: str):
 
 
 def main():
+    project_id = os.environ.get('GCP_PROJECT_ID')
     bucket_name = os.environ.get('GCP_BUCKET')
     url = os.environ.get('GTFS_URL', GTFS_URL)
     
+    if not project_id:
+        raise ValueError("GCP_PROJECT_ID environment variable required")
     if not bucket_name:
         raise ValueError("GCP_BUCKET environment variable required")
     
-    download_gtfs(bucket_name, url)
+    download_gtfs(project_id, bucket_name, url)
     print("Done!")
 
 
