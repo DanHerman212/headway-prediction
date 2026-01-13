@@ -58,7 +58,7 @@ def step1_download(week_ending: str) -> bool:
     print("STEP 1: Download Weekly Data")
     print("=" * 60)
     
-    cmd = ["python", "download_weekly_data.py", "--week-ending", week_ending]
+    cmd = ["python3", "download_weekly_data.py", "--week-ending", week_ending]
     result = subprocess.run(cmd, capture_output=False)
     
     if result.returncode != 0:
@@ -66,6 +66,33 @@ def step1_download(week_ending: str) -> bool:
         return False
     
     print("✓ Download complete")
+    return True
+
+
+def step1b_delete_trips_files() -> bool:
+    """
+    Delete *_trips.csv files from GCS (not needed, can cause schema issues).
+    """
+    print("\n" + "=" * 60)
+    print("STEP 1b: Delete Trips Files")
+    print("=" * 60)
+    
+    client = storage.Client(project=PROJECT_ID)
+    bucket = client.bucket(BUCKET_NAME)
+    
+    # List all *_trips.csv files
+    blobs = list(bucket.list_blobs(prefix=GCS_PREFIX))
+    trips_blobs = [b for b in blobs if b.name.endswith('_trips.csv')]
+    
+    if not trips_blobs:
+        print("  No *_trips.csv files found")
+        return True
+    
+    print(f"  Deleting {len(trips_blobs)} *_trips.csv files...")
+    for blob in trips_blobs:
+        blob.delete()
+    
+    print("✓ Trips files deleted")
     return True
 
 
@@ -162,6 +189,10 @@ def main():
     # Execute pipeline steps
     if not step1_download(week_ending):
         print("\n❌ Pipeline failed at Step 1: Download")
+        sys.exit(1)
+    
+    if not step1b_delete_trips_files():
+        print("\n❌ Pipeline failed at Step 1b: Delete Trips Files")
         sys.exit(1)
     
     if not step2_load_to_bigquery(week_ending):

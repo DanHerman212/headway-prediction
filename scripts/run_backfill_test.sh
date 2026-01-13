@@ -87,7 +87,9 @@ cd - > /dev/null
 echo ""
 echo "[Step 3] Loading CSVs to BigQuery..."
 cd "${SCRIPT_DIR}"
-python3 load_to_bigquery_monthly.py --year 2026 --month 1
+python3 load_to_bigquery_monthly.py \
+    --start_date "${TEST_START_DATE}" \
+    --end_date "${TEST_END_DATE}"
 cd - > /dev/null
 
 # -----------------------------------------------------------------------------
@@ -97,20 +99,13 @@ echo ""
 echo "[Step 4] Running SQL transforms..."
 
 echo "  [4a] Cleaning arrivals..."
-# The cleansation SQL:
-# - Reads from mta_raw.raw and mta_raw.stops
-# - Writes to mta_transformed.clean
-# So we need to replace params for both datasets
-cat "${SQL_DIR}/02_data_cleansation.sql" | \
-    sed "s/{{ params.project_id }}/${GCP_PROJECT_ID}/g" | \
-    sed "s/{{ params.dataset_id }}.clean/mta_transformed.clean/g" | \
-    sed "s/{{ params.dataset_id }}.raw/mta_raw.raw/g" | \
-    sed "s/{{ params.dataset_id }}.stops/mta_raw.stops/g" | \
+# SQL has explicit dataset references: mta_raw.raw -> mta_transformed.clean
+sed "s/{{ params.project_id }}/${GCP_PROJECT_ID}/g" "${SQL_DIR}/02_data_cleansation.sql" | \
     bq query --use_legacy_sql=false --project_id="${GCP_PROJECT_ID}"
 
 echo "  [4b] Computing headways for A/C/E lines..."
-sed "s/{{ params.project_id }}/${GCP_PROJECT_ID}/g; s/{{ params.dataset_id }}/mta_transformed/g" \
-    "${SQL_DIR}/03_ml_headways_all_nodes.sql" | \
+# SQL has explicit dataset references: mta_transformed.clean -> mta_transformed.headways_all_nodes
+sed "s/{{ params.project_id }}/${GCP_PROJECT_ID}/g" "${SQL_DIR}/03_ml_headways_all_nodes.sql" | \
     bq query --use_legacy_sql=false --project_id="${GCP_PROJECT_ID}"
 
 # -----------------------------------------------------------------------------

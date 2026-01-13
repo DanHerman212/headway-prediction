@@ -40,25 +40,39 @@ PREFIX = "decompressed/"
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--year', type=int, help='Year to process')
-    parser.add_argument('--month', type=int, help='Month to process')
+    parser.add_argument('--year', type=int, help='Year to process (single month mode)')
+    parser.add_argument('--month', type=int, help='Month to process (single month mode)')
+    parser.add_argument('--start_date', type=str, help='Start date YYYY-MM-DD (range mode)')
+    parser.add_argument('--end_date', type=str, help='End date YYYY-MM-DD (range mode)')
     return parser.parse_args()
 
 args = parse_args()
 
 # Date range to load
 if args.year and args.month:
+    # Single month mode
     START_YEAR = args.year
     END_YEAR = args.year
     START_MONTH = args.month
     END_MONTH = args.month
     print(f"Running in SINGLE MONTH mode: {START_YEAR}-{START_MONTH:02d}")
+elif args.start_date and args.end_date:
+    # Date range mode - parse from YYYY-MM-DD
+    start_dt = datetime.strptime(args.start_date, "%Y-%m-%d")
+    end_dt = datetime.strptime(args.end_date, "%Y-%m-%d")
+    START_YEAR = start_dt.year
+    START_MONTH = start_dt.month
+    END_YEAR = end_dt.year
+    END_MONTH = end_dt.month
+    print(f"Running in DATE RANGE mode: {args.start_date} to {args.end_date}")
 else:
-    START_YEAR = 2021
-    START_MONTH = 4
-    END_YEAR = 2025
-    END_MONTH = 12
-    print("Running in FULL HISTORY mode")
+    # Default: current month only (safer than scanning years of empty folders)
+    now = datetime.now()
+    START_YEAR = now.year
+    START_MONTH = now.month
+    END_YEAR = now.year
+    END_MONTH = now.month
+    print(f"Running in CURRENT MONTH mode: {START_YEAR}-{START_MONTH:02d}")
 
 print("="*70)
 

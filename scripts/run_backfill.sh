@@ -56,8 +56,8 @@ python3 download_gtfs.py
 cd - > /dev/null
 
 echo ""
-echo "[Step 0] Loading stops to BigQuery..."
-bq load --source_format=CSV --skip_leading_rows=1 --autodetect \
+echo "[Step 0b] Loading stops to BigQuery..."
+bq load --source_format=CSV --skip_leading_rows=1 --autodetect --replace \
     "${GCP_PROJECT_ID}:mta_raw.stops" \
     "gs://${GCP_BUCKET}/raw/gtfs/stops.txt"
 
@@ -90,7 +90,9 @@ cd - > /dev/null
 echo ""
 echo "[Step 3] Loading CSVs to BigQuery..."
 cd "${SCRIPT_DIR}"
-python3 load_to_bigquery_monthly.py
+python3 load_to_bigquery_monthly.py \
+    --start_date "${ARRIVALS_START_DATE}" \
+    --end_date "${ARRIVALS_END_DATE}"
 cd - > /dev/null
 
 # -----------------------------------------------------------------------------
@@ -100,23 +102,17 @@ echo ""
 echo "[Step 4] Running SQL transforms..."
 
 echo "  [4a] Creating tables..."
-bq query --use_legacy_sql=false --project_id="${GCP_PROJECT_ID}" \
-    < "${SQL_DIR}/01_create_tables.sql"
+sed "s/{{ params.project_id }}/${GCP_PROJECT_ID}/g" "${SQL_DIR}/01_create_tables.sql" | \
+    bq query --use_legacy_sql=false --project_id="${GCP_PROJECT_ID}"
 
 echo "  [4b] Cleaning arrivals..."
-# The cleansation SQL:
-# - Reads from mta_raw.raw and mta_raw.stops
-# - Writes to mta_transformed.clean
-cat "${SQL_DIR}/02_data_cleansation.sql" | \
-    sed "s/{{ params.project_id }}/${GCP_PROJECT_ID}/g" | \
-    sed "s/{{ params.dataset_id }}.clean/mta_transformed.clean/g" | \
-    sed "s/{{ params.dataset_id }}.raw/mta_raw.raw/g" | \
-    sed "s/{{ params.dataset_id }}.stops/mta_raw.stops/g" | \
+# SQL has explicit dataset references: mta_raw.raw -> mta_transformed.clean
+sed "s/{{ params.project_id }}/${GCP_PROJECT_ID}/g" "${SQL_DIR}/02_data_cleansation.sql" | \
     bq query --use_legacy_sql=false --project_id="${GCP_PROJECT_ID}"
 
 echo "  [4c] Computing headways for A/C/E lines..."
-sed "s/{{ params.project_id }}/${GCP_PROJECT_ID}/g; s/{{ params.dataset_id }}/mta_transformed/g" \
-    "${SQL_DIR}/03_ml_headways_all_nodes.sql" | \
+# SQL has explicit dataset references: mta_transformed.clean -> mta_transformed.headways_all_nodes
+sed "s/{{ params.project_id }}/${GCP_PROJECT_ID}/g" "${SQL_DIR}/03_ml_headways_all_nodes.sql" | \
     bq query --use_legacy_sql=false --project_id="${GCP_PROJECT_ID}"
 
 # -----------------------------------------------------------------------------
@@ -124,8 +120,8 @@ sed "s/{{ params.project_id }}/${GCP_PROJECT_ID}/g; s/{{ params.dataset_id }}/mt
 # -----------------------------------------------------------------------------
 echo ""
 echo "[Step 5] Creating stored procedures for weekly updates..."
-bq query --use_legacy_sql=false --project_id="${GCP_PROJECT_ID}" \
-    < "${SQL_DIR}/10_create_stored_procedures.sql"
+sed "s/{{ params.project_id }}/${GCP_PROJECT_ID}/g" "${SQL_DIR}/10_create_stored_procedures.sql" | \
+    bq query --use_legacy_sql=false --project_id="${GCP_PROJECT_ID}"
 
 # -----------------------------------------------------------------------------
 # Summary
