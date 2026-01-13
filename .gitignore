@@ -3,6 +3,10 @@
 *.csv
 *.parquet
 *.zip
+*.npy
+
+# Backup (large files)
+/backup/
 
 # Secrets
 .env
