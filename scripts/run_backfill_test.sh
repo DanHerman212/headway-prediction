@@ -32,7 +32,7 @@ export GCS_BUCKET_NAME="${GCP_BUCKET}"
 export BQ_DATASET_ID="mta_raw"
 export BQ_TABLE_ID="raw"
 
-SCRIPT_DIR="infrastructure/docker/ingestion"
+SCRIPT_DIR="pipelines"
 SQL_DIR="pipelines/sql"
 
 echo "=========================================="
@@ -57,7 +57,7 @@ cd - > /dev/null
 echo ""
 echo "[Step 0b] Loading stops to BigQuery..."
 bq load --source_format=CSV --skip_leading_rows=1 --autodetect --replace \
-    "${GCP_PROJECT_ID}:mta_raw.stops" \
+    "${GCP_PROJECT_ID}:headway_dataset.stops" \
     "gs://${GCP_BUCKET}/raw/gtfs/stops.txt"
 
 # -----------------------------------------------------------------------------
@@ -99,12 +99,12 @@ echo ""
 echo "[Step 4] Running SQL transforms..."
 
 echo "  [4a] Cleaning arrivals..."
-# SQL has explicit dataset references: mta_raw.raw -> mta_transformed.clean
+# SQL has explicit dataset references: headway_dataset.raw -> headway_dataset.clean
 sed "s/{{ params.project_id }}/${GCP_PROJECT_ID}/g" "${SQL_DIR}/02_data_cleansation.sql" | \
     bq query --use_legacy_sql=false --project_id="${GCP_PROJECT_ID}"
 
 echo "  [4b] Computing headways for A/C/E lines..."
-# SQL has explicit dataset references: mta_transformed.clean -> mta_transformed.headways_all_nodes
+# SQL has explicit dataset references: headway_dataset.clean -> headway_dataset.headways_all_nodes
 sed "s/{{ params.project_id }}/${GCP_PROJECT_ID}/g" "${SQL_DIR}/03_ml_headways_all_nodes.sql" | \
     bq query --use_legacy_sql=false --project_id="${GCP_PROJECT_ID}"
 
@@ -119,16 +119,16 @@ echo ""
 echo "Checking row counts..."
 
 RAW_COUNT=$(bq query --use_legacy_sql=false --format=csv --quiet \
-    "SELECT COUNT(*) FROM \`${GCP_PROJECT_ID}.mta_raw.raw\`" | tail -1)
-echo "  mta_raw.raw:              ${RAW_COUNT} rows"
+    "SELECT COUNT(*) FROM \`${GCP_PROJECT_ID}.headway_dataset.raw\`" | tail -1)
+echo "  headway_dataset.raw:              ${RAW_COUNT} rows"
 
 CLEAN_COUNT=$(bq query --use_legacy_sql=false --format=csv --quiet \
-    "SELECT COUNT(*) FROM \`${GCP_PROJECT_ID}.mta_transformed.clean\`" | tail -1)
-echo "  mta_transformed.clean:    ${CLEAN_COUNT} rows"
+    "SELECT COUNT(*) FROM \`${GCP_PROJECT_ID}.headway_dataset.clean\`" | tail -1)
+echo "  headway_dataset.clean:    ${CLEAN_COUNT} rows"
 
 HEADWAYS_COUNT=$(bq query --use_legacy_sql=false --format=csv --quiet \
-    "SELECT COUNT(*) FROM \`${GCP_PROJECT_ID}.mta_transformed.headways_all_nodes\`" | tail -1)
-echo "  mta_transformed.headways: ${HEADWAYS_COUNT} rows"
+    "SELECT COUNT(*) FROM \`${GCP_PROJECT_ID}.headway_dataset.headways_all_nodes\`" | tail -1)
+echo "  headway_dataset.headways: ${HEADWAYS_COUNT} rows"
 
 echo ""
 echo "Sample headways data:"
@@ -136,7 +136,7 @@ bq query --use_legacy_sql=false --project_id="${GCP_PROJECT_ID}" --format=pretty
     "SELECT node_id, stop_name, route_id, direction, 
             FORMAT_TIMESTAMP('%Y-%m-%d %H:%M', arrival_time) as arrival,
             ROUND(headway_minutes, 1) as headway_min
-     FROM \`${GCP_PROJECT_ID}.mta_transformed.headways_all_nodes\`
+     FROM \`${GCP_PROJECT_ID}.headway_dataset.headways_all_nodes\`
      ORDER BY arrival_time DESC
      LIMIT 10"
 
@@ -151,9 +151,9 @@ echo "  1. Delete GCS test data:"
 echo "     gsutil -m rm -r gs://${GCP_BUCKET}/decompressed/"
 echo ""
 echo "  2. Truncate BigQuery tables:"
-echo "     bq query --use_legacy_sql=false 'TRUNCATE TABLE \`${GCP_PROJECT_ID}.mta_raw.raw\`'"
-echo "     bq query --use_legacy_sql=false 'TRUNCATE TABLE \`${GCP_PROJECT_ID}.mta_transformed.clean\`'"
-echo "     bq query --use_legacy_sql=false 'TRUNCATE TABLE \`${GCP_PROJECT_ID}.mta_transformed.headways_all_nodes\`'"
+echo "     bq query --use_legacy_sql=false 'TRUNCATE TABLE \`${GCP_PROJECT_ID}.headway_dataset.raw\`'"
+echo "     bq query --use_legacy_sql=false 'TRUNCATE TABLE \`${GCP_PROJECT_ID}.headway_dataset.clean\`'"
+echo "     bq query --use_legacy_sql=false 'TRUNCATE TABLE \`${GCP_PROJECT_ID}.headway_dataset.headways_all_nodes\`'"
 echo ""
 echo "  3. Run full backfill:"
 echo "     ./scripts/run_backfill.sh"
@@ -169,11 +169,11 @@ if [[ "$CLEANUP" =~ ^[Yy]$ ]]; then
     
     echo "  Truncating BigQuery tables..."
     bq query --use_legacy_sql=false --quiet \
-        "TRUNCATE TABLE \`${GCP_PROJECT_ID}.mta_raw.raw\`"
+        "TRUNCATE TABLE \`${GCP_PROJECT_ID}.headway_dataset.raw\`"
     bq query --use_legacy_sql=false --quiet \
-        "TRUNCATE TABLE \`${GCP_PROJECT_ID}.mta_transformed.clean\`"
+        "TRUNCATE TABLE \`${GCP_PROJECT_ID}.headway_dataset.clean\`"
     bq query --use_legacy_sql=false --quiet \
-        "TRUNCATE TABLE \`${GCP_PROJECT_ID}.mta_transformed.headways_all_nodes\`"
+        "TRUNCATE TABLE \`${GCP_PROJECT_ID}.headway_dataset.headways_all_nodes\`"
     
     echo ""
     echo "✅ Cleanup complete!"

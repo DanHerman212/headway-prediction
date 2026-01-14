@@ -9,12 +9,12 @@
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
--- Dataset: mta_raw (source data loaded from GCS)
+-- Dataset: headway_dataset - Raw tables (source data loaded from GCS)
 -- -----------------------------------------------------------------------------
 
 -- Raw sensor data from subwaydata.nyc archives
 -- Schema matches the CSV files from the archive
-CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_raw.raw` (
+CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.headway_dataset.raw` (
     trip_uid STRING,
     stop_id STRING,
     track STRING,
@@ -28,7 +28,7 @@ OPTIONS (
 );
 
 -- GTFS Static: Stops
-CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_raw.stops` (
+CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.headway_dataset.stops` (
     stop_id STRING,
     stop_name STRING,
     stop_lat FLOAT64,
@@ -41,7 +41,7 @@ OPTIONS (
 );
 
 -- GTFS Static: Routes
-CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_raw.routes` (
+CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.headway_dataset.routes` (
     route_id STRING,
     agency_id STRING,
     route_short_name STRING,
@@ -56,24 +56,46 @@ OPTIONS (
     description = 'GTFS routes.txt - route metadata'
 );
 
--- Historic Schedules (structure TBD based on actual file)
-CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_raw.schedules` (
-    trip_id STRING,
-    stop_id STRING,
+-- Historic Schedules from NY Open Data
+-- Source: https://data.ny.gov/Transportation/MTA-Subway-Schedules-Beginning-January-2025/q9nv-uegs
+-- Note: Timestamp columns loaded as STRING due to AM/PM format in source CSV
+CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.headway_dataset.schedules` (
+    service_date STRING,
+    service_code STRING,
+    train_id STRING,
+    line STRING,
+    trip_line STRING,
+    direction STRING,
+    stop_order INT64,
+    gtfs_stop_id STRING,
     arrival_time STRING,
     departure_time STRING,
-    stop_sequence INT64
+    date_difference INT64,
+    track STRING,
+    division STRING,
+    revenue_service STRING,
+    timepoint STRING,
+    trip_type STRING,
+    path_id STRING,
+    next_trip_type STRING,
+    next_trip_time STRING,
+    supplement_schedule_number STRING,
+    schedule_file_number STRING,
+    origin_gtfs_stop_id STRING,
+    destination_gtfs_stop_id STRING
 )
 OPTIONS (
-    description = 'Historic subway schedules'
+    description = 'Historic subway schedules from NY Open Data'
 );
 
 -- Service Alerts from NY Open Data
-CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_raw.alerts` (
+-- Source: https://data.ny.gov/Transportation/MTA-Service-Alerts-Beginning-2025/7kct-peq7
+-- Note: Date column loaded as STRING due to potential format issues
+CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.headway_dataset.alerts` (
     alert_id INT64,
     event_id INT64,
     update_number INT64,
-    alert_date TIMESTAMP,
+    date STRING,
     agency STRING,
     status_label STRING,
     affected STRING,
@@ -86,11 +108,11 @@ OPTIONS (
 
 
 -- -----------------------------------------------------------------------------
--- Dataset: mta_transformed (cleaned and feature-engineered data)
+-- Dataset: headway_dataset - Transformed tables (cleaned and feature-engineered data)
 -- -----------------------------------------------------------------------------
 
 -- Cleaned arrivals with parsed trip metadata
-CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_transformed.clean` (
+CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.headway_dataset.clean` (
     trip_uid STRING,
     start_time_dts TIMESTAMP,
     route_id STRING,
@@ -115,81 +137,4 @@ OPTIONS (
     description = 'Cleaned subway data with parsed trip metadata, partitioned by day'
 );
 
--- Headways for all A/C/E nodes
-CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_transformed.headways_all_nodes` (
-    trip_uid STRING,
-    node_id STRING,
-    route_id STRING,
-    direction STRING,
-    stop_id STRING,
-    stop_name STRING,
-    stop_lat FLOAT64,
-    stop_lon FLOAT64,
-    arrival_time TIMESTAMP,
-    prev_arrival_time TIMESTAMP,
-    service_date DATE,
-    headway_minutes FLOAT64,
-    hour_of_day INT64,
-    minute_of_hour INT64,
-    day_of_week INT64,
-    minute_of_day INT64,
-    day_type STRING,
-    is_peak_hour INT64
-)
-PARTITION BY service_date
-CLUSTER BY route_id, direction, stop_id
-OPTIONS (
-    description = 'Headways for all A/C/E nodes for Graph WaveNet training'
-);
-
--- Headways table for incremental updates (used by stored procedures)
-CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_transformed.headways` (
-    node_id STRING,
-    stop_id STRING,
-    route_id STRING,
-    direction STRING,
-    stop_name STRING,
-    stop_lat FLOAT64,
-    stop_lon FLOAT64,
-    arrival_time_ts TIMESTAMP,
-    prev_arrival_time_ts TIMESTAMP,
-    headway_seconds INT64,
-    headway_minutes FLOAT64,
-    day_type STRING,
-    hour_of_day INT64,
-    day_of_week INT64
-)
-PARTITION BY DATE(arrival_time_ts)
-CLUSTER BY route_id, direction, stop_id
-OPTIONS (
-    description = 'Headways for incremental weekly updates'
-);
-
--- Alerts aggregated to 5-minute bins
-CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_transformed.alerts_binned` (
-    time_bin TIMESTAMP,
-    alert_a INT64,
-    alert_c INT64,
-    alert_e INT64,
-    alert_ace INT64,
-    alert_category STRING,
-    alert_count INT64
-)
-OPTIONS (
-    description = 'Service alerts aggregated to 5-minute time bins per route'
-);
-
--- Node mapping for Graph WaveNet
-CREATE TABLE IF NOT EXISTS `{{ params.project_id }}.mta_transformed.node_mapping` (
-    node_id STRING,
-    node_index INT64,
-    route_id STRING,
-    direction STRING,
-    stop_id STRING,
-    stop_name STRING,
-    stop_lat FLOAT64,
-    stop_lon FLOAT64
-)
-OPTIONS (
-    description = 'Mapping from node_id to integer index for tensor construction'
-);
+-- NOTE: ml table is created by 03_ml_headways_all_nodes.sql with CREATE OR REPLACE

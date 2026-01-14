@@ -16,18 +16,18 @@
 -- Only processes records not yet in clean table (based on arrival_time).
 -- -----------------------------------------------------------------------------
 
-CREATE OR REPLACE PROCEDURE `{{ params.project_id }}.mta_transformed.sp_clean_arrivals_incremental`()
+CREATE OR REPLACE PROCEDURE `{{ params.project_id }}.headway_dataset.sp_clean_arrivals_incremental`()
 BEGIN
     DECLARE max_processed_time INT64;
     
     -- Get the latest arrival_time already processed
     SET max_processed_time = (
         SELECT COALESCE(MAX(UNIX_SECONDS(arrival_time_ts)), 0)
-        FROM `{{ params.project_id }}.mta_transformed.clean`
+        FROM `{{ params.project_id }}.headway_dataset.clean`
     );
     
     -- Insert new records only
-    INSERT INTO `{{ params.project_id }}.mta_transformed.clean` (
+    INSERT INTO `{{ params.project_id }}.headway_dataset.clean` (
         trip_uid,
         start_time_dts,
         route_id,
@@ -92,8 +92,8 @@ BEGIN
             ELSE 'Weekday'
         END AS day_type
         
-    FROM `{{ params.project_id }}.mta_raw.raw` AS sd
-    JOIN `{{ params.project_id }}.mta_raw.stops` AS s ON sd.stop_id = s.stop_id
+    FROM `{{ params.project_id }}.headway_dataset.raw` AS sd
+    JOIN `{{ params.project_id }}.headway_dataset.stops` AS s ON sd.stop_id = s.stop_id
     WHERE sd.arrival_time > max_processed_time;
     
 END;
@@ -107,7 +107,7 @@ END;
 -- arrivals of each new day.
 -- -----------------------------------------------------------------------------
 
-CREATE OR REPLACE PROCEDURE `{{ params.project_id }}.mta_transformed.sp_compute_headways_incremental`()
+CREATE OR REPLACE PROCEDURE `{{ params.project_id }}.headway_dataset.sp_compute_headways_incremental`()
 BEGIN
     DECLARE max_processed_time TIMESTAMP;
     DECLARE lookback_start TIMESTAMP;
@@ -115,14 +115,14 @@ BEGIN
     -- Get the latest arrival already processed in headways table
     SET max_processed_time = (
         SELECT COALESCE(MAX(arrival_time_ts), TIMESTAMP('1970-01-01'))
-        FROM `{{ params.project_id }}.mta_transformed.headways`
+        FROM `{{ params.project_id }}.headway_dataset.ml`
     );
     
     -- Lookback 2 days to ensure LAG() works for first train of new day
     SET lookback_start = TIMESTAMP_SUB(max_processed_time, INTERVAL 2 DAY);
     
     -- Compute headways for new data with lookback context
-    INSERT INTO `{{ params.project_id }}.mta_transformed.headways` (
+    INSERT INTO `{{ params.project_id }}.headway_dataset.ml` (
         node_id,
         stop_id,
         route_id,
@@ -153,7 +153,7 @@ BEGIN
                 PARTITION BY stop_id, route_id, direction 
                 ORDER BY arrival_time_ts
             ) AS prev_arrival_time_ts
-        FROM `{{ params.project_id }}.mta_transformed.clean`
+        FROM `{{ params.project_id }}.headway_dataset.clean`
         WHERE route_id IN ('A', 'C', 'E')
           AND direction IN ('N', 'S')
           AND arrival_time_ts >= lookback_start

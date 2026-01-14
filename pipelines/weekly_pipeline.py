@@ -4,7 +4,7 @@ Weekly Pipeline
 ===============
 Orchestrates the weekly data refresh:
 1. Download previous 7 days from subwaydata.nyc
-2. Load CSVs to BigQuery (mta_raw.raw)
+2. Load CSVs to BigQuery (headway_dataset.raw)
 3. Run SQL transforms (incremental headway computation)
 
 This script is designed to run in a Cloud Run Job, triggered by Cloud Scheduler
@@ -16,8 +16,8 @@ Usage:
 Environment Variables:
     GCP_PROJECT_ID: Google Cloud project ID
     GCP_BUCKET: Cloud Storage bucket name
-    BQ_DATASET_RAW: Raw dataset (default: mta_raw)
-    BQ_DATASET_TRANSFORMED: Transformed dataset (default: mta_transformed)
+    BQ_DATASET_RAW: Raw dataset (default: headway_dataset)
+    BQ_DATASET_TRANSFORMED: Transformed dataset (default: headway_dataset)
 """
 
 import os
@@ -31,8 +31,8 @@ from google.cloud import bigquery, storage
 # ============================================================================
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
 BUCKET_NAME = os.environ.get("GCP_BUCKET")
-DATASET_RAW = os.environ.get("BQ_DATASET_RAW", "mta_raw")
-DATASET_TRANSFORMED = os.environ.get("BQ_DATASET_TRANSFORMED", "mta_transformed")
+DATASET_RAW = os.environ.get("BQ_DATASET_RAW", "headway_dataset")
+DATASET_TRANSFORMED = os.environ.get("BQ_DATASET_TRANSFORMED", "headway_dataset")
 GCS_PREFIX = "decompressed/"
 
 # SQL files to run (in order)
@@ -140,25 +140,35 @@ def step2_load_to_bigquery(week_ending: str) -> bool:
     return success_count > 0
 
 
-def step3_run_transforms() -> bool:
+def step3_run_transforms(start_date: str, end_date: str) -> bool:
     """
-    Run SQL transforms using stored procedures.
+    Run SQL transforms for the weekly date range.
+    Substitutes project_id and date range parameters into SQL files.
     """
     print("\n" + "=" * 60)
     print("STEP 3: Run SQL Transforms")
     print("=" * 60)
+    print(f"  Processing: {start_date} to {end_date}")
     
     client = bigquery.Client(project=PROJECT_ID)
     
-    # Run stored procedures in order
-    procedures = [
-        ("Clean arrivals (incremental)", f"CALL `{PROJECT_ID}.{DATASET_TRANSFORMED}.sp_clean_arrivals_incremental`()"),
-        ("Compute headways (incremental)", f"CALL `{PROJECT_ID}.{DATASET_TRANSFORMED}.sp_compute_headways_incremental`()"),
+    # SQL files to run with parameter substitution
+    sql_files = [
+        ("Clean arrivals (incremental)", f"{SQL_DIR}/04_data_cleansation_incremental.sql"),
+        ("Compute headways (incremental)", f"{SQL_DIR}/05_ml_headways_incremental.sql"),
     ]
     
-    for name, sql in procedures:
+    for name, sql_file in sql_files:
         print(f"  Running: {name}...")
         try:
+            with open(sql_file, 'r') as f:
+                sql = f.read()
+            
+            # Substitute parameters
+            sql = sql.replace('{{ params.project_id }}', PROJECT_ID)
+            sql = sql.replace('{{ params.start_date }}', start_date)
+            sql = sql.replace('{{ params.end_date }}', end_date)
+            
             query_job = client.query(sql)
             query_job.result()  # Wait for completion
             print(f"    ✓ Complete")
@@ -182,9 +192,12 @@ def main():
         print("ERROR: GCP_PROJECT_ID and GCP_BUCKET environment variables required")
         sys.exit(1)
     
-    # Calculate week ending date
+    # Calculate week ending date and date range
     week_ending = get_week_ending_date()
-    print(f"Week ending: {week_ending}")
+    end_date = datetime.strptime(week_ending, '%Y-%m-%d')
+    start_date = (end_date - timedelta(days=6)).strftime('%Y-%m-%d')
+    
+    print(f"Week: {start_date} to {week_ending}")
     
     # Execute pipeline steps
     if not step1_download(week_ending):
@@ -199,7 +212,7 @@ def main():
         print("\n❌ Pipeline failed at Step 2: Load to BigQuery")
         sys.exit(1)
     
-    if not step3_run_transforms():
+    if not step3_run_transforms(start_date, week_ending):
         print("\n❌ Pipeline failed at Step 3: SQL Transforms")
         sys.exit(1)
     

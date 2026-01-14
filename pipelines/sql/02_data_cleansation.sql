@@ -7,10 +7,10 @@
   3. Enriches data with derived fields like day_type
   4. Creates a clean, denormalized table for downstream analysis
   
-  Source: {{ params.project_id }}.mta_raw.raw, {{ params.project_id }}.mta_raw.stops
-  Target: {{ params.project_id }}.mta_transformed.clean
+  Source: {{ params.project_id }}.headway_dataset.raw, {{ params.project_id }}.headway_dataset.stops
+  Target: {{ params.project_id }}.headway_dataset.clean
 */
-CREATE OR REPLACE TABLE `{{ params.project_id }}.mta_transformed.clean`
+CREATE OR REPLACE TABLE `{{ params.project_id }}.headway_dataset.clean`
 PARTITION BY DATE(start_time_dts)
 OPTIONS(
   description="Cleaned and denormalized subway data, partitioned by day"
@@ -65,7 +65,7 @@ SELECT
     ELSE 'Weekday'
   END AS day_type
 FROM
-  `{{ params.project_id }}.mta_raw.raw` AS sd
+  `{{ params.project_id }}.headway_dataset.raw` AS sd
   JOIN
-  `{{ params.project_id }}.mta_raw.stops` AS s
+  `{{ params.project_id }}.headway_dataset.stops` AS s
   ON sd.stop_id = s.stop_id;

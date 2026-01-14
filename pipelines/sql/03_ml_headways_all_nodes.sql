@@ -8,10 +8,10 @@
   
   Output: One row per train arrival with headway computed
   
-  Source: {{ params.project_id }}.mta_transformed.clean
-  Target: {{ params.project_id }}.mta_transformed.headways_all_nodes
+  Source: {{ params.project_id }}.headway_dataset.clean
+  Target: {{ params.project_id }}.headway_dataset.ml
 */
-CREATE OR REPLACE TABLE `{{ params.project_id }}.mta_transformed.headways_all_nodes`
+CREATE OR REPLACE TABLE `{{ params.project_id }}.headway_dataset.ml`
 PARTITION BY DATE(arrival_time)
 CLUSTER BY route_id, direction, stop_id
 OPTIONS(
@@ -33,7 +33,7 @@ WITH arrivals_with_node AS (
     day_type,
     -- Node ID: unique identifier for Graph WaveNet nodes
     CONCAT(stop_id, '_', route_id, '_', direction) AS node_id
-  FROM `{{ params.project_id }}.mta_transformed.clean`
+  FROM `{{ params.project_id }}.headway_dataset.clean`
   WHERE 
     -- Filter to A/C/E lines only
     route_id IN ('A', 'C', 'E')

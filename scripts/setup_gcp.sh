@@ -27,8 +27,7 @@ fi
 PROJECT_ID="${GCP_PROJECT_ID:-your-project-id}"
 REGION="${GCP_REGION:-us-central1}"
 BUCKET_NAME="${GCP_BUCKET:-${PROJECT_ID}-mta-data}"
-DATASET_RAW="mta_raw"
-DATASET_TRANSFORMED="mta_transformed"
+DATASET="headway_dataset"
 
 # -----------------------------------------------------------------------------
 # Colors for output
@@ -113,20 +112,14 @@ echo "" | gsutil cp - "gs://$BUCKET_NAME/raw/gtfs/.keep"
 echo "" | gsutil cp - "gs://$BUCKET_NAME/ml-dataset/.keep"
 
 # -----------------------------------------------------------------------------
-# Create BigQuery datasets
+# Create BigQuery dataset
 # -----------------------------------------------------------------------------
-log_info "Creating BigQuery datasets..."
+log_info "Creating BigQuery dataset..."
 
-if bq show --dataset "$PROJECT_ID:$DATASET_RAW" &>/dev/null; then
-    log_warn "Dataset $DATASET_RAW already exists, skipping..."
+if bq show --dataset "$PROJECT_ID:$DATASET" &>/dev/null; then
+    log_warn "Dataset $DATASET already exists, skipping..."
 else
-    bq mk --dataset --location="$REGION" "$PROJECT_ID:$DATASET_RAW"
-fi
-
-if bq show --dataset "$PROJECT_ID:$DATASET_TRANSFORMED" &>/dev/null; then
-    log_warn "Dataset $DATASET_TRANSFORMED already exists, skipping..."
-else
-    bq mk --dataset --location="$REGION" "$PROJECT_ID:$DATASET_TRANSFORMED"
+    bq mk --dataset --location="$REGION" "$PROJECT_ID:$DATASET"
 fi
 
 # -----------------------------------------------------------------------------
@@ -206,12 +199,12 @@ echo "=========================================="
 echo ""
 echo "Resources created:"
 echo "  - Cloud Storage bucket: gs://$BUCKET_NAME"
-echo "  - BigQuery datasets: $DATASET_RAW, $DATASET_TRANSFORMED"
+echo "  - BigQuery dataset: $DATASET"
 echo "  - Artifact Registry: $REPO_NAME"
 echo "  - Service Account: $SA_EMAIL"
 echo ""
 echo "Next steps:"
-echo "  1. Add your download scripts to infrastructure/docker/ingestion/"
+echo "  1. Add your download scripts to pipelines/"
 echo "  2. Build and push Docker images"
 echo "  3. Deploy Cloud Run jobs"
 echo "  4. Configure Cloud Workflows"

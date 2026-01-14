@@ -64,8 +64,8 @@ echo ""
 # -----------------------------------------------------------------------------
 log_info "Copying SQL files to Docker context..."
 
-mkdir -p infrastructure/docker/ingestion/sql
-cp pipelines/sql/*.sql infrastructure/docker/ingestion/sql/
+mkdir -p pipelines/sql
+cp pipelines/sql/*.sql pipelines/sql/
 
 # -----------------------------------------------------------------------------
 # Build Docker image
@@ -73,7 +73,7 @@ cp pipelines/sql/*.sql infrastructure/docker/ingestion/sql/
 log_info "Building Docker image..."
 
 docker build -t "${REGISTRY}/${IMAGE_NAME}:latest" \
-    infrastructure/docker/ingestion/
+    pipelines/
 
 # -----------------------------------------------------------------------------
 # Push to Artifact Registry
@@ -106,6 +106,18 @@ log_info "Cloud Run Job deployed successfully!"
 # -----------------------------------------------------------------------------
 log_info "Setting up Cloud Scheduler (Tuesday 2pm ET)..."
 
+# Get project number for compute service account
+PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format="value(projectNumber)")
+SCHEDULER_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+
+# Grant Cloud Run Invoker role to the scheduler service account
+log_info "Ensuring scheduler service account has Cloud Run Invoker role..."
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SCHEDULER_SA}" \
+    --role="roles/run.invoker" \
+    --condition=None \
+    --quiet 2>/dev/null || true
+
 # Check if scheduler job exists
 if gcloud scheduler jobs describe weekly-pipeline-trigger \
     --location="${REGION}" \
@@ -119,7 +131,7 @@ if gcloud scheduler jobs describe weekly-pipeline-trigger \
         --time-zone="America/New_York" \
         --uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/weekly-pipeline:run" \
         --http-method=POST \
-        --oauth-service-account-email="${PROJECT_ID}@appspot.gserviceaccount.com" \
+        --oauth-service-account-email="${SCHEDULER_SA}" \
         --quiet
 else
     log_info "Creating scheduler job..."
@@ -130,7 +142,7 @@ else
         --time-zone="America/New_York" \
         --uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/weekly-pipeline:run" \
         --http-method=POST \
-        --oauth-service-account-email="${PROJECT_ID}@appspot.gserviceaccount.com" \
+        --oauth-service-account-email="${SCHEDULER_SA}" \
         --quiet
 fi
 

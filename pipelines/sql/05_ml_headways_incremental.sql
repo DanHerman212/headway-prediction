@@ -1,31 +1,37 @@
 /*
-  Incremental ML Feature Engineering - A/C/E All Nodes
+  Incremental ML Feature Engineering - A/C/E All Nodes (Weekly)
   
-  Source: {{ params.project_id }}.mta_transformed.clean
-  Target: {{ params.project_id }}.mta_transformed.headways_all_nodes
-  Partition Key: service_date (DATE)
+  Source: {{ params.project_id }}.headway_dataset.clean
+  Target: {{ params.project_id }}.headway_dataset.ml
+  Partition Key: arrival_time (DATE)
+  
+  Parameters (substituted via sed):
+    {{ params.project_id }} - GCP project ID
+    {{ params.start_date }} - Start of date range (YYYY-MM-DD)
+    {{ params.end_date }} - End of date range (YYYY-MM-DD)
   
   Logic:
-  1. Defines a processing window (Today + Yesterday for LAG lookback)
-  2. Removes any existing data for the execution date (Idempotency)
-  3. Calculates headways using 2-day window for accurate LAG()
-  4. Filters results to keep only target date's data
+  1. Defines a processing window (date range + 1 day lookback for LAG)
+  2. Removes any existing data for the date range (Idempotency)
+  3. Calculates headways using extended window for accurate LAG()
+  4. Filters results to keep only target date range
   5. Inserts into partitioned table
 */
 
 -- 1. Define Variables
-DECLARE process_date DATE DEFAULT DATE('{{ ds }}');
-DECLARE lookback_start DATE DEFAULT process_date - 1;
+DECLARE start_date DATE DEFAULT DATE('{{ params.start_date }}');
+DECLARE end_date DATE DEFAULT DATE('{{ params.end_date }}');
+DECLARE lookback_start DATE DEFAULT start_date - 1;
 
--- 2. Idempotency: Delete data for the specific date being processed
-DELETE FROM `{{ params.project_id }}.mta_transformed.headways_all_nodes`
-WHERE service_date = process_date;
+-- 2. Idempotency: Delete data for the date range being processed
+DELETE FROM `{{ params.project_id }}.headway_dataset.ml`
+WHERE DATE(arrival_time) BETWEEN start_date AND end_date;
 
 -- 3. Transformation & Insert
-INSERT INTO `{{ params.project_id }}.mta_transformed.headways_all_nodes`
+INSERT INTO `{{ params.project_id }}.headway_dataset.ml`
 
 WITH window_context AS (
-  -- Read Clean Data for Today AND Yesterday (Lookback for LAG)
+  -- Read Clean Data for date range + 1 day lookback for LAG
   SELECT
     trip_uid,
     route_id,
@@ -38,9 +44,9 @@ WITH window_context AS (
     start_time_dts,
     day_type,
     CONCAT(stop_id, '_', route_id, '_', direction) AS node_id
-  FROM `{{ params.project_id }}.mta_transformed.clean`
+  FROM `{{ params.project_id }}.headway_dataset.clean`
   WHERE 
-    DATE(start_time_dts) BETWEEN lookback_start AND process_date
+    DATE(start_time_dts) BETWEEN lookback_start AND end_date
     AND route_id IN ('A', 'C', 'E')
     AND direction IN ('N', 'S')
     AND arrival_time IS NOT NULL
@@ -110,7 +116,7 @@ SELECT
   END AS is_peak_hour
 FROM headways_computed
 WHERE 
-  DATE(arrival_time) = process_date
+  DATE(arrival_time) BETWEEN start_date AND end_date
   AND prev_arrival_time IS NOT NULL
   AND TIMESTAMP_DIFF(arrival_time, prev_arrival_time, SECOND) / 60.0 < 120
   AND TIMESTAMP_DIFF(arrival_time, prev_arrival_time, SECOND) > 0;

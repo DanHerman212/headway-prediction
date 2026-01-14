@@ -12,7 +12,7 @@ Output:
 
 Usage:
     python build_tensors.py \
-        --input_table=mta_transformed.headways_final \
+        --input_table=headway_dataset.ml_final \
         --output_path=gs://bucket/ml-dataset/ \
         --runner=DataflowRunner \
         --project=your-project \
