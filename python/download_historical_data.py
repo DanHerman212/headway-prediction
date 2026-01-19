@@ -34,7 +34,7 @@ import time
 # Configuration
 # ============================================
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
-GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME")
+GCS_BUCKET_NAME = os.environ.get("GCP_BUCKET")
 GCS_DECOMPRESSED_PREFIX = "decompressed/"  # Final folder for CSV files
 BASE_URL = "https://subwaydata.nyc/data"
 MAX_WORKERS = 10  # Number of parallel downloads

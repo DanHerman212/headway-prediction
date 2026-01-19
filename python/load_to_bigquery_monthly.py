@@ -32,10 +32,10 @@ import argparse
 # ============================================
 # Configuration
 # ============================================
-PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "time-series-478616")
-DATASET_ID = os.environ.get("BQ_DATASET_ID", "mta_historical")
-TABLE_ID = os.environ.get("BQ_TABLE_ID", "sensor_data")
-BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", f"{PROJECT_ID}-historical-data")
+PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
+DATASET_ID = os.environ.get("BQ_DATASET")
+TABLE_ID = os.environ.get("BQ_TABLE")
+BUCKET_NAME = os.environ.get("GCP_BUCKET")
 PREFIX = "decompressed/"
 
 def parse_args():
