@@ -1,0 +1,15 @@
+google-cloud-bigquery
+google-cloud-bigquery-storage
+google-cloud-aiplatform>=1.38.0
+google-cloud-storage>=2.0.0
+kfp>=2.0.0
+pandas
+db-dtypes
+pyarrow
+python-dotenv
+tensorflow>=2.14.0
+tensorboard>=2.14.0
+matplotlib
+seaborn
+numpy
+scipy

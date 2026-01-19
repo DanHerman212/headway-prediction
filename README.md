@@ -1,53 +1,39 @@
-# MTA Headway Prediction - Data Pipeline
+# Headway Prediction
 
-End-to-end ML pipeline for predicting NYC subway headways using Graph WaveNet.
+MTA Subway headway prediction pipeline.
 
 ## Project Structure
 
 ```
 headway-prediction/
-├── docs/                          # Documentation
-│   ├── data_pipeline_architecture.md
-│   └── ML_Workflow_Realtime_Headway_Prediction.md
-├── infrastructure/
-│   └── docker/
-│       └── ingestion/             # Docker containers for data ingestion
-│           ├── Dockerfile
-│           ├── requirements.txt
-│           ├── download_arrivals.py
-│           ├── download_schedules.py
-│           ├── download_alerts.py
-│           └── download_gtfs.py
-├── pipelines/
-│   ├── beam/                      # Apache Beam / Dataflow pipelines
-│   │   ├── transform_arrivals.py
-│   │   ├── compute_headways.py
-│   │   └── build_tensors.py
-│   └── sql/                       # BigQuery SQL transforms
-│       ├── 01_create_raw_tables.sql
-│       ├── 02_clean_arrivals.sql
-│       ├── 03_join_stops.sql
-│       ├── 04_compute_headways.sql
-│       └── 05_compute_lateness.sql
-├── workflows/                     # Cloud Workflows orchestration
-│   └── data_pipeline.yaml
-├── scripts/                       # Setup and utility scripts
-│   ├── setup_gcp.sh
-│   ├── build_and_deploy.sh
-│   └── run_pipeline.sh
-├── data/                          # Local data (gitignored)
-├── backup/                        # Old project files (gitignored)
-├── .env                           # Environment variables (gitignored)
-└── .gitignore
+├── python/          # Python ingestion and loading scripts
+├── sql/             # SQL transform scripts
+├── bash/            # Bash utility scripts
+└── archive/         # Archived legacy code
+```
+
+## Python Scripts
+
+- `download_historical_data.py` - Downloads and extracts MTA data to GCS
+- `load_to_bigquery_monthly.py` - Loads CSV data from GCS into BigQuery
+
+## Environment Variables
+
+```
+GCP_PROJECT_ID=your-project-id
+GCS_BUCKET_NAME=your-bucket-name
+BQ_DATASET_ID=mta_historical
+BQ_TABLE_ID=sensor_data
 ```
 
 ## Quick Start
 
-### 1. Set up GCP Infrastructure
+1. Set environment variables (see `.env.example`)
+2. Run data ingestion: `python python/download_historical_data.py --start_date 2024-01-01 --end_date 2024-01-31`
+3. Load to BigQuery: `python python/load_to_bigquery_monthly.py --year 2024 --month 1`
 
-```bash
-export GCP_PROJECT_ID=your-project-id
-export GCP_REGION=us-central1
+---
+*README to be expanded with detailed documentation*
 ./scripts/setup_gcp.sh
 ```
 
