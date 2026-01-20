@@ -69,37 +69,30 @@ def extract_data_component(
 @dsl.component(base_image=TRAINING_IMAGE)
 def preprocess_component(
     raw_data_csv: dsl.Input[dsl.Dataset],
-    preprocessed_npy: dsl.Output[dsl.Dataset],
-    metadata_json: dsl.Output[dsl.Artifact]
+    preprocessed_npy: dsl.Output[dsl.Dataset]
 ):
     """
     Preprocess raw CSV data into model-ready numpy arrays.
     Uses the preprocess_pipeline() function from preprocess module.
+    Metadata is saved alongside the .npy file automatically.
     
     Args:
         raw_data_csv: Input CSV artifact
         preprocessed_npy: Output numpy array artifact
-        metadata_json: Output metadata artifact
     """
-    import shutil
-    import json
-    from pathlib import Path
     from src.preprocess import preprocess_pipeline
     
     print(f"Preprocessing data from: {raw_data_csv.path}")
     
     # Use the existing preprocess_pipeline function
+    # It automatically saves metadata as {output_path}_metadata.json
     X, metadata = preprocess_pipeline(
         input_path=raw_data_csv.path,
         output_path=preprocessed_npy.path
     )
     
-    # Copy metadata to output artifact
-    # preprocess_pipeline saves to config.scaler_params_path, copy to KFP artifact
-    with open(metadata_json.path, 'w') as f:
-        json.dump(metadata, f, indent=2)
-    
     print(f"Preprocessing complete: {X.shape}")
+    print(f"Metadata saved alongside data file")
 
 
 # =============================================================================
@@ -109,7 +102,6 @@ def preprocess_component(
 @dsl.component(base_image=TRAINING_IMAGE)
 def train_component(
     preprocessed_npy: dsl.Input[dsl.Dataset],
-    metadata_json: dsl.Input[dsl.Artifact],
     run_name: str,
     model_output: dsl.Output[dsl.Model],
     history_json: dsl.Output[dsl.Artifact],
@@ -121,7 +113,6 @@ def train_component(
     
     Args:
         preprocessed_npy: Input preprocessed data
-        metadata_json: Input metadata
         run_name: Unique run identifier
         model_output: Output trained model artifact
         history_json: Output training history artifact
@@ -137,11 +128,19 @@ def train_component(
     
     print(f"Training run: {run_name}")
     
-    # Copy preprocessed data to expected location for train_model
+    # Copy preprocessed data and metadata to expected location for train_model
     data_dir = Path('data/A1')
     data_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Copy the .npy file
     preprocessed_path = data_dir / 'preprocessed_data.npy'
     shutil.copy(preprocessed_npy.path, preprocessed_path)
+    
+    # Copy the metadata file (should be next to the .npy file)
+    metadata_src = preprocessed_npy.path.replace('.npy', '_metadata.json')
+    metadata_dst = str(preprocessed_path).replace('.npy', '_metadata.json')
+    shutil.copy(metadata_src, metadata_dst)
+    print(f"Copied metadata from: {metadata_src}")
     
     # Use the existing train_model function with all callbacks configured
     results = train_model(run_name=run_name, use_vertex_experiments=True)
@@ -262,7 +261,6 @@ def a1_training_pipeline(
     # Step 3: Train (uses train.py::train_model with create_callbacks)
     train_task = train_component(
         preprocessed_npy=preprocess_task.outputs['preprocessed_npy'],
-        metadata_json=preprocess_task.outputs['metadata_json'],
         run_name=run_name
     )
     

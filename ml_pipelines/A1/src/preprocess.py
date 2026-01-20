@@ -228,8 +228,16 @@ def preprocess_pipeline(input_path: str = None, output_path: str = None) -> Tupl
         }
     }
     
-    metadata_path = config.scaler_params_path
+    # Save metadata to same directory as output
+    metadata_path = output_path.replace('.npy', '_metadata.json')
     print(f"  Metadata: {metadata_path}")
+    
+    # Create parent directory if it doesn't exist (for GCS paths)
+    import os
+    metadata_dir = os.path.dirname(metadata_path)
+    if metadata_dir and not metadata_path.startswith('gs://'):
+        os.makedirs(metadata_dir, exist_ok=True)
+    
     with open(metadata_path, 'w') as f:
         json.dump(metadata, f, indent=2)
     print(f"  ✓ Saved metadata JSON")

@@ -44,8 +44,9 @@ def load_preprocessed_data(data_path: str = None) -> Tuple[np.ndarray, Dict]:
     X = np.load(data_path)
     print(f"  Shape: {X.shape}")
     
-    # Load metadata
-    metadata_path = config.scaler_params_path
+    # Load metadata (next to the .npy file)
+    metadata_path = data_path.replace('.npy', '_metadata.json')
+    print(f"Loading metadata from: {metadata_path}")
     with open(metadata_path, 'r') as f:
         metadata = json.load(f)
     
