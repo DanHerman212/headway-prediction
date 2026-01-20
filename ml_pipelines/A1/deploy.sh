@@ -53,7 +53,7 @@ REQUIRED_APIS=(
 )
 
 for API in "${REQUIRED_APIS[@]}"; do
-    if gcloud services list --enabled --project=${PROJECT_ID} --filter="name:${API}" --format="value(name)" | grep -q "${API}"; then
+    if gcloud services list --enabled --project=${PROJECT_ID} --filter="config.name=${API}" --format="value(config.name)" | grep -q "${API}"; then
         echo "✓ ${API} is enabled"
     else
         echo "  Enabling ${API}..."
@@ -91,43 +91,40 @@ echo "=========================================="
 # Get the project number
 PROJECT_NUMBER=$(gcloud projects describe ${PROJECT_ID} --format="value(projectNumber)")
 VERTEX_SA="service-${PROJECT_NUMBER}@gcp-sa-aiplatform-cc.iam.gserviceaccount.com"
+COMPUTE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 
 echo "Vertex AI Service Agent: ${VERTEX_SA}"
+echo "Compute Service Account: ${COMPUTE_SA}"
+echo ""
 
-# Check if Artifact Registry permissions already exist
-if gcloud artifacts repositories get-iam-policy ${REPOSITORY} \
-    --location=${REGION} \
-    --project=${PROJECT_ID} \
-    --flatten="bindings[].members" \
-    --filter="bindings.members:serviceAccount:${VERTEX_SA} AND bindings.role:roles/artifactregistry.reader" \
-    --format="value(bindings.role)" 2>/dev/null | grep -q "artifactregistry.reader"; then
-    echo "✓ Artifact Registry permissions already configured"
-else
-    echo "  Granting Artifact Registry Reader permissions..."
-    gcloud artifacts repositories add-iam-policy-binding ${REPOSITORY} \
-        --location=${REGION} \
-        --member="serviceAccount:${VERTEX_SA}" \
-        --role="roles/artifactregistry.reader" \
-        --project=${PROJECT_ID} \
-        --quiet
-    echo "✓ Artifact Registry permissions granted"
-fi
+# Array of permissions to check/grant for Vertex AI service agent
+declare -A VERTEX_PERMISSIONS
+VERTEX_PERMISSIONS["roles/artifactregistry.reader"]="Artifact Registry Reader"
+VERTEX_PERMISSIONS["roles/storage.objectAdmin"]="Storage Object Admin"
+VERTEX_PERMISSIONS["roles/bigquery.dataEditor"]="BigQuery Data Editor"
+VERTEX_PERMISSIONS["roles/bigquery.jobUser"]="BigQuery Job User"
+VERTEX_PERMISSIONS["roles/aiplatform.user"]="Vertex AI User"
 
-# Check if Storage permissions already exist
-if gcloud projects get-iam-policy ${PROJECT_ID} \
-    --flatten="bindings[].members" \
-    --filter="bindings.members:serviceAccount:${VERTEX_SA} AND bindings.role:roles/storage.objectViewer" \
-    --format="value(bindings.role)" 2>/dev/null | grep -q "storage.objectViewer"; then
-    echo "✓ Storage permissions already configured"
-else
-    echo "  Granting Storage Object Viewer permissions..."
-    gcloud projects add-iam-policy-binding ${PROJECT_ID} \
-        --member="serviceAccount:${VERTEX_SA}" \
-        --role="roles/storage.objectViewer" \
-        --quiet
-    echo "✓ Storage permissions granted"
-fi
+# Check and grant permissions for Vertex AI service agent
+for ROLE in "${!VERTEX_PERMISSIONS[@]}"; do
+    ROLE_NAME="${VERTEX_PERMISSIONS[$ROLE]}"
+    
+    if gcloud projects get-iam-policy ${PROJECT_ID} \
+        --flatten="bindings[].members" \
+        --filter="bindings.members:serviceAccount:${VERTEX_SA} AND bindings.role:${ROLE}" \
+        --format="value(bindings.role)" 2>/dev/null | grep -q "${ROLE}"; then
+        echo "✓ ${ROLE_NAME} already configured"
+    else
+        echo "  Granting ${ROLE_NAME}..."
+        gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+            --member="serviceAccount:${VERTEX_SA}" \
+            --role="${ROLE}" \
+            --quiet
+        echo "✓ ${ROLE_NAME} granted"
+    fi
+done
 
+echo ""
 echo "Permissions check complete"
 echo ""
 

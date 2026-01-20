@@ -56,7 +56,7 @@ def extract_a1_data(output_path: str = None) -> pd.DataFrame:
         headway,
         route_id,
         track,
-        time_of_day,
+        hour_of_day,
         day_of_week
     FROM `{config.BQ_PROJECT}.{config.BQ_DATASET}.{config.BQ_TABLE}`
     WHERE track = 'A1'

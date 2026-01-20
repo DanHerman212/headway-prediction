@@ -116,7 +116,7 @@ def cyclical_encode_temporal(df: pd.DataFrame) -> pd.DataFrame:
     - Weekly: day_of_week (0-6) → dow_sin, dow_cos
     
     Args:
-        df: DataFrame with 'time_of_day' and 'day_of_week' columns
+        df: DataFrame with 'hour_of_day' and 'day_of_week' columns
     
     Returns:
         DataFrame with cyclical temporal features
@@ -124,8 +124,8 @@ def cyclical_encode_temporal(df: pd.DataFrame) -> pd.DataFrame:
     print(f"\nEncoding temporal features (cyclical)...")
     
     # Daily periodicity (24 hours)
-    df['hour_sin'] = np.sin(2 * np.pi * df['time_of_day'] / 24)
-    df['hour_cos'] = np.cos(2 * np.pi * df['time_of_day'] / 24)
+    df['hour_sin'] = np.sin(2 * np.pi * df['hour_of_day'] / 24)
+    df['hour_cos'] = np.cos(2 * np.pi * df['hour_of_day'] / 24)
     print(f"  Created: hour_sin, hour_cos (daily cycle)")
     
     # Weekly periodicity (7 days)
