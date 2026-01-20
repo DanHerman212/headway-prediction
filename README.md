@@ -114,39 +114,6 @@ headway-prediction/
 
 ---
 
-## Quick Start
-
-### Prerequisites
-- Google Cloud Platform account
-- BigQuery dataset configured
-- Python 3.9+
-
-### Setup
-
-1. **Clone repository**
-   ```bash
-   git clone https://github.com/your-org/headway-prediction.git
-   cd headway-prediction
-   ```
-
-2. **Set environment variables**
-   ```bash
-   export PROJECT_ID=realtime-headway-prediction
-   export BQ_DATASET=headway_prediction
-   ```
-
-3. **Run feature engineering**
-   ```bash
-   bash ./bash/run_pipeline.sh
-   ```
-
-4. **Launch EDA notebook**
-   ```bash
-   jupyter notebook notebooks/ml_eda.ipynb
-   ```
-
----
-
 ## Data Sources
 
 | Source | Volume | Location |

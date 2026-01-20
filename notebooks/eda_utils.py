@@ -8,6 +8,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Tuple, Dict
+from statsmodels.graphics.tsaplots import plot_acf
+from statsmodels.tsa.stattools import acf
 
 
 def print_dataset_overview(df: pd.DataFrame) -> None:
@@ -351,3 +353,74 @@ def plot_track_comparison(df_a1_clean: pd.DataFrame, df_a3_clean: pd.DataFrame) 
         'a3_skew_log': df_a3_clean['log_headway'].skew(),
         'a3_outlier_threshold': outlier_threshold
     }
+
+
+def plot_autocorrelation(df_clean: pd.DataFrame, track_name: str = "A1", max_lags: int = 30) -> Dict[str, int]:
+    """
+    Plot autocorrelation function (ACF) to determine optimal lookback window
+    Returns recommended lookback window based on significant correlations
+    """
+    # Remove any remaining nulls
+    headway_values = df_clean['headway'].dropna().values
+    
+    # Calculate ACF
+    acf_values = acf(headway_values, nlags=max_lags, fft=False)
+    
+    # Create figure
+    fig, axes = plt.subplots(1, 2, figsize=(16, 5))
+    
+    # Plot ACF using statsmodels
+    plot_acf(headway_values, lags=max_lags, ax=axes[0], alpha=0.05)
+    axes[0].set_xlabel('Lag (number of events)')
+    axes[0].set_ylabel('Autocorrelation')
+    axes[0].set_title(f'{track_name} Track: Autocorrelation Function (ACF)')
+    axes[0].grid(True, alpha=0.3)
+    
+    # Plot ACF values as bar chart for clarity
+    lags = range(max_lags + 1)
+    axes[1].bar(lags, acf_values, alpha=0.7, color='steelblue')
+    axes[1].axhline(y=0, color='black', linestyle='-', linewidth=0.8)
+    axes[1].axhline(y=1.96/np.sqrt(len(headway_values)), color='red', linestyle='--', 
+                    linewidth=1, label='95% Confidence Interval')
+    axes[1].axhline(y=-1.96/np.sqrt(len(headway_values)), color='red', linestyle='--', linewidth=1)
+    axes[1].set_xlabel('Lag (number of events)')
+    axes[1].set_ylabel('Autocorrelation')
+    axes[1].set_title(f'{track_name} Track: ACF Values')
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # Determine optimal lookback window
+    # Find where ACF first becomes insignificant (within confidence interval)
+    confidence_threshold = 1.96 / np.sqrt(len(headway_values))
+    
+    # Find first lag where correlation drops below threshold
+    significant_lags = []
+    for i in range(1, len(acf_values)):
+        if abs(acf_values[i]) > confidence_threshold:
+            significant_lags.append(i)
+    
+    if significant_lags:
+        # Recommended lookback is the last significant lag
+        recommended_lookback = max(significant_lags)
+    else:
+        recommended_lookback = 1
+    
+    print(f"\nAutocorrelation Analysis:")
+    print(f"Confidence threshold: ±{confidence_threshold:.4f}")
+    print(f"Significant lags: {significant_lags[:10] if len(significant_lags) > 10 else significant_lags}")
+    print(f"Recommended lookback window: {recommended_lookback} events")
+    print(f"\nInterpretation:")
+    print(f"- ACF shows how correlated current headway is with previous headways")
+    print(f"- Lags outside the red confidence bands are statistically significant")
+    print(f"- Recommended window captures all significant temporal dependencies")
+    
+    return {
+        'recommended_lookback': recommended_lookback,
+        'significant_lags': significant_lags,
+        'acf_values': acf_values,
+        'confidence_threshold': confidence_threshold
+    }
+
