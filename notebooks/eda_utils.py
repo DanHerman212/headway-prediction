@@ -393,29 +393,45 @@ def plot_autocorrelation(df_clean: pd.DataFrame, track_name: str = "A1", max_lag
     plt.show()
     
     # Determine optimal lookback window
-    # Find where ACF first becomes insignificant (within confidence interval)
+    # Find where ACF becomes insignificant (within confidence interval)
     confidence_threshold = 1.96 / np.sqrt(len(headway_values))
     
-    # Find first lag where correlation drops below threshold
+    # Find ALL lags where correlation is significant (outside confidence bands)
     significant_lags = []
-    for i in range(1, len(acf_values)):
+    for i in range(1, len(acf_values)):  # Skip lag 0 (always 1.0)
         if abs(acf_values[i]) > confidence_threshold:
             significant_lags.append(i)
     
     if significant_lags:
         # Recommended lookback is the last significant lag
         recommended_lookback = max(significant_lags)
+        interpretation_msg = f"Recommended window captures all {len(significant_lags)} significant temporal dependencies"
     else:
+        # No significant autocorrelation found
         recommended_lookback = 1
+        interpretation_msg = "No significant autocorrelation detected - headways are independent"
+    
+    # Calculate max ACF value (excluding lag 0)
+    max_acf = max(abs(acf_values[1:])) if len(acf_values) > 1 else 0
     
     print(f"\nAutocorrelation Analysis:")
+    print(f"Sample size: {len(headway_values):,} events")
     print(f"Confidence threshold: ±{confidence_threshold:.4f}")
-    print(f"Significant lags: {significant_lags[:10] if len(significant_lags) > 10 else significant_lags}")
-    print(f"Recommended lookback window: {recommended_lookback} events")
+    print(f"Max |ACF| (excluding lag 0): {max_acf:.4f}")
+    
+    if significant_lags:
+        print(f"Significant lags found: {len(significant_lags)}")
+        print(f"First 10 significant lags: {significant_lags[:10]}")
+        if len(significant_lags) > 10:
+            print(f"Last significant lag: {significant_lags[-1]}")
+    else:
+        print(f"Significant lags found: None")
+    
+    print(f"\nRecommended lookback window: {recommended_lookback} events")
     print(f"\nInterpretation:")
-    print(f"- ACF shows how correlated current headway is with previous headways")
-    print(f"- Lags outside the red confidence bands are statistically significant")
-    print(f"- Recommended window captures all significant temporal dependencies")
+    print(f"- ACF shows correlation between current headway and previous headways")
+    print(f"- Lags outside red confidence bands (±{confidence_threshold:.4f}) are statistically significant")
+    print(f"- {interpretation_msg}")
     
     return {
         'recommended_lookback': recommended_lookback,
