@@ -23,8 +23,8 @@ matplotlib==3.7.2
 seaborn==0.12.2
 
 # Kubeflow Pipelines
-kfp==2.4.0
-protobuf>=4.25.0,<6.0.0  # Compatible with both TensorFlow and KFP
+kfp==2.7.0
+protobuf>=4.25.0,<5.0.0  # Compatible with both TensorFlow 2.15 and KFP 2.7
 
 # Utilities
 python-dateutil==2.8.2
