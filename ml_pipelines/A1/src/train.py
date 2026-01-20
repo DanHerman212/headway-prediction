@@ -23,8 +23,8 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
-from config import config
-from model import get_model, mae_seconds
+from .config import config
+from .model import get_model, mae_seconds
 
 
 def load_preprocessed_data(data_path: str = None) -> Tuple[np.ndarray, Dict]:

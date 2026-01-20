@@ -20,7 +20,7 @@ import os
 from pathlib import Path
 from google.cloud import bigquery
 import pandas as pd
-from config import config
+from .config import config
 
 
 def extract_a1_data(output_path: str = None) -> pd.DataFrame:

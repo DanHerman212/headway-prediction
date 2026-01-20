@@ -23,8 +23,8 @@ import tensorflow as tf
 from tensorflow import keras
 from sklearn.metrics import confusion_matrix, classification_report, f1_score
 
-from config import config
-from train import load_preprocessed_data, calculate_split_indices, create_timeseries_datasets
+from .config import config
+from .train import load_preprocessed_data, calculate_split_indices, create_timeseries_datasets
 
 
 def load_model_and_data(run_name: str) -> Tuple[keras.Model, tf.data.Dataset, np.ndarray, Dict]:

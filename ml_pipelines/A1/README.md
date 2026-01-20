@@ -6,13 +6,20 @@ Modular pipeline for training a stacked GRU model to predict train headways on t
 
 ```
 A1/
-├── config.py           # Configuration and hyperparameters
-├── extract_data.py     # BigQuery data extraction → CSV
-├── preprocess.py       # Feature engineering and encoding
-├── model.py            # Stacked GRU with multi-output architecture
-├── train.py            # Training pipeline with TensorBoard/Vertex AI
-├── evaluate.py         # Evaluation metrics and visualizations
-└── requirements.txt    # Python dependencies
+├── src/                # Python modules
+│   ├── config.py       # Configuration and hyperparameters
+│   ├── extract_data.py # BigQuery data extraction → CSV
+│   ├── preprocess.py   # Feature engineering and encoding
+│   ├── model.py        # Stacked GRU with multi-output architecture
+│   ├── train.py        # Training pipeline with TensorBoard/Vertex AI
+│   └── evaluate.py     # Evaluation metrics and visualizations
+├── pipeline.py         # Vertex AI Pipelines (KFP) definition
+├── Dockerfile          # Container image for Vertex AI
+├── cloudbuild.yaml     # Cloud Build configuration
+├── deploy.sh           # Automated deployment script
+├── test_modules.py     # Module validation tests
+├── requirements.txt    # Python dependencies
+└── README.md
 ```
 
 ## Pipeline Overview

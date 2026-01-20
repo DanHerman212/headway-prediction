@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import Tuple, Dict
-from config import config
+from .config import config
 
 
 def load_raw_data(input_path: str = None) -> pd.DataFrame:

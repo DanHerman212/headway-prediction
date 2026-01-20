@@ -18,13 +18,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Install KFP SDK for pipeline components
 RUN pip install --no-cache-dir kfp==2.4.0
 
-# Copy all pipeline modules
-COPY config.py .
-COPY extract_data.py .
-COPY preprocess.py .
-COPY model.py .
-COPY train.py .
-COPY evaluate.py .
+# Copy source modules
+COPY src/ ./src/
 
 # Set Python path
 ENV PYTHONPATH=/app

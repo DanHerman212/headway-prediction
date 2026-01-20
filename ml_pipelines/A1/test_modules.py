@@ -24,7 +24,7 @@ print()
 print("Test 1: Config Module")
 print("-" * 40)
 try:
-    from config import config
+    from src.config import config
     print("[OK] Config imported")
     print("  Lookback window: {}".format(config.LOOKBACK_WINDOW))
     print("  Batch size: {}".format(config.BATCH_SIZE))
@@ -40,7 +40,7 @@ except Exception as e:
 print("Test 2: Model Module")
 print("-" * 40)
 try:
-    from model import build_stacked_gru_model, compile_model, mae_seconds
+    from src.model import build_stacked_gru_model, compile_model, mae_seconds
     print("[OK] Model functions imported")
     
     # Build model
@@ -63,7 +63,7 @@ except Exception as e:
 print("Test 3: Preprocessing Module")
 print("-" * 40)
 try:
-    from preprocess import (
+    from src.preprocess import (
         log_transform_headway,
         one_hot_encode_route,
         cyclical_encode_temporal,
@@ -110,7 +110,7 @@ except Exception as e:
 print("Test 4: Extract Data Module")
 print("-" * 40)
 try:
-    import extract_data
+    from src import extract_data
     print("[OK] Extract data module imported")
     print("  Note: Skipping BigQuery connection test (requires credentials)")
     print("[OK] Extract data test passed\n")
@@ -122,7 +122,7 @@ except Exception as e:
 print("Test 5: Training Module")
 print("-" * 40)
 try:
-    from train import (
+    from src.train import (
         load_preprocessed_data,
         calculate_split_indices,
         create_callbacks
@@ -146,7 +146,7 @@ except Exception as e:
 print("Test 6: Evaluation Module")
 print("-" * 40)
 try:
-    from evaluate import (
+    from src.evaluate import (
         inverse_transform_headway,
         evaluate_classification,
         evaluate_regression

@@ -14,7 +14,7 @@ Handles composite headways at stations receiving multiple routes.
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
-from config import config
+from .config import config
 
 
 def build_stacked_gru_model(
