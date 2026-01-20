@@ -6,6 +6,7 @@ Core dependencies for:
 - Model training (Stacked GRU)
 - Evaluation and visualization
 - TensorBoard and Vertex AI integration
+- Kubeflow Pipelines (KFP) components
 """
 
 # Core ML/DL
@@ -22,6 +23,9 @@ google-cloud-storage==2.10.0
 # Visualization
 matplotlib==3.7.2
 seaborn==0.12.2
+
+# Kubeflow Pipelines
+kfp==2.4.0
 
 # Utilities
 python-dateutil==2.8.2
