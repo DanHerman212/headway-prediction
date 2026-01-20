@@ -6,8 +6,8 @@
 *.npy
 
 # Backup (large files)
-/backup/
-/archive/
+
+archive/
 
 # Secrets
 .env
