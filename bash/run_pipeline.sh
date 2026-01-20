@@ -102,7 +102,7 @@ echo "============================================"
 echo "Step 3: Downloading Historical Data"
 echo "============================================"
 
-python3 "$PROJECT_ROOT/python/download_historical_data.py" \
+python3 "$PROJECT_ROOT/batch_ingestion/python/download_historical_data.py" \
     --start_date "$ARRIVALS_START_DATE" \
     --end_date "$ARRIVALS_END_DATE"
 
@@ -117,7 +117,7 @@ echo "Step 4: Cleaning Up Trips Files"
 echo "============================================"
 
 export FORCE_DELETE=true
-python3 "$PROJECT_ROOT/python/delete_trips_files.py"
+python3 "$PROJECT_ROOT/batch_ingestion/python/delete_trips_files.py"
 
 echo "✓ Cleanup complete"
 echo ""
@@ -129,7 +129,7 @@ echo "============================================"
 echo "Step 5: Loading Data to BigQuery"
 echo "============================================"
 
-python3 "$PROJECT_ROOT/python/load_to_bigquery_monthly.py" \
+python3 "$PROJECT_ROOT/batch_ingestion/python/load_to_bigquery_monthly.py" \
     --start_date "$ARRIVALS_START_DATE" \
     --end_date "$ARRIVALS_END_DATE"
 
