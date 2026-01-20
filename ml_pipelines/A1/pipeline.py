@@ -295,31 +295,44 @@ def compile_pipeline(output_file: str = 'a1_pipeline.yaml'):
     print(f"Pipeline compiled successfully!")
 
 
-def submit_pipeline(run_name:
-):
-    """
-    A1 Training Pipeline.
+def submit_pipeline(run_name: str = None, enable_caching: bool = False):
+    """Submit pipeline to Vertex AI."""
+    if run_name is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_name = f"a1_run_{timestamp}"
     
-    All configuration (project_id, dataset, table, experiment_name, etc.) 
-    is read from config.py by the module functions.
+    print(f"Submitting pipeline run: {run_name}")
+    print(f"  Project: {PROJECT_ID}")
+    print(f"  Region: {REGION}")
+    print(f"  Pipeline root: {PIPELINE_ROOT}")
     
-    Args:
-        run_name: Unique identifier for this pipeline run
-    """
-    
-    # Step 1: Extract data
-    extract_task = extract_data_component()
-    
-    # Step 2: Preprocess
-    preprocess_task = preprocess_component(
-        raw_data_csv=extract_task.outputs['raw_data_csv']
+    # Initialize Vertex AI
+    aiplatform.init(
+        project=PROJECT_ID,
+        location=REGION,
+        staging_bucket=f"gs://{BUCKET}/staging"
     )
     
-    # Step 3: Train (uses train.py::train_model with create_callbacks)
-    train_task = train_component(
-        preprocessed_npy=preprocess_task.outputs['preprocessed_npy'],
-        metadata_json=preprocess_task.outputs['metadata_json'],
-        run_name=run_name
+    # Create pipeline job
+    job = aiplatform.PipelineJob(
+        display_name=f"a1-training-{run_name}",
+        template_path='a1_pipeline.yaml',
+        pipeline_root=PIPELINE_ROOT,
+        parameter_values={
+            'run_name': run_name
+        },
+        enable_caching=enable_caching
+    )
+    
+    # Submit
+    job.submit()
+    
+    print(f"\nPipeline submitted!")
+    print(f"  Job name: {job.display_name}")
+    print(f"  View in console:")
+    print(f"  https://console.cloud.google.com/vertex-ai/pipelines/runs?project={PROJECT_ID}")
+
+
 def main():
     """CLI for pipeline operations."""
     parser = argparse.ArgumentParser(description='A1 Vertex AI Pipeline')

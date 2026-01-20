@@ -1,0 +1,385 @@
+# PIPELINE DEFINITION
+# Name: a1-headway-prediction-pipeline
+# Description: Train and evaluate A1 track headway prediction model
+# Inputs:
+#    run_name: str [Default: 'run_001']
+components:
+  comp-evaluate-component:
+    executorLabel: exec-evaluate-component
+    inputDefinitions:
+      artifacts:
+        metadata_json:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+          description: Metadata
+        model_input:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+          description: Trained model artifact
+        preprocessed_npy:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+          description: Preprocessed data
+      parameters:
+        run_name:
+          description: Run identifier for evaluation
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        evaluation_json:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+        evaluation_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+  comp-extract-data-component:
+    executorLabel: exec-extract-data-component
+    outputDefinitions:
+      artifacts:
+        raw_data_csv:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-preprocess-component:
+    executorLabel: exec-preprocess-component
+    inputDefinitions:
+      artifacts:
+        raw_data_csv:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+          description: Input CSV artifact
+    outputDefinitions:
+      artifacts:
+        metadata_json:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+        preprocessed_npy:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-train-component:
+    executorLabel: exec-train-component
+    inputDefinitions:
+      artifacts:
+        metadata_json:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+          description: Input metadata
+        preprocessed_npy:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+          description: Input preprocessed data
+      parameters:
+        run_name:
+          description: Unique run identifier
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        history_json:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+        metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        model_output:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+defaultPipelineRoot: gs://ml-pipelines-headway-prediction/pipeline-runs
+deploymentSpec:
+  executors:
+    exec-evaluate-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - evaluate_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef evaluate_component(\n    model_input: dsl.Input[dsl.Model],\n\
+          \    preprocessed_npy: dsl.Input[dsl.Dataset],\n    metadata_json: dsl.Input[dsl.Artifact],\n\
+          \    run_name: str,\n    evaluation_metrics: dsl.Output[dsl.Metrics],\n\
+          \    evaluation_json: dsl.Output[dsl.Artifact]\n):\n    \"\"\"\n    Evaluate\
+          \ trained model on test set.\n    Uses the evaluate_model() function from\
+          \ evaluate module.\n\n    Args:\n        model_input: Trained model artifact\n\
+          \        preprocessed_npy: Preprocessed data\n        metadata_json: Metadata\n\
+          \        run_name: Run identifier for evaluation\n        evaluation_metrics:\
+          \ Output metrics\n        evaluation_json: Output evaluation results\n \
+          \   \"\"\"\n    import json\n    import shutil\n    from pathlib import\
+          \ Path\n\n    from src.evaluate import evaluate_model\n    from src.config\
+          \ import config\n\n    print(f\"Setting up artifacts for evaluation...\"\
+          )\n\n    # Copy model to expected location for evaluate_model\n    model_dir\
+          \ = Path(config.MODEL_ARTIFACTS_DIR) / run_name / 'model'\n    model_dir.parent.mkdir(parents=True,\
+          \ exist_ok=True)\n    shutil.copytree(model_input.path, model_dir, dirs_exist_ok=True)\n\
+          \n    # Copy preprocessed data to expected location\n    data_dir = Path('data/A1')\n\
+          \    data_dir.mkdir(parents=True, exist_ok=True)\n    preprocessed_path\
+          \ = data_dir / 'preprocessed_data.npy'\n    shutil.copy(preprocessed_npy.path,\
+          \ preprocessed_path)\n\n    # Copy metadata to expected location\n    metadata_path\
+          \ = Path(config.scaler_params_path)\n    metadata_path.parent.mkdir(parents=True,\
+          \ exist_ok=True)\n    shutil.copy(metadata_json.path, metadata_path)\n\n\
+          \    # Use the existing evaluate_model function\n    results = evaluate_model(run_name=run_name)\n\
+          \n    # Save results to output artifact\n    with open(evaluation_json.path,\
+          \ 'w') as f:\n        json.dump(results, f, indent=2)\n\n    # Log to KFP\
+          \ metrics\n    evaluation_metrics.log_metric('test_f1_macro', results['classification']['f1_macro'])\n\
+          \    evaluation_metrics.log_metric('test_mae_seconds', results['regression']['mae_seconds'])\n\
+          \    evaluation_metrics.log_metric('test_rmse_seconds', results['regression']['rmse_seconds'])\n\
+          \n    print(\"Evaluation complete!\")\n\n"
+        image: us-east1-docker.pkg.dev/realtime-headway-prediction/ml-pipelines/a1-training:latest
+    exec-extract-data-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - extract_data_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef extract_data_component(\n    raw_data_csv: dsl.Output[dsl.Dataset]\n\
+          ):\n    \"\"\"\n    Extract A1 track data from BigQuery and save as CSV\
+          \ artifact.\n    Uses the extract_data module function.\n\n    Args:\n \
+          \       raw_data_csv: Output CSV artifact\n    \"\"\"\n    from src.extract_data\
+          \ import extract_a1_data\n\n    print(f\"Extracting data from BigQuery...\"\
+          )\n\n    # Use the existing function from extract_data module\n    df =\
+          \ extract_a1_data(output_path=raw_data_csv.path)\n\n    print(f\"Retrieved\
+          \ {len(df):,} records\")\n    print(f\"Saved to: {raw_data_csv.path}\")\n\
+          \n"
+        image: us-east1-docker.pkg.dev/realtime-headway-prediction/ml-pipelines/a1-training:latest
+    exec-preprocess-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - preprocess_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef preprocess_component(\n    raw_data_csv: dsl.Input[dsl.Dataset],\n\
+          \    preprocessed_npy: dsl.Output[dsl.Dataset],\n    metadata_json: dsl.Output[dsl.Artifact]\n\
+          ):\n    \"\"\"\n    Preprocess raw CSV data into model-ready numpy arrays.\n\
+          \    Uses the preprocess_pipeline() function from preprocess module.\n\n\
+          \    Args:\n        raw_data_csv: Input CSV artifact\n        preprocessed_npy:\
+          \ Output numpy array artifact\n        metadata_json: Output metadata artifact\n\
+          \    \"\"\"\n    import shutil\n    import json\n    from pathlib import\
+          \ Path\n    from src.preprocess import preprocess_pipeline\n\n    print(f\"\
+          Preprocessing data from: {raw_data_csv.path}\")\n\n    # Use the existing\
+          \ preprocess_pipeline function\n    X, metadata = preprocess_pipeline(\n\
+          \        input_path=raw_data_csv.path,\n        output_path=preprocessed_npy.path\n\
+          \    )\n\n    # Copy metadata to output artifact\n    # preprocess_pipeline\
+          \ saves to config.scaler_params_path, copy to KFP artifact\n    with open(metadata_json.path,\
+          \ 'w') as f:\n        json.dump(metadata, f, indent=2)\n\n    print(f\"\
+          Preprocessing complete: {X.shape}\")\n\n"
+        image: us-east1-docker.pkg.dev/realtime-headway-prediction/ml-pipelines/a1-training:latest
+    exec-train-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train_component(\n    preprocessed_npy: dsl.Input[dsl.Dataset],\n\
+          \    metadata_json: dsl.Input[dsl.Artifact],\n    run_name: str,\n    model_output:\
+          \ dsl.Output[dsl.Model],\n    history_json: dsl.Output[dsl.Artifact],\n\
+          \    metrics: dsl.Output[dsl.Metrics]\n):\n    \"\"\"\n    Train stacked\
+          \ GRU model with TensorBoard and Vertex AI Experiments tracking.\n    Uses\
+          \ the train module function with callbacks already configured.\n\n    Args:\n\
+          \        preprocessed_npy: Input preprocessed data\n        metadata_json:\
+          \ Input metadata\n        run_name: Unique run identifier\n        model_output:\
+          \ Output trained model artifact\n        history_json: Output training history\
+          \ artifact\n        metrics: Output metrics for Vertex AI\n    \"\"\"\n\
+          \    import numpy as np\n    import json\n    import shutil\n    from pathlib\
+          \ import Path\n\n    from src.train import train_model\n    from src.config\
+          \ import config\n\n    print(f\"Training run: {run_name}\")\n\n    # Copy\
+          \ preprocessed data to expected location for train_model\n    data_dir =\
+          \ Path('data/A1')\n    data_dir.mkdir(parents=True, exist_ok=True)\n   \
+          \ preprocessed_path = data_dir / 'preprocessed_data.npy'\n    shutil.copy(preprocessed_npy.path,\
+          \ preprocessed_path)\n\n    # Use the existing train_model function with\
+          \ all callbacks configured\n    results = train_model(run_name=run_name,\
+          \ use_vertex_experiments=True)\n\n    # Copy model to output artifact\n\
+          \    model_path = Path(config.MODEL_ARTIFACTS_DIR) / run_name / 'model'\n\
+          \    shutil.copytree(model_path, model_output.path, dirs_exist_ok=True)\n\
+          \    print(f\"Model saved to: {model_output.path}\")\n\n    # Save history\n\
+          \    with open(history_json.path, 'w') as f:\n        json.dump(results['history'],\
+          \ f, indent=2)\n\n    # Log to KFP metrics\n    history = results['history']\n\
+          \    metrics.log_metric('val_loss', history['val_loss'][-1])\n    metrics.log_metric('val_route_accuracy',\
+          \ history['val_route_output_accuracy'][-1])\n    metrics.log_metric('val_headway_mae_seconds',\
+          \ history['val_headway_output_mae_seconds'][-1])\n\n    print(\"Training\
+          \ complete!\")\n\n"
+        image: us-east1-docker.pkg.dev/realtime-headway-prediction/ml-pipelines/a1-training:latest
+        resources:
+          accelerator:
+            count: '1'
+            resourceCount: '1'
+            resourceType: NVIDIA_TESLA_A100
+            type: NVIDIA_TESLA_A100
+          cpuLimit: 8.0
+          memoryLimit: 32.0
+          resourceCpuLimit: '8'
+          resourceMemoryLimit: 32G
+pipelineInfo:
+  description: Train and evaluate A1 track headway prediction model
+  name: a1-headway-prediction-pipeline
+root:
+  dag:
+    tasks:
+      evaluate-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-evaluate-component
+        dependentTasks:
+        - preprocess-component
+        - train-component
+        inputs:
+          artifacts:
+            metadata_json:
+              taskOutputArtifact:
+                outputArtifactKey: metadata_json
+                producerTask: preprocess-component
+            model_input:
+              taskOutputArtifact:
+                outputArtifactKey: model_output
+                producerTask: train-component
+            preprocessed_npy:
+              taskOutputArtifact:
+                outputArtifactKey: preprocessed_npy
+                producerTask: preprocess-component
+          parameters:
+            run_name:
+              componentInputParameter: run_name
+        taskInfo:
+          name: evaluate-component
+      extract-data-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-extract-data-component
+        taskInfo:
+          name: extract-data-component
+      preprocess-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-preprocess-component
+        dependentTasks:
+        - extract-data-component
+        inputs:
+          artifacts:
+            raw_data_csv:
+              taskOutputArtifact:
+                outputArtifactKey: raw_data_csv
+                producerTask: extract-data-component
+        taskInfo:
+          name: preprocess-component
+      train-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-component
+        dependentTasks:
+        - preprocess-component
+        inputs:
+          artifacts:
+            metadata_json:
+              taskOutputArtifact:
+                outputArtifactKey: metadata_json
+                producerTask: preprocess-component
+            preprocessed_npy:
+              taskOutputArtifact:
+                outputArtifactKey: preprocessed_npy
+                producerTask: preprocess-component
+          parameters:
+            run_name:
+              componentInputParameter: run_name
+        taskInfo:
+          name: train-component
+  inputDefinitions:
+    parameters:
+      run_name:
+        defaultValue: run_001
+        description: Unique identifier for this pipeline run
+        isOptional: true
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.15.2

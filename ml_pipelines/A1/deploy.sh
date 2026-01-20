@@ -8,10 +8,11 @@
 #   3. Submits pipeline run to Vertex AI
 #
 # Usage:
-#   ./deploy.sh [RUN_NAME]
+#   ./deploy.sh [RUN_NAME] [--skip-build]
 #
 # Example:
 #   ./deploy.sh baseline_001
+#   ./deploy.sh baseline_002 --skip-build   # Skip container rebuild
 
 set -e
 
@@ -38,6 +39,30 @@ echo "Region: ${REGION}"
 echo "Run Name: ${RUN_NAME}"
 echo ""
 
+# Step 0: Enable required APIs
+echo "=========================================="
+echo "Step 0: Checking Required APIs"
+echo "=========================================="
+
+REQUIRED_APIS=(
+    "aiplatform.googleapis.com"
+    "artifactregistry.googleapis.com"
+    "cloudbuild.googleapis.com"
+    "storage.googleapis.com"
+    "bigquery.googleapis.com"
+)
+
+for API in "${REQUIRED_APIS[@]}"; do
+    if gcloud services list --enabled --project=${PROJECT_ID} --filter="name:${API}" --format="value(name)" | grep -q "${API}"; then
+        echo "✓ ${API} is enabled"
+    else
+        echo "  Enabling ${API}..."
+        gcloud services enable ${API} --project=${PROJECT_ID}
+        echo "✓ ${API} enabled"
+    fi
+done
+echo ""
+
 # Step 1: Create Artifact Registry repository if it doesn't exist
 echo "=========================================="
 echo "Step 1: Checking Artifact Registry"
@@ -58,23 +83,93 @@ else
 fi
 echo ""
 
+# Step 1.5: Grant permissions to Vertex AI service agent
+echo "=========================================="
+echo "Step 1.5: Checking Permissions"
+echo "=========================================="
+
+# Get the project number
+PROJECT_NUMBER=$(gcloud projects describe ${PROJECT_ID} --format="value(projectNumber)")
+VERTEX_SA="service-${PROJECT_NUMBER}@gcp-sa-aiplatform-cc.iam.gserviceaccount.com"
+
+echo "Vertex AI Service Agent: ${VERTEX_SA}"
+
+# Check if Artifact Registry permissions already exist
+if gcloud artifacts repositories get-iam-policy ${REPOSITORY} \
+    --location=${REGION} \
+    --project=${PROJECT_ID} \
+    --flatten="bindings[].members" \
+    --filter="bindings.members:serviceAccount:${VERTEX_SA} AND bindings.role:roles/artifactregistry.reader" \
+    --format="value(bindings.role)" 2>/dev/null | grep -q "artifactregistry.reader"; then
+    echo "✓ Artifact Registry permissions already configured"
+else
+    echo "  Granting Artifact Registry Reader permissions..."
+    gcloud artifacts repositories add-iam-policy-binding ${REPOSITORY} \
+        --location=${REGION} \
+        --member="serviceAccount:${VERTEX_SA}" \
+        --role="roles/artifactregistry.reader" \
+        --project=${PROJECT_ID} \
+        --quiet
+    echo "✓ Artifact Registry permissions granted"
+fi
+
+# Check if Storage permissions already exist
+if gcloud projects get-iam-policy ${PROJECT_ID} \
+    --flatten="bindings[].members" \
+    --filter="bindings.members:serviceAccount:${VERTEX_SA} AND bindings.role:roles/storage.objectViewer" \
+    --format="value(bindings.role)" 2>/dev/null | grep -q "storage.objectViewer"; then
+    echo "✓ Storage permissions already configured"
+else
+    echo "  Granting Storage Object Viewer permissions..."
+    gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+        --member="serviceAccount:${VERTEX_SA}" \
+        --role="roles/storage.objectViewer" \
+        --quiet
+    echo "✓ Storage permissions granted"
+fi
+
+echo "Permissions check complete"
+echo ""
+
+# Define image URI (needed for checks)
+IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest"
+
 # Step 2: Build container using Cloud Build
 echo "=========================================="
 echo "Step 2: Building Container (Cloud Build)"
 echo "=========================================="
-echo "Submitting build to Cloud Build..."
-echo ""
 
-gcloud builds submit \
-    --config=cloudbuild.yaml \
-    --project=${PROJECT_ID} \
-    --region=${REGION} \
-    .
+# Check if we should skip build
+SKIP_BUILD=false
+if [ "$2" == "--skip-build" ]; then
+    SKIP_BUILD=true
+    echo "Skipping container build (--skip-build flag)"
+elif gcloud artifacts docker images describe ${IMAGE_URI} --project=${PROJECT_ID} &>/dev/null; then
+    echo "Container image already exists: ${IMAGE_URI}"
+    read -p "Skip rebuild? (y/n) [default: n]: " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        SKIP_BUILD=true
+        echo "Skipping container build"
+    fi
+fi
 
-echo ""
-echo "Container build complete!"
-IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest"
-echo "Image: ${IMAGE_URI}"
+if [ "$SKIP_BUILD" = false ]; then
+    echo "Submitting build to Cloud Build..."
+    echo ""
+    
+    gcloud builds submit \
+        --config=cloudbuild.yaml \
+        --project=${PROJECT_ID} \
+        --region=${REGION} \
+        .
+    
+    echo ""
+    echo "Container build complete!"
+    echo "Image: ${IMAGE_URI}"
+else
+    echo "Using existing image: ${IMAGE_URI}"
+fi
 echo ""
 
 # Step 3: Compile pipeline

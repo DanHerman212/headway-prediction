@@ -1,13 +1,11 @@
-"""
-Requirements for A1 Track Headway Prediction Model
-
-Core dependencies for:
-- Data extraction and preprocessing
-- Model training (Stacked GRU)
-- Evaluation and visualization
-- TensorBoard and Vertex AI integration
-- Kubeflow Pipelines (KFP) components
-"""
+# Requirements for A1 Track Headway Prediction Model
+#
+# Core dependencies for:
+# - Data extraction and preprocessing
+# - Model training (Stacked GRU)
+# - Evaluation and visualization
+# - TensorBoard and Vertex AI integration
+# - Kubeflow Pipelines (KFP) components
 
 # Core ML/DL
 tensorflow==2.15.0
@@ -26,6 +24,7 @@ seaborn==0.12.2
 
 # Kubeflow Pipelines
 kfp==2.4.0
+protobuf>=4.25.0,<6.0.0  # Compatible with both TensorFlow and KFP
 
 # Utilities
 python-dateutil==2.8.2
