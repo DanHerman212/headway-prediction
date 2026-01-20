@@ -266,6 +266,12 @@ def a1_training_pipeline(
         run_name=run_name
     )
     
+    # Configure GPU for training
+    train_task.set_accelerator_type('NVIDIA_TESLA_A100')
+    train_task.set_accelerator_limit(1)
+    train_task.set_cpu_limit('8')
+    train_task.set_memory_limit('32G')
+    
     # Step 4: Evaluate (uses evaluate.py::evaluate_classification/regression)
     evaluate_task = evaluate_component(
         model_input=train_task.outputs['model_output'],

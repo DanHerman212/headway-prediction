@@ -25,7 +25,7 @@ substitutions:
   _REGION: us-east1
   _REPOSITORY: ml-pipelines
   _IMAGE_NAME: a1-training
-  _TAG: ${SHORT_SHA}
+  _TAG: latest
 
 # Images to push
 images:
