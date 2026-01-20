@@ -20,9 +20,11 @@ Environment Variables:
 
 from google.cloud import storage
 import os
-
 import argparse
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ============================================
 # Configuration
