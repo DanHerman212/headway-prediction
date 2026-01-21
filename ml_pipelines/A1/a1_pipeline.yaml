@@ -209,13 +209,16 @@ deploymentSpec:
           \ function from preprocess module.\n    Metadata is saved alongside the\
           \ .npy file automatically.\n\n    Args:\n        raw_data_csv: Input CSV\
           \ artifact\n        preprocessed_npy: Output numpy array artifact\n    \"\
-          \"\"\n    from src.preprocess import preprocess_pipeline\n\n    print(f\"\
-          Preprocessing data from: {raw_data_csv.path}\")\n\n    # Use the existing\
-          \ preprocess_pipeline function\n    # It automatically saves metadata as\
-          \ {output_path}_metadata.json\n    X, metadata = preprocess_pipeline(\n\
-          \        input_path=raw_data_csv.path,\n        output_path=preprocessed_npy.path\n\
+          \"\"\n    from src.preprocess import preprocess_pipeline\n    from pathlib\
+          \ import Path\n\n    print(f\"Preprocessing data from: {raw_data_csv.path}\"\
+          )\n\n    # Kubeflow artifacts are directories - save to file inside\n  \
+          \  output_file = Path(preprocessed_npy.path) / 'preprocessed_data.npy'\n\
+          \n    # Use the existing preprocess_pipeline function\n    # It automatically\
+          \ saves metadata as {output_path}_metadata.json\n    X, metadata = preprocess_pipeline(\n\
+          \        input_path=raw_data_csv.path,\n        output_path=str(output_file)\n\
           \    )\n\n    print(f\"Preprocessing complete: {X.shape}\")\n    print(f\"\
-          Metadata saved alongside data file\")\n\n"
+          Saved to: {output_file}\")\n    print(f\"Metadata saved alongside data file\"\
+          )\n\n"
         image: us-east1-docker.pkg.dev/realtime-headway-prediction/ml-pipelines/a1-training:latest
     exec-train-component:
       container:
@@ -257,23 +260,25 @@ deploymentSpec:
           \ import config\n\n    print(f\"Training run: {run_name}\")\n\n    # Copy\
           \ preprocessed data and metadata to expected location for train_model\n\
           \    data_dir = Path('data/A1')\n    data_dir.mkdir(parents=True, exist_ok=True)\n\
-          \n    # Copy the .npy file\n    preprocessed_path = data_dir / 'preprocessed_data.npy'\n\
-          \    shutil.copy(preprocessed_npy.path, preprocessed_path)\n\n    # Copy\
-          \ the metadata file (should be next to the .npy file)\n    metadata_src\
-          \ = preprocessed_npy.path.replace('.npy', '_metadata.json')\n    metadata_dst\
-          \ = str(preprocessed_path).replace('.npy', '_metadata.json')\n    shutil.copy(metadata_src,\
-          \ metadata_dst)\n    print(f\"Copied metadata from: {metadata_src}\")\n\n\
-          \    # Use the existing train_model function with all callbacks configured\n\
-          \    results = train_model(run_name=run_name, use_vertex_experiments=True)\n\
-          \n    # Copy model to output artifact\n    model_path = Path(config.MODEL_ARTIFACTS_DIR)\
-          \ / run_name / 'model'\n    shutil.copytree(model_path, model_output.path,\
-          \ dirs_exist_ok=True)\n    print(f\"Model saved to: {model_output.path}\"\
-          )\n\n    # Save history\n    with open(history_json.path, 'w') as f:\n \
-          \       json.dump(results['history'], f, indent=2)\n\n    # Log to KFP metrics\n\
-          \    history = results['history']\n    metrics.log_metric('val_loss', history['val_loss'][-1])\n\
-          \    metrics.log_metric('val_route_accuracy', history['val_route_output_accuracy'][-1])\n\
-          \    metrics.log_metric('val_headway_mae_seconds', history['val_headway_output_mae_seconds'][-1])\n\
-          \n    print(\"Training complete!\")\n\n"
+          \n    # Kubeflow artifacts are directories - get file from inside\n    source_npy\
+          \ = Path(preprocessed_npy.path) / 'preprocessed_data.npy'\n    preprocessed_path\
+          \ = data_dir / 'preprocessed_data.npy'\n    shutil.copy(source_npy, preprocessed_path)\n\
+          \    print(f\"Copied data from: {source_npy}\")\n\n    # Copy the metadata\
+          \ file\n    metadata_src = str(source_npy).replace('.npy', '_metadata.json')\n\
+          \    metadata_dst = str(preprocessed_path).replace('.npy', '_metadata.json')\n\
+          \    shutil.copy(metadata_src, metadata_dst)\n    print(f\"Copied metadata\
+          \ from: {metadata_src}\")\n\n    # Use the existing train_model function\
+          \ with all callbacks configured\n    results = train_model(run_name=run_name,\
+          \ use_vertex_experiments=True)\n\n    # Copy model to output artifact\n\
+          \    model_path = Path(config.MODEL_ARTIFACTS_DIR) / run_name / 'model'\n\
+          \    shutil.copytree(model_path, model_output.path, dirs_exist_ok=True)\n\
+          \    print(f\"Model saved to: {model_output.path}\")\n\n    # Save history\n\
+          \    with open(history_json.path, 'w') as f:\n        json.dump(results['history'],\
+          \ f, indent=2)\n\n    # Log to KFP metrics\n    history = results['history']\n\
+          \    metrics.log_metric('val_loss', history['val_loss'][-1])\n    metrics.log_metric('val_route_accuracy',\
+          \ history['val_route_output_accuracy'][-1])\n    metrics.log_metric('val_headway_mae_seconds',\
+          \ history['val_headway_output_mae_seconds'][-1])\n\n    print(\"Training\
+          \ complete!\")\n\n"
         image: us-east1-docker.pkg.dev/realtime-headway-prediction/ml-pipelines/a1-training:latest
         resources:
           accelerator:

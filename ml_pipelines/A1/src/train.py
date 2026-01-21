@@ -15,6 +15,7 @@ Usage:
 import argparse
 import json
 import os
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Tuple, Dict
@@ -25,6 +26,12 @@ from tensorflow import keras
 
 from .config import config
 from .model import get_model, mae_seconds
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 
 def load_preprocessed_data(data_path: str = None) -> Tuple[np.ndarray, Dict]:
@@ -40,10 +47,20 @@ def load_preprocessed_data(data_path: str = None) -> Tuple[np.ndarray, Dict]:
     if data_path is None:
         data_path = config.preprocessed_data_path
     
-    print(f"Loading preprocessed data from: {data_path}")
-    # Standard numpy array - no pickle needed
+    logger.info(f"Loading preprocessed data from: {data_path}")
     X = np.load(data_path)
-    print(f"  Shape: {X.shape}")
+    logger.info(f"  Shape: {X.shape}, dtype: {X.dtype}, size: {X.nbytes/(1024**2):.2f} MB")
+    
+    if np.isnan(X).any():
+        nan_count = np.isnan(X).sum()
+        logger.error(f"  Data contains {nan_count} NaN values!")
+        raise ValueError(f"Preprocessed data contains {nan_count} NaN values")
+    if np.isinf(X).any():
+        inf_count = np.isinf(X).sum()
+        logger.error(f"  Data contains {inf_count} inf values!")
+        raise ValueError(f"Preprocessed data contains {inf_count} inf values")
+    
+    logger.info("  Data quality: OK (no NaN/inf values)")
     
     # Load metadata (next to the .npy file)
     metadata_path = data_path.replace('.npy', '_metadata.json')
@@ -68,11 +85,11 @@ def calculate_split_indices(n_samples: int) -> Tuple[int, int, int]:
     val_end = int(n_samples * (config.TRAIN_SPLIT + config.VAL_SPLIT))
     test_end = n_samples
     
-    print(f"\nChronological data splits:")
-    print(f"  Total samples: {n_samples:,}")
-    print(f"  Train: 0 to {train_end:,} ({config.TRAIN_SPLIT*100:.0f}%)")
-    print(f"  Val: {train_end:,} to {val_end:,} ({config.VAL_SPLIT*100:.0f}%)")
-    print(f"  Test: {val_end:,} to {test_end:,} ({config.TEST_SPLIT*100:.0f}%)")
+    logger.info(f"Chronological data splits:")
+    logger.info(f"  Total samples: {n_samples:,}")
+    logger.info(f"  Train: 0 to {train_end:,} ({config.TRAIN_SPLIT*100:.0f}%)")
+    logger.info(f"  Val: {train_end:,} to {val_end:,} ({config.VAL_SPLIT*100:.0f}%)")
+    logger.info(f"  Test: {val_end:,} to {test_end:,} ({config.TEST_SPLIT*100:.0f}%)")
     
     return train_end, val_end, test_end
 
@@ -99,10 +116,11 @@ def create_timeseries_datasets(
     Returns:
         Tuple of (train_ds, val_ds, test_ds)
     """
-    print(f"\nCreating timeseries datasets...")
-    print(f"  Lookback window: {config.LOOKBACK_WINDOW}")
-    print(f"  Forecast horizon: {config.FORECAST_HORIZON}")
-    print(f"  Batch size: {config.BATCH_SIZE}")
+    logger.info(f"Creating timeseries datasets...")
+    logger.info(f"  Lookback window: {config.LOOKBACK_WINDOW}")
+    logger.info(f"  Forecast horizon: {config.FORECAST_HORIZON}")
+    logger.info(f"  Batch size: {config.BATCH_SIZE}")
+    logger.info(f"  drop_remainder: True (prevents batch size mismatch)")
     
     # Extract features for input and targets
     # Features: [log_headway, route_A, route_C, route_E, hour_sin, hour_cos, dow_sin, dow_cos]
@@ -125,9 +143,11 @@ def create_timeseries_datasets(
         max_samples = len(X_split) - config.LOOKBACK_WINDOW
         X_split = X_split[:max_samples + config.LOOKBACK_WINDOW]
         
-        print(f"    Creating dataset: samples={max_samples:,}, shuffle={shuffle}")
+        logger.info(f"    Creating dataset: samples={max_samples:,}, shuffle={shuffle}, "
+                   f"expected_batches={max_samples // config.BATCH_SIZE}")
         
         # Create timeseries dataset
+        # Use drop_remainder=True to ensure consistent batch sizes (prevents shape mismatch on last batch)
         dataset = tf.keras.utils.timeseries_dataset_from_array(
             data=X_split,
             targets=None,  # We'll manually add targets
@@ -138,10 +158,11 @@ def create_timeseries_datasets(
         )
         
         # Add targets as separate dataset
+        # CRITICAL: Use drop_remainder=True to match input batching
         target_dataset = tf.data.Dataset.from_tensor_slices({
             'route_output': route_targets,
             'headway_output': headway_targets
-        }).batch(config.BATCH_SIZE)
+        }).batch(config.BATCH_SIZE, drop_remainder=True)
         
         # Zip inputs and targets
         dataset = tf.data.Dataset.zip((dataset, target_dataset))
@@ -156,7 +177,24 @@ def create_timeseries_datasets(
     val_ds = create_dataset(train_end, val_end, shuffle=False)
     test_ds = create_dataset(val_end, test_end, shuffle=False)
     
-    print(f"  ✓ Datasets created")
+    # Validate dataset batch consistency
+    logger.info("  Validating batch consistency...")
+    for ds_name, ds in [('train', train_ds), ('val', val_ds)]:
+        try:
+            for i, (inputs, targets) in enumerate(ds.take(2)):
+                input_batch = inputs.shape[0]
+                route_batch = targets['route_output'].shape[0]
+                headway_batch = targets['headway_output'].shape[0]
+                
+                if input_batch != route_batch or input_batch != headway_batch:
+                    logger.error(f"    {ds_name} batch {i}: MISMATCH - "
+                               f"input={input_batch}, route={route_batch}, headway={headway_batch}")
+                    raise ValueError(f"Batch size mismatch in {ds_name} dataset")
+        except Exception as e:
+            logger.error(f"    Error validating {ds_name} dataset: {e}")
+            raise
+    
+    logger.info("  ✓ Datasets created and validated")
     
     return train_ds, val_ds, test_ds
 
