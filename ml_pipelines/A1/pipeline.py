@@ -81,17 +81,22 @@ def preprocess_component(
         preprocessed_npy: Output numpy array artifact
     """
     from src.preprocess import preprocess_pipeline
+    from pathlib import Path
     
     print(f"Preprocessing data from: {raw_data_csv.path}")
+    
+    # Kubeflow artifacts are directories - save to file inside
+    output_file = Path(preprocessed_npy.path) / 'preprocessed_data.npy'
     
     # Use the existing preprocess_pipeline function
     # It automatically saves metadata as {output_path}_metadata.json
     X, metadata = preprocess_pipeline(
         input_path=raw_data_csv.path,
-        output_path=preprocessed_npy.path
+        output_path=str(output_file)
     )
     
     print(f"Preprocessing complete: {X.shape}")
+    print(f"Saved to: {output_file}")
     print(f"Metadata saved alongside data file")
 
 
@@ -132,12 +137,14 @@ def train_component(
     data_dir = Path('data/A1')
     data_dir.mkdir(parents=True, exist_ok=True)
     
-    # Copy the .npy file
+    # Kubeflow artifacts are directories - get file from inside
+    source_npy = Path(preprocessed_npy.path) / 'preprocessed_data.npy'
     preprocessed_path = data_dir / 'preprocessed_data.npy'
-    shutil.copy(preprocessed_npy.path, preprocessed_path)
+    shutil.copy(source_npy, preprocessed_path)
+    print(f"Copied data from: {source_npy}")
     
-    # Copy the metadata file (should be next to the .npy file)
-    metadata_src = preprocessed_npy.path.replace('.npy', '_metadata.json')
+    # Copy the metadata file
+    metadata_src = str(source_npy).replace('.npy', '_metadata.json')
     metadata_dst = str(preprocessed_path).replace('.npy', '_metadata.json')
     shutil.copy(metadata_src, metadata_dst)
     print(f"Copied metadata from: {metadata_src}")

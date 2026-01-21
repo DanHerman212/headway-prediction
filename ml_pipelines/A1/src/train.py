@@ -41,7 +41,8 @@ def load_preprocessed_data(data_path: str = None) -> Tuple[np.ndarray, Dict]:
         data_path = config.preprocessed_data_path
     
     print(f"Loading preprocessed data from: {data_path}")
-    X = np.load(data_path, allow_pickle=True)
+    # Standard numpy array - no pickle needed
+    X = np.load(data_path)
     print(f"  Shape: {X.shape}")
     
     # Load metadata (next to the .npy file)
@@ -267,18 +268,14 @@ def train_model(run_name: str = None, use_vertex_experiments: bool = True) -> Di
                 experiment=config.EXPERIMENT_NAME
             )
             
-            # Start run with tensorboard tracking
-            vertex_run = aiplatform.start_run(
-                run=run_name,
-                tensorboard=config.TENSORBOARD_LOG_DIR
-            )
+            # Start run (tensorboard integration via callbacks, not here)
+            vertex_run = aiplatform.start_run(run=run_name)
             
             # Log hyperparameters
             vertex_run.log_params(config.hparams_dict)
             
             print(f"\n✓ Vertex AI Experiment: {config.EXPERIMENT_NAME}")
             print(f"  Run: {run_name}")
-            print(f"  TensorBoard: {config.TENSORBOARD_LOG_DIR}")
             
         except Exception as e:
             print(f"\n⚠️  Vertex AI Experiments not available: {e}")
