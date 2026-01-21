@@ -129,7 +129,7 @@ echo ""
 echo "4. Running unit tests..."
 if [ -d "tests" ]; then
     if command -v python3 &> /dev/null; then
-        python3 -m pytest tests/test_dataset.py tests/test_preprocess.py tests/test_model.py -v --tb=short 2>/dev/null || ERRORS=$((ERRORS + 1))
+        python3 -m pytest tests/test_dataset.py tests/test_preprocess.py tests/test_model.py tests/test_vertex_callback.py -v --tb=short 2>/dev/null || ERRORS=$((ERRORS + 1))
     else
         print_warning "python3 not found, skipping unit tests"
     fi

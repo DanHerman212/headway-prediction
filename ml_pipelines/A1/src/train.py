@@ -34,6 +34,33 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class VertexAIMetricsCallback(keras.callbacks.Callback):
+    """Custom callback to log metrics to Vertex AI Experiments during training."""
+    
+    def __init__(self, vertex_run):
+        super().__init__()
+        self.vertex_run = vertex_run
+        
+    def on_epoch_end(self, epoch, logs=None):
+        """Log metrics to Vertex AI at the end of each epoch."""
+        if logs is None or self.vertex_run is None:
+            return
+            
+        try:
+            # Log all available metrics with epoch prefix
+            metrics_to_log = {}
+            for key, value in logs.items():
+                # Convert to Python float to ensure JSON serialization
+                metrics_to_log[key] = float(value)
+            
+            # Log to Vertex AI
+            self.vertex_run.log_metrics(metrics_to_log)
+            logger.info(f"Epoch {epoch + 1}: Logged {len(metrics_to_log)} metrics to Vertex AI Experiments")
+            
+        except Exception as e:
+            logger.warning(f"Failed to log metrics to Vertex AI at epoch {epoch + 1}: {e}")
+
+
 def load_preprocessed_data(data_path: str = None) -> Tuple[np.ndarray, Dict]:
     """
     Load preprocessed numpy array and metadata.
@@ -199,12 +226,13 @@ def create_timeseries_datasets(
     return train_ds, val_ds, test_ds
 
 
-def create_callbacks(run_name: str) -> list:
+def create_callbacks(run_name: str, vertex_run=None) -> list:
     """
     Create training callbacks including TensorBoard with profiling.
     
     Args:
         run_name: Unique identifier for this training run
+        vertex_run: Vertex AI Experiments run object (optional)
     
     Returns:
         List of Keras callbacks
@@ -270,6 +298,12 @@ def create_callbacks(run_name: str) -> list:
     callbacks.append(csv_callback)
     print(f"    ✓ CSVLogger: {csv_log_path}")
     
+    # 6. Vertex AI Experiments callback (if enabled)
+    if vertex_run is not None:
+        vertex_callback = VertexAIMetricsCallback(vertex_run)
+        callbacks.append(vertex_callback)
+        print(f"    ✓ Vertex AI Experiments: Real-time metric logging enabled")
+    
     return callbacks
 
 
@@ -333,8 +367,8 @@ def train_model(run_name: str = None, use_vertex_experiments: bool = True) -> Di
     model = get_model(compile=True)
     print("="*80)
     
-    # Create callbacks
-    callbacks = create_callbacks(run_name)
+    # Create callbacks (pass vertex_run for real-time metric logging)
+    callbacks = create_callbacks(run_name, vertex_run=vertex_run)
     
     # Train model
     print("\n" + "="*80)
