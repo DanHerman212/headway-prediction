@@ -72,8 +72,6 @@ Those 30 seconds save hours of debugging.
 
 ## Previous Debugging Session Summary
 
-We spent 3 hours debugging deployment issues. This tooling now catches all those issues in 30 seconds.
-
 **Issues it now catches**:
 - Batch size mismatches
 - Missing Vertex AI configuration
