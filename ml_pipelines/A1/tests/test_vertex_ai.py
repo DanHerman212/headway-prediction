@@ -156,7 +156,6 @@ def test_tensorboard_callback_setup():
         print("\n2. Checking callback configuration...")
         print(f"   ✓ Histogram tracking: {callback.histogram_freq > 0}")
         print(f"   ✓ Graph tracking: {callback.write_graph}")
-        print(f"   ✓ Profile batch: {callback._profile_batch}")
         
         return True
         
