@@ -339,10 +339,14 @@ def train_model(run_name: str = None, use_vertex_experiments: bool = True) -> Di
                 location=config.BQ_LOCATION
             )
             
-            # Start experiment run with explicit experiment name
+            # TensorBoard log directory for this run
+            tensorboard_log_dir = os.path.join(config.TENSORBOARD_LOG_DIR, run_name)
+            
+            # Start experiment run with TensorBoard integration
             aiplatform.start_run(
                 run=run_name,
                 experiment=config.EXPERIMENT_NAME,
+                tensorboard=tensorboard_log_dir,
                 resume=False
             )
             
@@ -351,6 +355,7 @@ def train_model(run_name: str = None, use_vertex_experiments: bool = True) -> Di
             
             print(f"\n✓ Vertex AI Experiment: {config.EXPERIMENT_NAME}")
             print(f"  Run: {run_name}")
+            print(f"  TensorBoard: {tensorboard_log_dir}")
             
         except Exception as e:
             import traceback
