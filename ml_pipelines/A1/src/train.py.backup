@@ -339,12 +339,8 @@ def train_model(run_name: str = None, use_vertex_experiments: bool = True) -> Di
                 location=config.BQ_LOCATION
             )
             
-            # Start experiment run with explicit experiment name
-            aiplatform.start_run(
-                run=run_name,
-                experiment=config.EXPERIMENT_NAME,
-                resume=False
-            )
+            # Start experiment run
+            aiplatform.start_run(run=run_name, resume=False)
             
             # Log hyperparameters
             aiplatform.log_params(config.hparams_dict)

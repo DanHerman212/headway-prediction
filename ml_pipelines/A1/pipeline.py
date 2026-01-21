@@ -129,7 +129,7 @@ def train_component(
     import shutil
     from pathlib import Path
     
-    # Set environment variables for config
+    # Set environment variables for config - use LOCAL paths in container
     os.environ['GCP_PROJECT_ID'] = 'realtime-headway-prediction'
     os.environ['GCP_REGION'] = 'us-east1'
     os.environ['GCS_BUCKET'] = 'ml-pipelines-headway-prediction'
@@ -158,13 +158,18 @@ def train_component(
     shutil.copy(metadata_src, metadata_dst)
     print(f"Copied metadata from: {metadata_src}")
     
-    # Use the existing train_model function with all callbacks configured
+    # Train model (saves locally to models/A1/checkpoints/best_model.keras)
     results = train_model(run_name=run_name, use_vertex_experiments=True)
     
-    # Copy model to output artifact
-    model_path = Path(config.MODEL_ARTIFACTS_DIR) / run_name / 'model'
-    shutil.copytree(model_path, model_output.path, dirs_exist_ok=True)
-    print(f"Model saved to: {model_output.path}")
+    # Copy the saved model checkpoint to output artifact
+    # The model was saved to config.checkpoint_path (local path)
+    local_model_path = Path(config.checkpoint_path)
+    if local_model_path.exists():
+        # Copy the single .keras file
+        shutil.copy(local_model_path, Path(model_output.path) / 'model.keras')
+        print(f"Model saved to: {model_output.path}/model.keras")
+    else:
+        raise FileNotFoundError(f"Model checkpoint not found at: {local_model_path}")
     
     # Save history
     with open(history_json.path, 'w') as f:
@@ -321,12 +326,26 @@ def submit_pipeline(run_name: str = None, enable_caching: bool = False):
     print(f"  Pipeline root: {PIPELINE_ROOT}")
     
     # Initialize Vertex AI with experiment tracking
-    aiplatform.init(
-        project=PROJECT_ID,
-        location=REGION,
-        staging_bucket=f"gs://{BUCKET}/staging",
-        experiment=config.EXPERIMENT_NAME
-    )
+    try:
+        aiplatform.init(
+            project=PROJECT_ID,
+            location=REGION,
+            staging_bucket=f"gs://{BUCKET}/staging"
+        )
+        
+        # Create experiment if it doesn't exist
+        try:
+            experiment = aiplatform.Experiment(config.EXPERIMENT_NAME)
+            print(f"  Using existing experiment: {config.EXPERIMENT_NAME}")
+        except:
+            experiment = aiplatform.Experiment.create(
+                experiment_name=config.EXPERIMENT_NAME,
+                description="A1 Track Headway Prediction Model Training"
+            )
+            print(f"  Created experiment: {config.EXPERIMENT_NAME}")
+    except Exception as e:
+        print(f"  Warning: Could not initialize experiments: {e}")
+        print("  Continuing without experiment tracking")
     
     # Create pipeline job
     job = aiplatform.PipelineJob(

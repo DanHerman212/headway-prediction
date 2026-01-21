@@ -104,8 +104,10 @@ class A1Config:
     # ============================================================================
     EXPERIMENT_NAME: str = os.getenv("EXPERIMENT_NAME", "a1-headway-prediction")
     GCS_BUCKET: str = os.getenv("GCS_BUCKET", "ml-pipelines-headway-prediction")
+    # Use GCS for TensorBoard logs (works with TensorBoard callback)
     TENSORBOARD_LOG_DIR: str = f"gs://{os.getenv('GCS_BUCKET', 'ml-pipelines-headway-prediction')}/tensorboard/A1"
-    MODEL_ARTIFACTS_DIR: str = f"gs://{os.getenv('GCS_BUCKET', 'ml-pipelines-headway-prediction')}/models/A1"
+    # Use local path for model artifacts (pipeline handles GCS upload)
+    MODEL_ARTIFACTS_DIR: str = "models/A1"
     
     # ============================================================================
     # TensorBoard Tracking Configuration

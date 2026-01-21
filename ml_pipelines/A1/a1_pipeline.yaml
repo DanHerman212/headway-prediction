@@ -255,27 +255,36 @@ deploymentSpec:
           \ data\n        run_name: Unique run identifier\n        model_output: Output\
           \ trained model artifact\n        history_json: Output training history\
           \ artifact\n        metrics: Output metrics for Vertex AI\n    \"\"\"\n\
-          \    import numpy as np\n    import json\n    import shutil\n    from pathlib\
-          \ import Path\n\n    from src.train import train_model\n    from src.config\
-          \ import config\n\n    print(f\"Training run: {run_name}\")\n\n    # Copy\
-          \ preprocessed data and metadata to expected location for train_model\n\
-          \    data_dir = Path('data/A1')\n    data_dir.mkdir(parents=True, exist_ok=True)\n\
-          \n    # Kubeflow artifacts are directories - get file from inside\n    source_npy\
-          \ = Path(preprocessed_npy.path) / 'preprocessed_data.npy'\n    preprocessed_path\
-          \ = data_dir / 'preprocessed_data.npy'\n    shutil.copy(source_npy, preprocessed_path)\n\
-          \    print(f\"Copied data from: {source_npy}\")\n\n    # Copy the metadata\
-          \ file\n    metadata_src = str(source_npy).replace('.npy', '_metadata.json')\n\
-          \    metadata_dst = str(preprocessed_path).replace('.npy', '_metadata.json')\n\
-          \    shutil.copy(metadata_src, metadata_dst)\n    print(f\"Copied metadata\
-          \ from: {metadata_src}\")\n\n    # Use the existing train_model function\
-          \ with all callbacks configured\n    results = train_model(run_name=run_name,\
-          \ use_vertex_experiments=True)\n\n    # Copy model to output artifact\n\
-          \    model_path = Path(config.MODEL_ARTIFACTS_DIR) / run_name / 'model'\n\
-          \    shutil.copytree(model_path, model_output.path, dirs_exist_ok=True)\n\
-          \    print(f\"Model saved to: {model_output.path}\")\n\n    # Save history\n\
-          \    with open(history_json.path, 'w') as f:\n        json.dump(results['history'],\
-          \ f, indent=2)\n\n    # Log to KFP metrics\n    history = results['history']\n\
-          \    metrics.log_metric('val_loss', history['val_loss'][-1])\n    metrics.log_metric('val_route_accuracy',\
+          \    import os\n    import numpy as np\n    import json\n    import shutil\n\
+          \    from pathlib import Path\n\n    # Set environment variables for config\
+          \ - use LOCAL paths in container\n    os.environ['GCP_PROJECT_ID'] = 'realtime-headway-prediction'\n\
+          \    os.environ['GCP_REGION'] = 'us-east1'\n    os.environ['GCS_BUCKET']\
+          \ = 'ml-pipelines-headway-prediction'\n    os.environ['EXPERIMENT_NAME']\
+          \ = 'a1-headway-prediction'\n    os.environ['BQ_DATASET'] = 'headway_prediction'\n\
+          \    os.environ['BQ_TABLE'] = 'ml'\n\n    from src.train import train_model\n\
+          \    from src.config import config\n\n    print(f\"Training run: {run_name}\"\
+          )\n\n    # Copy preprocessed data and metadata to expected location for\
+          \ train_model\n    data_dir = Path('data/A1')\n    data_dir.mkdir(parents=True,\
+          \ exist_ok=True)\n\n    # Kubeflow artifacts are directories - get file\
+          \ from inside\n    source_npy = Path(preprocessed_npy.path) / 'preprocessed_data.npy'\n\
+          \    preprocessed_path = data_dir / 'preprocessed_data.npy'\n    shutil.copy(source_npy,\
+          \ preprocessed_path)\n    print(f\"Copied data from: {source_npy}\")\n\n\
+          \    # Copy the metadata file\n    metadata_src = str(source_npy).replace('.npy',\
+          \ '_metadata.json')\n    metadata_dst = str(preprocessed_path).replace('.npy',\
+          \ '_metadata.json')\n    shutil.copy(metadata_src, metadata_dst)\n    print(f\"\
+          Copied metadata from: {metadata_src}\")\n\n    # Train model (saves locally\
+          \ to models/A1/checkpoints/best_model.keras)\n    results = train_model(run_name=run_name,\
+          \ use_vertex_experiments=True)\n\n    # Copy the saved model checkpoint\
+          \ to output artifact\n    # The model was saved to config.checkpoint_path\
+          \ (local path)\n    local_model_path = Path(config.checkpoint_path)\n  \
+          \  if local_model_path.exists():\n        # Copy the single .keras file\n\
+          \        shutil.copy(local_model_path, Path(model_output.path) / 'model.keras')\n\
+          \        print(f\"Model saved to: {model_output.path}/model.keras\")\n \
+          \   else:\n        raise FileNotFoundError(f\"Model checkpoint not found\
+          \ at: {local_model_path}\")\n\n    # Save history\n    with open(history_json.path,\
+          \ 'w') as f:\n        json.dump(results['history'], f, indent=2)\n\n   \
+          \ # Log to KFP metrics\n    history = results['history']\n    metrics.log_metric('val_loss',\
+          \ history['val_loss'][-1])\n    metrics.log_metric('val_route_accuracy',\
           \ history['val_route_output_accuracy'][-1])\n    metrics.log_metric('val_headway_mae_seconds',\
           \ history['val_headway_output_mae_seconds'][-1])\n\n    print(\"Training\
           \ complete!\")\n\n"
