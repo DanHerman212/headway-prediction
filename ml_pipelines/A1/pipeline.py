@@ -171,7 +171,6 @@ def train_component(
 def evaluate_component(
     model_input: dsl.Input[dsl.Model],
     preprocessed_npy: dsl.Input[dsl.Dataset],
-    metadata_json: dsl.Input[dsl.Artifact],
     run_name: str,
     evaluation_metrics: dsl.Output[dsl.Metrics],
     evaluation_json: dsl.Output[dsl.Artifact]
@@ -182,8 +181,7 @@ def evaluate_component(
     
     Args:
         model_input: Trained model artifact
-        preprocessed_npy: Preprocessed data
-        metadata_json: Metadata
+        preprocessed_npy: Preprocessed data (metadata is alongside)
         run_name: Run identifier for evaluation
         evaluation_metrics: Output metrics
         evaluation_json: Output evaluation results
@@ -202,16 +200,19 @@ def evaluate_component(
     model_dir.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(model_input.path, model_dir, dirs_exist_ok=True)
     
-    # Copy preprocessed data to expected location
+    # Copy preprocessed data and metadata to expected location
     data_dir = Path('data/A1')
     data_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Copy the .npy file
     preprocessed_path = data_dir / 'preprocessed_data.npy'
     shutil.copy(preprocessed_npy.path, preprocessed_path)
     
-    # Copy metadata to expected location
-    metadata_path = Path(config.scaler_params_path)
-    metadata_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(metadata_json.path, metadata_path)
+    # Copy the metadata file (should be next to the .npy file)
+    metadata_src = preprocessed_npy.path.replace('.npy', '_metadata.json')
+    metadata_dst = str(preprocessed_path).replace('.npy', '_metadata.json')
+    shutil.copy(metadata_src, metadata_dst)
+    print(f"Copied metadata from: {metadata_src}")
     
     # Use the existing evaluate_model function
     results = evaluate_model(run_name=run_name)
@@ -274,7 +275,6 @@ def a1_training_pipeline(
     evaluate_task = evaluate_component(
         model_input=train_task.outputs['model_output'],
         preprocessed_npy=preprocess_task.outputs['preprocessed_npy'],
-        metadata_json=preprocess_task.outputs['metadata_json'],
         run_name=run_name
     )
 

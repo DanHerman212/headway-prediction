@@ -8,11 +8,6 @@ components:
     executorLabel: exec-evaluate-component
     inputDefinitions:
       artifacts:
-        metadata_json:
-          artifactType:
-            schemaTitle: system.Artifact
-            schemaVersion: 0.0.1
-          description: Metadata
         model_input:
           artifactType:
             schemaTitle: system.Model
@@ -22,7 +17,7 @@ components:
           artifactType:
             schemaTitle: system.Dataset
             schemaVersion: 0.0.1
-          description: Preprocessed data
+          description: Preprocessed data (metadata is alongside)
       parameters:
         run_name:
           description: Run identifier for evaluation
@@ -56,10 +51,6 @@ components:
           description: Input CSV artifact
     outputDefinitions:
       artifacts:
-        metadata_json:
-          artifactType:
-            schemaTitle: system.Artifact
-            schemaVersion: 0.0.1
         preprocessed_npy:
           artifactType:
             schemaTitle: system.Dataset
@@ -68,11 +59,6 @@ components:
     executorLabel: exec-train-component
     inputDefinitions:
       artifacts:
-        metadata_json:
-          artifactType:
-            schemaTitle: system.Artifact
-            schemaVersion: 0.0.1
-          description: Input metadata
         preprocessed_npy:
           artifactType:
             schemaTitle: system.Dataset
@@ -126,26 +112,27 @@ deploymentSpec:
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef evaluate_component(\n    model_input: dsl.Input[dsl.Model],\n\
-          \    preprocessed_npy: dsl.Input[dsl.Dataset],\n    metadata_json: dsl.Input[dsl.Artifact],\n\
-          \    run_name: str,\n    evaluation_metrics: dsl.Output[dsl.Metrics],\n\
-          \    evaluation_json: dsl.Output[dsl.Artifact]\n):\n    \"\"\"\n    Evaluate\
-          \ trained model on test set.\n    Uses the evaluate_model() function from\
-          \ evaluate module.\n\n    Args:\n        model_input: Trained model artifact\n\
-          \        preprocessed_npy: Preprocessed data\n        metadata_json: Metadata\n\
-          \        run_name: Run identifier for evaluation\n        evaluation_metrics:\
-          \ Output metrics\n        evaluation_json: Output evaluation results\n \
-          \   \"\"\"\n    import json\n    import shutil\n    from pathlib import\
-          \ Path\n\n    from src.evaluate import evaluate_model\n    from src.config\
-          \ import config\n\n    print(f\"Setting up artifacts for evaluation...\"\
-          )\n\n    # Copy model to expected location for evaluate_model\n    model_dir\
-          \ = Path(config.MODEL_ARTIFACTS_DIR) / run_name / 'model'\n    model_dir.parent.mkdir(parents=True,\
-          \ exist_ok=True)\n    shutil.copytree(model_input.path, model_dir, dirs_exist_ok=True)\n\
-          \n    # Copy preprocessed data to expected location\n    data_dir = Path('data/A1')\n\
-          \    data_dir.mkdir(parents=True, exist_ok=True)\n    preprocessed_path\
-          \ = data_dir / 'preprocessed_data.npy'\n    shutil.copy(preprocessed_npy.path,\
-          \ preprocessed_path)\n\n    # Copy metadata to expected location\n    metadata_path\
-          \ = Path(config.scaler_params_path)\n    metadata_path.parent.mkdir(parents=True,\
-          \ exist_ok=True)\n    shutil.copy(metadata_json.path, metadata_path)\n\n\
+          \    preprocessed_npy: dsl.Input[dsl.Dataset],\n    run_name: str,\n   \
+          \ evaluation_metrics: dsl.Output[dsl.Metrics],\n    evaluation_json: dsl.Output[dsl.Artifact]\n\
+          ):\n    \"\"\"\n    Evaluate trained model on test set.\n    Uses the evaluate_model()\
+          \ function from evaluate module.\n\n    Args:\n        model_input: Trained\
+          \ model artifact\n        preprocessed_npy: Preprocessed data (metadata\
+          \ is alongside)\n        run_name: Run identifier for evaluation\n     \
+          \   evaluation_metrics: Output metrics\n        evaluation_json: Output\
+          \ evaluation results\n    \"\"\"\n    import json\n    import shutil\n \
+          \   from pathlib import Path\n\n    from src.evaluate import evaluate_model\n\
+          \    from src.config import config\n\n    print(f\"Setting up artifacts\
+          \ for evaluation...\")\n\n    # Copy model to expected location for evaluate_model\n\
+          \    model_dir = Path(config.MODEL_ARTIFACTS_DIR) / run_name / 'model'\n\
+          \    model_dir.parent.mkdir(parents=True, exist_ok=True)\n    shutil.copytree(model_input.path,\
+          \ model_dir, dirs_exist_ok=True)\n\n    # Copy preprocessed data and metadata\
+          \ to expected location\n    data_dir = Path('data/A1')\n    data_dir.mkdir(parents=True,\
+          \ exist_ok=True)\n\n    # Copy the .npy file\n    preprocessed_path = data_dir\
+          \ / 'preprocessed_data.npy'\n    shutil.copy(preprocessed_npy.path, preprocessed_path)\n\
+          \n    # Copy the metadata file (should be next to the .npy file)\n    metadata_src\
+          \ = preprocessed_npy.path.replace('.npy', '_metadata.json')\n    metadata_dst\
+          \ = str(preprocessed_path).replace('.npy', '_metadata.json')\n    shutil.copy(metadata_src,\
+          \ metadata_dst)\n    print(f\"Copied metadata from: {metadata_src}\")\n\n\
           \    # Use the existing evaluate_model function\n    results = evaluate_model(run_name=run_name)\n\
           \n    # Save results to output artifact\n    with open(evaluation_json.path,\
           \ 'w') as f:\n        json.dump(results, f, indent=2)\n\n    # Log to KFP\
@@ -217,20 +204,18 @@ deploymentSpec:
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef preprocess_component(\n    raw_data_csv: dsl.Input[dsl.Dataset],\n\
-          \    preprocessed_npy: dsl.Output[dsl.Dataset],\n    metadata_json: dsl.Output[dsl.Artifact]\n\
-          ):\n    \"\"\"\n    Preprocess raw CSV data into model-ready numpy arrays.\n\
-          \    Uses the preprocess_pipeline() function from preprocess module.\n\n\
-          \    Args:\n        raw_data_csv: Input CSV artifact\n        preprocessed_npy:\
-          \ Output numpy array artifact\n        metadata_json: Output metadata artifact\n\
-          \    \"\"\"\n    import shutil\n    import json\n    from pathlib import\
-          \ Path\n    from src.preprocess import preprocess_pipeline\n\n    print(f\"\
+          \    preprocessed_npy: dsl.Output[dsl.Dataset]\n):\n    \"\"\"\n    Preprocess\
+          \ raw CSV data into model-ready numpy arrays.\n    Uses the preprocess_pipeline()\
+          \ function from preprocess module.\n    Metadata is saved alongside the\
+          \ .npy file automatically.\n\n    Args:\n        raw_data_csv: Input CSV\
+          \ artifact\n        preprocessed_npy: Output numpy array artifact\n    \"\
+          \"\"\n    from src.preprocess import preprocess_pipeline\n\n    print(f\"\
           Preprocessing data from: {raw_data_csv.path}\")\n\n    # Use the existing\
-          \ preprocess_pipeline function\n    X, metadata = preprocess_pipeline(\n\
+          \ preprocess_pipeline function\n    # It automatically saves metadata as\
+          \ {output_path}_metadata.json\n    X, metadata = preprocess_pipeline(\n\
           \        input_path=raw_data_csv.path,\n        output_path=preprocessed_npy.path\n\
-          \    )\n\n    # Copy metadata to output artifact\n    # preprocess_pipeline\
-          \ saves to config.scaler_params_path, copy to KFP artifact\n    with open(metadata_json.path,\
-          \ 'w') as f:\n        json.dump(metadata, f, indent=2)\n\n    print(f\"\
-          Preprocessing complete: {X.shape}\")\n\n"
+          \    )\n\n    print(f\"Preprocessing complete: {X.shape}\")\n    print(f\"\
+          Metadata saved alongside data file\")\n\n"
         image: us-east1-docker.pkg.dev/realtime-headway-prediction/ml-pipelines/a1-training:latest
     exec-train-component:
       container:
@@ -259,33 +244,36 @@ deploymentSpec:
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef train_component(\n    preprocessed_npy: dsl.Input[dsl.Dataset],\n\
-          \    metadata_json: dsl.Input[dsl.Artifact],\n    run_name: str,\n    model_output:\
-          \ dsl.Output[dsl.Model],\n    history_json: dsl.Output[dsl.Artifact],\n\
-          \    metrics: dsl.Output[dsl.Metrics]\n):\n    \"\"\"\n    Train stacked\
-          \ GRU model with TensorBoard and Vertex AI Experiments tracking.\n    Uses\
-          \ the train module function with callbacks already configured.\n\n    Args:\n\
-          \        preprocessed_npy: Input preprocessed data\n        metadata_json:\
-          \ Input metadata\n        run_name: Unique run identifier\n        model_output:\
-          \ Output trained model artifact\n        history_json: Output training history\
+          \    run_name: str,\n    model_output: dsl.Output[dsl.Model],\n    history_json:\
+          \ dsl.Output[dsl.Artifact],\n    metrics: dsl.Output[dsl.Metrics]\n):\n\
+          \    \"\"\"\n    Train stacked GRU model with TensorBoard and Vertex AI\
+          \ Experiments tracking.\n    Uses the train module function with callbacks\
+          \ already configured.\n\n    Args:\n        preprocessed_npy: Input preprocessed\
+          \ data\n        run_name: Unique run identifier\n        model_output: Output\
+          \ trained model artifact\n        history_json: Output training history\
           \ artifact\n        metrics: Output metrics for Vertex AI\n    \"\"\"\n\
           \    import numpy as np\n    import json\n    import shutil\n    from pathlib\
           \ import Path\n\n    from src.train import train_model\n    from src.config\
           \ import config\n\n    print(f\"Training run: {run_name}\")\n\n    # Copy\
-          \ preprocessed data to expected location for train_model\n    data_dir =\
-          \ Path('data/A1')\n    data_dir.mkdir(parents=True, exist_ok=True)\n   \
-          \ preprocessed_path = data_dir / 'preprocessed_data.npy'\n    shutil.copy(preprocessed_npy.path,\
-          \ preprocessed_path)\n\n    # Use the existing train_model function with\
-          \ all callbacks configured\n    results = train_model(run_name=run_name,\
-          \ use_vertex_experiments=True)\n\n    # Copy model to output artifact\n\
-          \    model_path = Path(config.MODEL_ARTIFACTS_DIR) / run_name / 'model'\n\
-          \    shutil.copytree(model_path, model_output.path, dirs_exist_ok=True)\n\
-          \    print(f\"Model saved to: {model_output.path}\")\n\n    # Save history\n\
-          \    with open(history_json.path, 'w') as f:\n        json.dump(results['history'],\
-          \ f, indent=2)\n\n    # Log to KFP metrics\n    history = results['history']\n\
-          \    metrics.log_metric('val_loss', history['val_loss'][-1])\n    metrics.log_metric('val_route_accuracy',\
-          \ history['val_route_output_accuracy'][-1])\n    metrics.log_metric('val_headway_mae_seconds',\
-          \ history['val_headway_output_mae_seconds'][-1])\n\n    print(\"Training\
-          \ complete!\")\n\n"
+          \ preprocessed data and metadata to expected location for train_model\n\
+          \    data_dir = Path('data/A1')\n    data_dir.mkdir(parents=True, exist_ok=True)\n\
+          \n    # Copy the .npy file\n    preprocessed_path = data_dir / 'preprocessed_data.npy'\n\
+          \    shutil.copy(preprocessed_npy.path, preprocessed_path)\n\n    # Copy\
+          \ the metadata file (should be next to the .npy file)\n    metadata_src\
+          \ = preprocessed_npy.path.replace('.npy', '_metadata.json')\n    metadata_dst\
+          \ = str(preprocessed_path).replace('.npy', '_metadata.json')\n    shutil.copy(metadata_src,\
+          \ metadata_dst)\n    print(f\"Copied metadata from: {metadata_src}\")\n\n\
+          \    # Use the existing train_model function with all callbacks configured\n\
+          \    results = train_model(run_name=run_name, use_vertex_experiments=True)\n\
+          \n    # Copy model to output artifact\n    model_path = Path(config.MODEL_ARTIFACTS_DIR)\
+          \ / run_name / 'model'\n    shutil.copytree(model_path, model_output.path,\
+          \ dirs_exist_ok=True)\n    print(f\"Model saved to: {model_output.path}\"\
+          )\n\n    # Save history\n    with open(history_json.path, 'w') as f:\n \
+          \       json.dump(results['history'], f, indent=2)\n\n    # Log to KFP metrics\n\
+          \    history = results['history']\n    metrics.log_metric('val_loss', history['val_loss'][-1])\n\
+          \    metrics.log_metric('val_route_accuracy', history['val_route_output_accuracy'][-1])\n\
+          \    metrics.log_metric('val_headway_mae_seconds', history['val_headway_output_mae_seconds'][-1])\n\
+          \n    print(\"Training complete!\")\n\n"
         image: us-east1-docker.pkg.dev/realtime-headway-prediction/ml-pipelines/a1-training:latest
         resources:
           accelerator:
@@ -313,10 +301,6 @@ root:
         - train-component
         inputs:
           artifacts:
-            metadata_json:
-              taskOutputArtifact:
-                outputArtifactKey: metadata_json
-                producerTask: preprocess-component
             model_input:
               taskOutputArtifact:
                 outputArtifactKey: model_output
@@ -361,10 +345,6 @@ root:
         - preprocess-component
         inputs:
           artifacts:
-            metadata_json:
-              taskOutputArtifact:
-                outputArtifactKey: metadata_json
-                producerTask: preprocess-component
             preprocessed_npy:
               taskOutputArtifact:
                 outputArtifactKey: preprocessed_npy

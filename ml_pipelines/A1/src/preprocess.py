@@ -33,6 +33,22 @@ def load_raw_data(input_path: str = None) -> pd.DataFrame:
     print(f"Loading raw data from: {input_path}")
     df = pd.read_csv(input_path)
     print(f"  Loaded {len(df):,} records")
+    
+    # Check for missing values in critical columns
+    critical_cols = ['headway', 'route_id', 'hour_of_day', 'day_of_week']
+    missing_counts = df[critical_cols].isnull().sum()
+    if missing_counts.any():
+        print(f"  ⚠️  Missing values detected:")
+        for col, count in missing_counts[missing_counts > 0].items():
+            print(f"    {col}: {count} missing")
+        
+        # Drop rows with any missing critical values
+        df_clean = df.dropna(subset=critical_cols)
+        dropped = len(df) - len(df_clean)
+        if dropped > 0:
+            print(f"  → Dropped {dropped} rows with missing values")
+            df = df_clean
+    
     return df
 
 
@@ -166,10 +182,26 @@ def create_feature_array(df: pd.DataFrame) -> np.ndarray:
     print(f"  Data type: {X.dtype}")
     
     # Check for NaN or Inf values
-    if np.isnan(X).any():
-        print(f"  ⚠️  Warning: {np.isnan(X).sum()} NaN values detected")
-    if np.isinf(X).any():
-        print(f"  ⚠️  Warning: {np.isinf(X).sum()} Inf values detected")
+    nan_count = np.isnan(X).sum()
+    inf_count = np.isinf(X).sum()
+    
+    if nan_count > 0:
+        print(f"  ⚠️  Warning: {nan_count} NaN values detected")
+        # Find which rows and columns have NaN
+        nan_mask = np.isnan(X)
+        nan_rows = np.where(nan_mask.any(axis=1))[0]
+        print(f"    Rows with NaN: {nan_rows[:10]}...")  # Show first 10
+        for col_idx in range(X.shape[1]):
+            col_nans = nan_mask[:, col_idx].sum()
+            if col_nans > 0:
+                print(f"    {feature_cols[col_idx]}: {col_nans} NaN values")
+    
+    if inf_count > 0:
+        print(f"  ⚠️  Warning: {inf_count} Inf values detected")
+    
+    # Critical: Fail if NaN or Inf values are present
+    if nan_count > 0 or inf_count > 0:
+        raise ValueError(f"Invalid values in feature array: {nan_count} NaN, {inf_count} Inf. Data must be cleaned.")
     
     return X
 
