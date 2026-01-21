@@ -41,7 +41,7 @@ def load_preprocessed_data(data_path: str = None) -> Tuple[np.ndarray, Dict]:
         data_path = config.preprocessed_data_path
     
     print(f"Loading preprocessed data from: {data_path}")
-    X = np.load(data_path)
+    X = np.load(data_path, allow_pickle=True)
     print(f"  Shape: {X.shape}")
     
     # Load metadata (next to the .npy file)
@@ -260,17 +260,14 @@ def train_model(run_name: str = None, use_vertex_experiments: bool = True) -> Di
         try:
             from google.cloud import aiplatform
             
+            # Initialize with experiment specified
             aiplatform.init(
                 project=config.BQ_PROJECT,
-                location=config.BQ_LOCATION
+                location=config.BQ_LOCATION,
+                experiment=config.EXPERIMENT_NAME
             )
             
-            # Create experiment if it doesn't exist
-            experiment = aiplatform.Experiment.get_or_create(
-                experiment_name=config.EXPERIMENT_NAME
-            )
-            
-            # Start run
+            # Start run with tensorboard tracking
             vertex_run = aiplatform.start_run(
                 run=run_name,
                 tensorboard=config.TENSORBOARD_LOG_DIR
@@ -281,6 +278,7 @@ def train_model(run_name: str = None, use_vertex_experiments: bool = True) -> Di
             
             print(f"\n✓ Vertex AI Experiment: {config.EXPERIMENT_NAME}")
             print(f"  Run: {run_name}")
+            print(f"  TensorBoard: {config.TENSORBOARD_LOG_DIR}")
             
         except Exception as e:
             print(f"\n⚠️  Vertex AI Experiments not available: {e}")
