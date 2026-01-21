@@ -72,10 +72,10 @@ class A1Config:
     # ============================================================================
     # Data Paths - BigQuery
     # ============================================================================
-    BQ_PROJECT: str = "realtime-headway-prediction"
-    BQ_DATASET: str = "headway_prediction"
-    BQ_TABLE: str = "ml"
-    BQ_LOCATION: str = "us-east1"
+    BQ_PROJECT: str = os.getenv("GCP_PROJECT_ID", "realtime-headway-prediction")
+    BQ_DATASET: str = os.getenv("BQ_DATASET", "headway_prediction")
+    BQ_TABLE: str = os.getenv("BQ_TABLE", "ml")
+    BQ_LOCATION: str = os.getenv("GCP_REGION", "us-east1")
     
     # Local data paths
     DATA_DIR: str = "data/A1"
@@ -102,10 +102,10 @@ class A1Config:
     # ============================================================================
     # Vertex AI Configuration
     # ============================================================================
-    EXPERIMENT_NAME: str = "a1-headway-prediction"
-    GCS_BUCKET: str = "ml-pipelines-headway-prediction"
-    TENSORBOARD_LOG_DIR: str = "gs://ml-pipelines-headway-prediction/tensorboard/A1"
-    MODEL_ARTIFACTS_DIR: str = "gs://ml-pipelines-headway-prediction/models/A1"
+    EXPERIMENT_NAME: str = os.getenv("EXPERIMENT_NAME", "a1-headway-prediction")
+    GCS_BUCKET: str = os.getenv("GCS_BUCKET", "ml-pipelines-headway-prediction")
+    TENSORBOARD_LOG_DIR: str = f"gs://{os.getenv('GCS_BUCKET', 'ml-pipelines-headway-prediction')}/tensorboard/A1"
+    MODEL_ARTIFACTS_DIR: str = f"gs://{os.getenv('GCS_BUCKET', 'ml-pipelines-headway-prediction')}/models/A1"
     
     # ============================================================================
     # TensorBoard Tracking Configuration

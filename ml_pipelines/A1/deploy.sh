@@ -16,6 +16,16 @@
 
 set -e
 
+# Load environment variables from .env
+ENV_FILE="../../.env"
+if [ -f "$ENV_FILE" ]; then
+    echo "Loading configuration from .env..."
+    export $(grep -v '^#' "$ENV_FILE" | xargs)
+else
+    echo "Warning: .env file not found at $ENV_FILE"
+    echo "Using default configuration"
+fi
+
 # Parse arguments
 SKIP_BUILD=false
 RUN_NAME=""
@@ -32,9 +42,9 @@ for arg in "$@"; do
     esac
 done
 
-# Configuration
-PROJECT_ID="realtime-headway-prediction"
-REGION="us-east1"
+# Configuration (from .env or defaults)
+PROJECT_ID="${GCP_PROJECT_ID:-realtime-headway-prediction}"
+REGION="${GCP_REGION:-us-east1}"
 REPOSITORY="ml-pipelines"
 IMAGE_NAME="a1-training"
 

@@ -123,10 +123,19 @@ def train_component(
         history_json: Output training history artifact
         metrics: Output metrics for Vertex AI
     """
+    import os
     import numpy as np
     import json
     import shutil
     from pathlib import Path
+    
+    # Set environment variables for config
+    os.environ['GCP_PROJECT_ID'] = 'realtime-headway-prediction'
+    os.environ['GCP_REGION'] = 'us-east1'
+    os.environ['GCS_BUCKET'] = 'ml-pipelines-headway-prediction'
+    os.environ['EXPERIMENT_NAME'] = 'a1-headway-prediction'
+    os.environ['BQ_DATASET'] = 'headway_prediction'
+    os.environ['BQ_TABLE'] = 'ml'
     
     from src.train import train_model
     from src.config import config
@@ -311,11 +320,12 @@ def submit_pipeline(run_name: str = None, enable_caching: bool = False):
     print(f"  Region: {REGION}")
     print(f"  Pipeline root: {PIPELINE_ROOT}")
     
-    # Initialize Vertex AI
+    # Initialize Vertex AI with experiment tracking
     aiplatform.init(
         project=PROJECT_ID,
         location=REGION,
-        staging_bucket=f"gs://{BUCKET}/staging"
+        staging_bucket=f"gs://{BUCKET}/staging",
+        experiment=config.EXPERIMENT_NAME
     )
     
     # Create pipeline job
