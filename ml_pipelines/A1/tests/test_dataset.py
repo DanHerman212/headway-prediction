@@ -100,47 +100,56 @@ def test_drop_remainder_prevents_last_batch_mismatch():
     """Test that drop_remainder=True prevents the batch size mismatch error.
     
     This simulates the exact error that occurred in production:
-    - 880 samples with batch_size=64 creates 13 full batches + 1 partial (48 samples)
-    - Without drop_remainder, input and target datasets can have different last batch sizes
+    - Dataset with size not divisible by BATCH_SIZE
+    - Both timeseries_dataset_from_array AND target dataset must have drop_remainder=True
+    - Tests all three splits (train, val, test) to catch validation dataset bugs
     """
     BATCH_SIZE = 64
     LOOKBACK = 20
-    N_SAMPLES = 900  # Will create 880 valid timeseries samples
+    N_SAMPLES = 31200  # Simulates real data size (creates ~487 batches + partial)
     
     X = np.random.randn(N_SAMPLES, 8).astype(np.float32)
     
-    # Simulate dataset creation with drop_remainder
-    X_split = X[:N_SAMPLES]
-    max_samples = len(X_split) - LOOKBACK
+    # Calculate splits
+    train_end = int(N_SAMPLES * 0.7)
+    val_end = int(N_SAMPLES * 0.85)
+    test_end = N_SAMPLES
     
-    # Create input dataset (timeseries_dataset_from_array doesn't have drop_remainder param)
-    dataset = tf.keras.utils.timeseries_dataset_from_array(
-        data=X_split,
-        targets=None,
-        sequence_length=LOOKBACK,
-        sequence_stride=1,
-        shuffle=False,
-        batch_size=BATCH_SIZE,
+    # Create datasets using the actual function
+    train_ds, val_ds, test_ds = create_timeseries_datasets(
+        X=X,
+        train_end=train_end,
+        val_end=val_end,
+        test_end=test_end
     )
     
-    # Create target dataset WITH drop_remainder=True
-    route_targets = X[LOOKBACK:N_SAMPLES, 1:4]
-    headway_targets = X[LOOKBACK:N_SAMPLES, 0:1]
-    target_dataset = tf.data.Dataset.from_tensor_slices({
-        'route_output': route_targets,
-        'headway_output': headway_targets
-    }).batch(BATCH_SIZE, drop_remainder=True)
-    
-    # Zip and verify no shape mismatch
-    combined_ds = tf.data.Dataset.zip((dataset, target_dataset))
-    
-    for i, (inputs, targets) in enumerate(combined_ds):
-        input_batch_size = inputs.shape[0]
-        route_batch_size = targets['route_output'].shape[0]
+    # Test ALL three datasets (train, val, test) - bug was in validation dataset
+    for ds_name, ds in [('train', train_ds), ('val', val_ds), ('test', test_ds)]:
+        batch_sizes_input = []
+        batch_sizes_route = []
+        batch_sizes_headway = []
         
-        # This should not raise an error
-        assert input_batch_size == route_batch_size or input_batch_size <= BATCH_SIZE, \
-            f"Batch {i}: Mismatch - input {input_batch_size} vs route {route_batch_size}"
+        for i, (inputs, targets) in enumerate(ds):
+            batch_sizes_input.append(inputs.shape[0])
+            batch_sizes_route.append(targets['route_output'].shape[0])
+            batch_sizes_headway.append(targets['headway_output'].shape[0])
+            
+            # All batches must match
+            assert inputs.shape[0] == targets['route_output'].shape[0], \
+                f"{ds_name} batch {i}: input={inputs.shape[0]} != route={targets['route_output'].shape[0]}"
+            assert inputs.shape[0] == targets['headway_output'].shape[0], \
+                f"{ds_name} batch {i}: input={inputs.shape[0]} != headway={targets['headway_output'].shape[0]}"
+            
+            # All batches must be BATCH_SIZE (no partial batches)
+            assert inputs.shape[0] == BATCH_SIZE, \
+                f"{ds_name} batch {i}: Expected {BATCH_SIZE}, got {inputs.shape[0]} (drop_remainder not working)"
+        
+        # Verify all batches are exactly BATCH_SIZE (drop_remainder working)
+        assert len(set(batch_sizes_input)) == 1, f"{ds_name}: Variable input batch sizes detected"
+        assert len(set(batch_sizes_route)) == 1, f"{ds_name}: Variable route batch sizes detected"
+        assert len(set(batch_sizes_headway)) == 1, f"{ds_name}: Variable headway batch sizes detected"
+        
+        print(f"✓ {ds_name}: {len(batch_sizes_input)} batches, all size {BATCH_SIZE}")
 
 
 if __name__ == "__main__":

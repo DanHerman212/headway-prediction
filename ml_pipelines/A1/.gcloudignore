@@ -1,0 +1,55 @@
+# .gcloudignore - Excludes files from Cloud Build uploads
+# Reduces upload size and build time
+
+# Tests and documentation
+tests/
+docs/
+*.md
+README.md
+
+# Output directories
+outputs/
+models/A1/checkpoints/
+models/A1/tensorboard/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Python artifacts
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Development files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Jupyter notebooks (if any)
+*.ipynb
+.ipynb_checkpoints/
+
+# Debug artifacts
+debug_tools/
+
+# Build scripts (not needed in container)
+pre_deploy.sh
+build_container.sh
+
+# Cloud Build config
+.gcloudignore

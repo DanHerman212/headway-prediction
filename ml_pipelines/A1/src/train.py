@@ -173,16 +173,18 @@ def create_timeseries_datasets(
         logger.info(f"    Creating dataset: samples={max_samples:,}, shuffle={shuffle}, "
                    f"expected_batches={max_samples // config.BATCH_SIZE}")
         
-        # Create timeseries dataset
-        # Use drop_remainder=True to ensure consistent batch sizes (prevents shape mismatch on last batch)
+        # Create timeseries dataset WITHOUT batching first
         dataset = tf.keras.utils.timeseries_dataset_from_array(
             data=X_split,
             targets=None,  # We'll manually add targets
             sequence_length=config.LOOKBACK_WINDOW,
             sequence_stride=1,
             shuffle=shuffle,
-            batch_size=config.BATCH_SIZE,
+            batch_size=None  # Don't batch yet - we'll batch manually with drop_remainder
         )
+        
+        # Manually batch with drop_remainder=True
+        dataset = dataset.batch(config.BATCH_SIZE, drop_remainder=True)
         
         # Add targets as separate dataset
         # CRITICAL: Use drop_remainder=True to match input batching
