@@ -119,15 +119,37 @@ class Trainer:
         val_dataset = build_from_indices(train_end, val_end, is_training=False)
         test_dataset = build_from_indices(val_end, None, is_training=False)
 
-        print(f"  Train range: 0 -> {train_end} (target range: {sequence_length} -> {min(train_end + sequence_length, n)})")
-        print(f"  Val range:   {train_end} -> {val_end} (target range: {train_end + sequence_length} -> {min(val_end + sequence_length, n)})")
-        print(f"  Test range:  {val_end} -> {n - sequence_length} (target range: {val_end + sequence_length} -> {n})")
+        print(f"  Train: {train_end - 0:,} samples")
+        print(f"  Val:   {val_end - train_end:,} samples")
+        print(f"  Test:  {(n - sequence_length) - val_end:,} samples")
 
         return train_dataset, val_dataset, test_dataset
     
-    def train(self):
-        """Train the model."""
-        # TODO: Build model
-        # TODO: Compile model
-        # TODO: Fit model with datasets
-        pass
+    def train(self, model: keras.Model, epochs: int = 10, callbacks: list = None):
+        """
+        Train the model.
+        
+        Args:
+            model: Compiled Keras model
+            epochs: Number of training epochs
+            callbacks: Optional list of Keras callbacks
+        
+        Returns:
+            Training history
+        """
+        if self.input_x is None:
+            raise ValueError("Must call load_data() before train()")
+        
+        # Create datasets
+        train_dataset, val_dataset, _ = self.create_datasets()
+        
+        # Train model
+        history = model.fit(
+            train_dataset,
+            validation_data=val_dataset,
+            epochs=epochs,
+            callbacks=callbacks or [],
+            verbose=1
+        )
+        
+        return history
