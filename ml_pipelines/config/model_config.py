@@ -82,6 +82,12 @@ class ModelConfig:
     time_resolution_mins: int = 1
     
     # =========================================================================
+    # Data Extraction
+    # =========================================================================
+    track: str = "A1"
+    route_ids: tuple = ("A", "C", "E")
+    
+    # =========================================================================
     # Training Parameters
     # =========================================================================
     batch_size: int = 128
@@ -150,6 +156,47 @@ class ModelConfig:
     # =========================================================================
     
     @classmethod
+    def from_env(cls) -> "ModelConfig":
+        """
+        Load configuration from environment variables.
+        Falls back to defaults if not set.
+        
+        Environment variables:
+            GCP_PROJECT_ID: BigQuery project ID
+            TRACK: Track identifier (default: A1)
+            ROUTE_IDS: Comma-separated route IDs (default: A,C,E)
+            TRAIN_SPLIT: Train split fraction (default: 0.6)
+            VAL_SPLIT: Validation split fraction (default: 0.2)
+            TEST_SPLIT: Test split fraction (default: 0.2)
+            
+        Returns:
+            ModelConfig instance with environment overrides
+        """
+        config = cls()
+        
+        # Load from environment
+        if os.getenv("GCP_PROJECT_ID"):
+            config.bq_project = os.getenv("GCP_PROJECT_ID")
+        
+        if os.getenv("TRACK"):
+            config.track = os.getenv("TRACK")
+        
+        if os.getenv("ROUTE_IDS"):
+            route_ids_str = os.getenv("ROUTE_IDS")
+            config.route_ids = tuple(r.strip() for r in route_ids_str.split(","))
+        
+        if os.getenv("TRAIN_SPLIT"):
+            config.train_split = float(os.getenv("TRAIN_SPLIT"))
+        
+        if os.getenv("VAL_SPLIT"):
+            config.val_split = float(os.getenv("VAL_SPLIT"))
+        
+        if os.getenv("TEST_SPLIT"):
+            config.test_split = float(os.getenv("TEST_SPLIT"))
+        
+        return config
+    
+    @classmethod
     def from_yaml(cls, path: str) -> "ModelConfig":
         """
         Load configuration from YAML file.
@@ -176,13 +223,16 @@ class ModelConfig:
             ModelConfig instance
         """
         # Handle tuple conversions
+        config_dict = config_dict.copy()
+        
         if 'kernel_size' in config_dict and isinstance(config_dict['kernel_size'], list):
-            config_dict = config_dict.copy()
             config_dict['kernel_size'] = tuple(config_dict['kernel_size'])
         
         if 'target_range' in config_dict and isinstance(config_dict['target_range'], list):
-            config_dict = config_dict.copy()
             config_dict['target_range'] = tuple(config_dict['target_range'])
+        
+        if 'route_ids' in config_dict and isinstance(config_dict['route_ids'], list):
+            config_dict['route_ids'] = tuple(config_dict['route_ids'])
         
         # Filter valid fields
         valid_fields = {f.name for f in cls.__dataclass_fields__.values()}

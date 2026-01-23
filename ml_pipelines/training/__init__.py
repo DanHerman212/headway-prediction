@@ -1,5 +1,5 @@
 """Training logic and optimization."""
 
-from .trainer import Trainer
+from .train import Trainer
 
 __all__ = ["Trainer"]
