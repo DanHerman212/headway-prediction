@@ -13,10 +13,11 @@ __pycache__/
 local_artifacts/
 tensorboard_logs/
 metrics/
+examples/
 
 # Notebooks & Examples
 *.ipynb
-examples/
+
 
 # Config files
 .gcloudignore

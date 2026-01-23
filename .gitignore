@@ -21,6 +21,5 @@ venv/
 
 # Artifacts
 local_artifacts/
-ml_pipelines/examples/
+examples/
 tensorboard_logs/headway-prediction-experiments
-/ml_pipelines/examples
