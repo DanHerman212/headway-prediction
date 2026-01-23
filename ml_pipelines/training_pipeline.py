@@ -129,8 +129,4 @@ def training_pipeline(
         model_dir=train_op.outputs["model_dir"],
         test_dataset=train_op.outputs["test_dataset"]
     )
-    compiler.Compiler().compile(
-        pipeline_func=training_pipeline,
-        package_path="headway_pipeline.json"
-    )
-    print("Pipeline compiled to headway_pipeline.json")
+

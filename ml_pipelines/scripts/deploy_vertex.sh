@@ -4,6 +4,17 @@ set -e
 # ==============================================================================
 # Configuration
 # ==============================================================================
+
+# Parse command line arguments
+SKIP_BUILD=false
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --skip-build) SKIP_BUILD=true ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift
+done
+
 # Load .env file if it exists
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")" # Points to ml_pipelines root
@@ -53,7 +64,11 @@ fi
 # 2. Check for existing image
 echo -e "\n[Step 2/4] Checking for existing image..."
 BUILD_IMAGE=true
-if gcloud artifacts docker images describe ${IMAGE_URI} &>/dev/null; then
+
+if [ "$SKIP_BUILD" = true ]; then
+    echo "Skipping build as requested via --skip-build flag."
+    BUILD_IMAGE=false
+elif gcloud artifacts docker images describe ${IMAGE_URI} &>/dev/null; then
     echo "Image ${IMAGE_URI} already exists."
     read -p "Do you want to rebuild the image anyway? (y/N) " -n 1 -r
     echo
@@ -62,6 +77,7 @@ if gcloud artifacts docker images describe ${IMAGE_URI} &>/dev/null; then
         BUILD_IMAGE=false
     fi
 fi
+
 
 # 3. Build and Push Image (Cloud Build)
 if [ "$BUILD_IMAGE" = true ]; then
@@ -79,14 +95,13 @@ fi
 echo -e "\n[Step 4/4] Submitting Pipeline..."
 # We use a temporary python script to compile and submit the pipeline
 # passing the dynamically generated IMAGE_URI
+export PYTHONPATH=$PYTHONPATH:$PROJECT_ROOT
+export TENSORFLOW_IMAGE_URI="${IMAGE_URI}"
 python3 -c "
+import os
 from kfp import compiler
 from google.cloud import aiplatform
 from ml_pipelines.training_pipeline import training_pipeline
-import os
-
-# Set the image URI specific to this build
-os.environ['TENSORFLOW_IMAGE_URI'] = '${IMAGE_URI}'
 
 # Compile
 compiler.Compiler().compile(
@@ -100,6 +115,7 @@ aiplatform.init(
     location='${REGION}',
     staging_bucket='${PIPELINE_ROOT}'
 )
+
 
 job = aiplatform.PipelineJob(
     display_name='headway-training-${TAG}',
