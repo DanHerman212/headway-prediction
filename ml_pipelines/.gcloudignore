@@ -21,4 +21,4 @@ examples/
 # Config files
 .gcloudignore
 .dockerignore
-Dockerfile
+

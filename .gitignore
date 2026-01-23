@@ -18,3 +18,9 @@ __pycache__/
 *.pyc
 venv/
 .DS_Store
+
+# Artifacts
+local_artifacts/
+ml_pipelines/examples/
+tensorboard_logs/headway-prediction-experiments
+
