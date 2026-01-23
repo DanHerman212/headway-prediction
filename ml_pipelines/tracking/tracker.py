@@ -128,32 +128,20 @@ class ExperimentTracker:
         try:
             from google.cloud import aiplatform
             
-            # Initialize Vertex AI
+            # Initialize Vertex AI with experiment context
             aiplatform.init(
                 project=self.config.vertex_project,
                 location=self.config.vertex_location,
+                experiment=self.config.experiment_name,
+                experiment_description=self.config.description or f"Experiment: {self.config.experiment_name}"
             )
             self._vertex_initialized = True
             
-            # Get or create experiment
-            try:
-                experiment = aiplatform.Experiment(
-                    experiment_name=self.config.experiment_name
-                )
-                print(f"✓ Using existing Vertex AI Experiment: {self.config.experiment_name}")
-            except:
-                experiment = aiplatform.Experiment.create(
-                    experiment_name=self.config.experiment_name,
-                    description=self.config.description or f"Experiment: {self.config.experiment_name}",
-                )
-                print(f"✓ Created new Vertex AI Experiment: {self.config.experiment_name}")
-            
             # Start a run within the experiment
-            aiplatform.start_run(
+            self._vertex_run = aiplatform.start_run(
                 run=self.config.run_name,
                 tensorboard=self.config.tensorboard_resource_name,
             )
-            self._vertex_run = aiplatform.get_experiment_run(self.config.run_name)
             
             # Log hyperparameters to Vertex AI
             if self.config.hparams_dict:

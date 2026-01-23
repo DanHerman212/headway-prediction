@@ -312,7 +312,10 @@ def main():
     print("="*70)
     
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_name = f"{config.model_name}-{timestamp}"
+    # Vertex AI requires run names to match [a-z0-9][a-z0-9-]{0,127}
+    # We replace underscores with hyphens to ensure validity
+    safe_model_name = config.model_name.replace('_', '-')
+    run_name = f"{safe_model_name}-{timestamp}"
     
     tracking_config = TrackingConfig.create_from_model_config(
         model_config=config,
