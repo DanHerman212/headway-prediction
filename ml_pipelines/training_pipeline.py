@@ -106,12 +106,23 @@ def training_pipeline(
     extract_op = extract_bq_data(
         project_id=project_id,
     )
+
+    # 2. Preprocess
+    preprocess_op = preprocess_data(
+        input_csv=extract_op.outputs["output_csv"],
+    )
     
     # 3. Train
     train_op = train_model(
         input_csv=preprocess_op.outputs["output_csv"],
         epochs=epochs
     )
+    # Configure A100 GPU for training
+    train_op.set_accelerator_type("NVIDIA_TESLA_A100")
+    train_op.set_accelerator_limit(1)
+    # Ensure sufficient CPU/RAM for the A100 instance type (e.g., a2-highgpu-1g)
+    train_op.set_cpu_limit("12")
+    train_op.set_memory_limit("85G")
     
     # 4. Evaluate
     evaluate_op = evaluate_model(

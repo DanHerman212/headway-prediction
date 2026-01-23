@@ -333,40 +333,45 @@ def main():
     # 3. Initialize experiment tracker
     tracker = ExperimentTracker(tracking_config)
     
+    # Configure distribution strategy for GPU support
+    strategy = tf.distribute.MirroredStrategy()
+    print(f"Distribution Strategy: {strategy.num_replicas_in_sync} devices")
+    
     try:
-        # 4. Build model
-        print(f"\n{'='*70}")
-        print("BUILDING MODEL")
-        print("="*70)
-        
-        model_builder = StackedGRUModel(config)
-        print(model_builder.get_architecture_summary())
-        
-        model = model_builder.create()
-        model.summary()
-        
-        # 5. Log model graph
-        tracker.log_graph(model)
-        
-        # 6. Load data
-        print(f"\n{'='*70}")
-        print(f"LOADING DATA from {args.input_csv}")
-        print("="*70)
-        
-        trainer = Trainer(config)
-        trainer.load_data(args.input_csv)
-        
-        # 7. Train with tracking
-        print(f"\n{'='*70}")
-        print("TRAINING MODEL")
-        print("="*70)
-        print(f"Run: {tracking_config.experiment_name}/{run_name}")
-        print(f"TensorBoard: {tracking_config.get_tensorboard_command()}")
-        
-        history = trainer.train(
-            model=model,
-            callbacks=tracker.keras_callbacks()
-        )
+        with strategy.scope():
+            # 4. Build model
+            print(f"\n{'='*70}")
+            print("BUILDING MODEL")
+            print("="*70)
+            
+            model_builder = StackedGRUModel(config)
+            print(model_builder.get_architecture_summary())
+            
+            model = model_builder.create()
+            model.summary()
+            
+            # 5. Log model graph
+            tracker.log_graph(model)
+            
+            # 6. Load data
+            print(f"\n{'='*70}")
+            print(f"LOADING DATA from {args.input_csv}")
+            print("="*70)
+            
+            trainer = Trainer(config)
+            trainer.load_data(args.input_csv)
+            
+            # 7. Train with tracking
+            print(f"\n{'='*70}")
+            print("TRAINING MODEL")
+            print("="*70)
+            print(f"Run: {tracking_config.experiment_name}/{run_name}")
+            print(f"TensorBoard: {tracking_config.get_tensorboard_command()}")
+            
+            history = trainer.train(
+                model=model,
+                callbacks=tracker.keras_callbacks()
+            )
         
         # 8. Log final summary
         print(f"\n{'='*70}")
