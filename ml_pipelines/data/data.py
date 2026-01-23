@@ -54,3 +54,45 @@ class DataExtractor:
     def save(self, df: pd.DataFrame, path: str) -> None:
         """Save extracted data to CSV."""
         df.to_csv(path, index=False)
+
+
+if __name__ == "__main__":
+    import argparse
+    import logging
+    import os
+    import sys
+    
+    # Add project root to path if running as script
+    # This allows imports like 'from config.model_config import ...'
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+    
+    # Now we can safely import config
+    # Note: Using absolute imports relative to ml_pipelines package
+    from ml_pipelines.config.model_config import ModelConfig
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--project_id", type=str, required=True, help="GCP Project ID")
+    parser.add_argument("--query", type=str, required=False, help="Optional custom query overrides config default")
+    parser.add_argument("--output_csv", type=str, required=True, help="Path to save extracted CSV")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO)
+    logging.info(f"Extracting data for project {args.project_id}")
+
+    # Initialize config
+    config = ModelConfig()
+    config.bq_project = args.project_id
+    
+    # Extract
+    extractor = DataExtractor(config)
+    logging.info("Running extraction...")
+    df = extractor.extract()
+    
+    logging.info(f"Data extracted: {len(df)} rows")
+    
+    # Save
+    logging.info(f"Saving to {args.output_csv}")
+    os.makedirs(os.path.dirname(args.output_csv), exist_ok=True)
+    extractor.save(df, args.output_csv)

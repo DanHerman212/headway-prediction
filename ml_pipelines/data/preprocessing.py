@@ -102,20 +102,59 @@ class DataPreprocessor:
             df['time_of_day_seconds'].values
         )
         
-        # Build preprocessed dataframe
-        preprocessed = pd.DataFrame({
-            'log_headway': log_headways,
-            'route_A': route_onehot[:, 0],
-            'route_C': route_onehot[:, 1],
-            'route_E': route_onehot[:, 2],
-            'hour_sin': hour_sin,
-            'hour_cos': hour_cos,
-            'day_sin': day_sin,
-            'day_cos': day_cos
-        })
+        # Combine
+        features = np.column_stack([
+            log_headways,
+            route_onehot,
+            hour_sin, hour_cos, day_sin, day_cos
+        ])
         
-        return preprocessed
+        columns = [
+            'log_headway',
+            'route_A', 'route_C', 'route_E',
+            'hour_sin', 'hour_cos', 'day_sin', 'day_cos'
+        ]
+        
+        return pd.DataFrame(features, columns=columns)
+
+
+if __name__ == "__main__":
+    import argparse
+    import logging
+    import os
+    import sys
     
-    def save(self, df: pd.DataFrame, path: str) -> None:
-        """Save preprocessed data to CSV."""
-        df.to_csv(path, index=False)
+    # Add project root to path
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+    from ml_pipelines.config.model_config import ModelConfig
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_csv", type=str, required=True)
+    parser.add_argument("--output_csv", type=str, required=True)
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO)
+    logging.info(f"Preprocessing data from {args.input_csv}")
+
+    # Initialize config and preprocessor
+    config = ModelConfig()
+    preprocessor = DataPreprocessor(config)
+
+    # Load and process
+    try:
+        df_raw = preprocessor.load(args.input_csv)
+        df_processed = preprocessor.preprocess(df_raw)
+
+        logging.info(f"Processed data shape: {df_processed.shape}")
+
+        # Save
+        logging.info(f"Saving to {args.output_csv}")
+        os.makedirs(os.path.dirname(args.output_csv), exist_ok=True)
+        df_processed.to_csv(args.output_csv, index=False)
+        
+    except Exception as e:
+        logging.error(f"Preprocessing failed: {e}")
+        sys.exit(1)

@@ -1,6 +1,6 @@
 """Model evaluation and metrics."""
 
-from .evaluator import Evaluator
-from .metrics import rmse_seconds, mae_seconds, r_squared
+from .metrics import MAESeconds
+from .evaluate_model import ModelEvaluator
 
-__all__ = ["Evaluator", "rmse_seconds", "mae_seconds", "r_squared"]
+__all__ = ["MAESeconds", "ModelEvaluator"]

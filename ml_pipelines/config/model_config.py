@@ -105,13 +105,40 @@ class ModelConfig:
     loss: str = "huber"
     
     # =========================================================================
-    # Architecture Parameters
+    # Architecture Parameters (General)
     # =========================================================================
+    model_type: str = "stacked_gru"  # Model architecture type
     filters: int = 64
     kernel_size: tuple = (5, 1)
     hidden_units: int = 128
     dropout_rate: float = 0.2
     activation: str = "relu"
+    
+    # =========================================================================
+    # GRU-Specific Architecture Parameters
+    # =========================================================================
+    gru_units: tuple = (128, 64)  # Stacked GRU layer sizes
+    recurrent_dropout: float = 0.1  # Dropout between recurrent steps
+    
+    # =========================================================================
+    # Multi-Output Task Configuration
+    # =========================================================================
+    n_routes: int = 3  # Number of route classes (A, C, E)
+    regression_loss: str = "huber"  # Loss for headway prediction
+    classification_loss: str = "sparse_categorical_crossentropy"  # Loss for route prediction
+    huber_delta: float = 1.0  # Delta parameter for Huber loss
+    loss_weights: dict = field(default_factory=lambda: {"headway": 1.0, "route": 0.5})  # Output loss weights
+    
+    # =========================================================================
+    # Experiment Tracking Configuration
+    # =========================================================================
+    experiment_name: str = "headway-prediction-experiments"
+    use_vertex_experiments: bool = True
+    vertex_location: str = "us-east1"
+    track_histograms: bool = True
+    histogram_freq: int = 5
+    track_profiling: bool = False
+    profile_batch_range: tuple = (10, 20)
     
     # =========================================================================
     # Data Configuration
@@ -163,27 +190,55 @@ class ModelConfig:
         
         Environment variables:
             GCP_PROJECT_ID: BigQuery project ID
+            VERTEX_LOCATION: Vertex AI location
             TRACK: Track identifier (default: A1)
             ROUTE_IDS: Comma-separated route IDs (default: A,C,E)
             TRAIN_SPLIT: Train split fraction (default: 0.6)
             VAL_SPLIT: Validation split fraction (default: 0.2)
             TEST_SPLIT: Test split fraction (default: 0.2)
+            MODEL_NAME: Model identifier
+            MODEL_TYPE: Model architecture type
+            GRU_UNITS: Comma-separated GRU layer sizes
+            DROPOUT_RATE: Dropout rate
+            RECURRENT_DROPOUT: Recurrent dropout rate
+            LOOKBACK_STEPS: Number of historical timesteps
+            BATCH_SIZE: Training batch size
+            EPOCHS: Number of training epochs
+            LEARNING_RATE: Learning rate
+            OPTIMIZER: Optimizer name
+            REGRESSION_LOSS: Loss function for regression
+            CLASSIFICATION_LOSS: Loss function for classification
+            HUBER_DELTA: Huber loss delta parameter
+            LOSS_WEIGHTS_HEADWAY: Loss weight for headway output
+            LOSS_WEIGHTS_ROUTE: Loss weight for route output
+            EXPERIMENT_NAME: Vertex AI experiment name
+            USE_VERTEX_EXPERIMENTS: Enable Vertex AI experiments
+            TRACK_HISTOGRAMS: Enable histogram logging
+            HISTOGRAM_FREQ: Histogram logging frequency
+            TRACK_PROFILING: Enable profiling
+            PROFILE_BATCH_START: Profiling start batch
+            PROFILE_BATCH_END: Profiling end batch
             
         Returns:
             ModelConfig instance with environment overrides
         """
         config = cls()
         
-        # Load from environment
+        # GCP Configuration
         if os.getenv("GCP_PROJECT_ID"):
             config.bq_project = os.getenv("GCP_PROJECT_ID")
         
+        if os.getenv("VERTEX_LOCATION"):
+            config.vertex_location = os.getenv("VERTEX_LOCATION")
+        
+        # Data Configuration
         if os.getenv("TRACK"):
             config.track = os.getenv("TRACK")
         
         if os.getenv("ROUTE_IDS"):
             route_ids_str = os.getenv("ROUTE_IDS")
             config.route_ids = tuple(r.strip() for r in route_ids_str.split(","))
+            config.n_routes = len(config.route_ids)
         
         if os.getenv("TRAIN_SPLIT"):
             config.train_split = float(os.getenv("TRAIN_SPLIT"))
@@ -193,6 +248,77 @@ class ModelConfig:
         
         if os.getenv("TEST_SPLIT"):
             config.test_split = float(os.getenv("TEST_SPLIT"))
+        
+        # Model Architecture
+        if os.getenv("MODEL_NAME"):
+            config.model_name = os.getenv("MODEL_NAME")
+        
+        if os.getenv("MODEL_TYPE"):
+            config.model_type = os.getenv("MODEL_TYPE")
+        
+        if os.getenv("GRU_UNITS"):
+            gru_units_str = os.getenv("GRU_UNITS")
+            config.gru_units = tuple(int(u.strip()) for u in gru_units_str.split(","))
+        
+        if os.getenv("DROPOUT_RATE"):
+            config.dropout_rate = float(os.getenv("DROPOUT_RATE"))
+        
+        if os.getenv("RECURRENT_DROPOUT"):
+            config.recurrent_dropout = float(os.getenv("RECURRENT_DROPOUT"))
+        
+        # Training Parameters
+        if os.getenv("LOOKBACK_STEPS"):
+            config.lookback_steps = int(os.getenv("LOOKBACK_STEPS"))
+        
+        if os.getenv("BATCH_SIZE"):
+            config.batch_size = int(os.getenv("BATCH_SIZE"))
+        
+        if os.getenv("EPOCHS"):
+            config.epochs = int(os.getenv("EPOCHS"))
+        
+        if os.getenv("LEARNING_RATE"):
+            config.learning_rate = float(os.getenv("LEARNING_RATE"))
+        
+        if os.getenv("OPTIMIZER"):
+            config.optimizer = os.getenv("OPTIMIZER")
+        
+        # Loss Configuration
+        if os.getenv("REGRESSION_LOSS"):
+            config.regression_loss = os.getenv("REGRESSION_LOSS")
+        
+        if os.getenv("CLASSIFICATION_LOSS"):
+            config.classification_loss = os.getenv("CLASSIFICATION_LOSS")
+        
+        if os.getenv("HUBER_DELTA"):
+            config.huber_delta = float(os.getenv("HUBER_DELTA"))
+        
+        if os.getenv("LOSS_WEIGHTS_HEADWAY") or os.getenv("LOSS_WEIGHTS_ROUTE"):
+            config.loss_weights = {
+                "headway": float(os.getenv("LOSS_WEIGHTS_HEADWAY", "1.0")),
+                "route": float(os.getenv("LOSS_WEIGHTS_ROUTE", "0.5"))
+            }
+        
+        # Experiment Tracking
+        if os.getenv("EXPERIMENT_NAME"):
+            config.experiment_name = os.getenv("EXPERIMENT_NAME")
+        
+        if os.getenv("USE_VERTEX_EXPERIMENTS"):
+            config.use_vertex_experiments = os.getenv("USE_VERTEX_EXPERIMENTS").lower() == "true"
+        
+        if os.getenv("TRACK_HISTOGRAMS"):
+            config.track_histograms = os.getenv("TRACK_HISTOGRAMS").lower() == "true"
+        
+        if os.getenv("HISTOGRAM_FREQ"):
+            config.histogram_freq = int(os.getenv("HISTOGRAM_FREQ"))
+        
+        if os.getenv("TRACK_PROFILING"):
+            config.track_profiling = os.getenv("TRACK_PROFILING").lower() == "true"
+        
+        if os.getenv("PROFILE_BATCH_START") and os.getenv("PROFILE_BATCH_END"):
+            config.profile_batch_range = (
+                int(os.getenv("PROFILE_BATCH_START")),
+                int(os.getenv("PROFILE_BATCH_END"))
+            )
         
         return config
     
