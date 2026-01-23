@@ -5,7 +5,7 @@ import pandas as pd
 from google.cloud import bigquery
 
 if TYPE_CHECKING:
-    from config.model_config import ModelConfig
+    from ml_pipelines.config.model_config import ModelConfig
 
 
 ROUTE_MAPPING = {"A": 0, "C": 1, "E": 2}

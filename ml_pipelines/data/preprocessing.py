@@ -6,7 +6,7 @@ from typing import Tuple, Dict, TYPE_CHECKING
 from .data import ROUTE_MAPPING
 
 if TYPE_CHECKING:
-    from config.model_config import ModelConfig
+    from ml_pipelines.config.model_config import ModelConfig
 
 
 class DataPreprocessor:

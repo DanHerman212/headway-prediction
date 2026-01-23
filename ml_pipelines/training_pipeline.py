@@ -64,15 +64,31 @@ def train_model(
         ]
     )
 
+@dsl.container_component
+def evaluate_model(
+    model_dir: dsl.Input[artifact_types.UnmanagedContainerModel],
+    test_dataset: dsl.Input[dsl.Dataset],
+    metrics: dsl.Output[dsl.Metrics],
+    plots_dir: dsl.Output[dsl.Artifact],
+):
+    """
+    Component to evaluate model using ModelEvaluator.
+    """
+    return dsl.ContainerSpec(
+        image=TENSORFLOW_IMAGE_URI,
+        command=["python", "-m", "ml_pipelines.evaluation.evaluate_model"],
+        args=[
+            "--model", model_dir.path,
+            "--data", test_dataset.path,
+            "--pre_split",
+            "--output", plots_dir.path,
+            "--metrics_output", metrics.path
+        ]
+    )
+
 
 @dsl.pipeline(
     name="Headway Prediction Training Pipeline",
-    
-    # 3. Train
-    train_op = train_model(
-        input_csv=preprocess_op.outputs["output_csv"],
-        epochs=epochs
-    )
     description="End-to-end training pipeline for subway headway prediction"
 )
 def training_pipeline(
@@ -91,12 +107,17 @@ def training_pipeline(
         project_id=project_id,
     )
     
-    # 2. Preprocess
-    preprocess_op = preprocess_data(
-        input_csv=extract_op.outputs["output_csv"]
+    # 3. Train
+    train_op = train_model(
+        input_csv=preprocess_op.outputs["output_csv"],
+        epochs=epochs
     )
-
-if __name__ == "__main__":
+    
+    # 4. Evaluate
+    evaluate_op = evaluate_model(
+        model_dir=train_op.outputs["model_dir"],
+        test_dataset=train_op.outputs["test_dataset"]
+    )
     compiler.Compiler().compile(
         pipeline_func=training_pipeline,
         package_path="headway_pipeline.json"

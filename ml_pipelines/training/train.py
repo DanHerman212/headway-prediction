@@ -7,9 +7,9 @@ from tensorflow import keras
 from typing import Tuple, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from config.model_config import ModelConfig
+    from ml_pipelines.config.model_config import ModelConfig
 
-from evaluation.metrics import MAESeconds
+from ml_pipelines.evaluation.metrics import MAESeconds
 
 
 class Trainer:
@@ -23,6 +23,7 @@ class Trainer:
             config: ModelConfig instance with training parameters
         """
         self.config = config
+        self.data = None  # Store full dataframe
         self.input_x = None
         self.input_t = None
         self.input_r = None
@@ -35,13 +36,39 @@ class Trainer:
             data_path: Path to X.csv (preprocessed features)
         """
         # Load preprocessed data
-        data = pd.read_csv(data_path)
+        self.data = pd.read_csv(data_path)
         
         # Create input arrays
-        self.input_x = data.values  # All features (51751, 8)
-        self.input_t = data['log_headway'].values  # Target headway (51751,)
-        self.input_r = data[['route_A', 'route_C', 'route_E']].values  # Target route (51751, 3)
+        self.input_x = self.data.values
+        self.input_t = self.data['log_headway'].values
+        self.input_r = self.data[['route_A', 'route_C', 'route_E']].values
     
+    def _get_split_indices(self) -> Tuple[int, int]:
+        """Calculate train/val split indices based on data length."""
+        n = len(self.input_x)
+        train_end = int(n * self.config.train_split)
+        val_end = int(n * (self.config.train_split + self.config.val_split))
+        return train_end, val_end
+
+    def save_test_set(self, output_path: str) -> None:
+        """
+        Save the test split of the data to CSV.
+        
+        Args:
+            output_path: Path to save the test dataset
+        """
+        if self.data is None:
+            raise ValueError("Must call load_data() before save_test_set()")
+            
+        _, val_end = self._get_split_indices()
+        
+        # Test set is from val_end to the end
+        df_test = self.data.iloc[val_end:]
+        
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        df_test.to_csv(output_path, index=False)
+        print(f"Saved test dataset ({len(df_test)} rows) to {output_path}")
+
     def create_datasets(self) -> Tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset]:
         """
         Create train/val/test datasets using index slicing.
@@ -106,8 +133,7 @@ class Trainer:
             return ds
 
         # Calculate splits
-        train_end = int(n * self.config.train_split)
-        val_end = int(n * (self.config.train_split + self.config.val_split))
+        train_end, val_end = self._get_split_indices()
         
         # Create datasets
         train_dataset = build_from_indices(0, train_end, is_training=True)
@@ -134,7 +160,8 @@ class Trainer:
         
         # Create loss objects
         regression_loss = keras.losses.Huber(delta=self.config.huber_delta)
-        classification_loss = keras.losses.SparseCategoricalCrossentropy()
+        # We use CategoricalCrossentropy because targets are one-hot encoded (shape N, 3)
+        classification_loss = keras.losses.CategoricalCrossentropy()
         
         # Compile
         model.compile(
@@ -367,45 +394,28 @@ def main():
         
         print(f"\nBest Validation Loss: {best_val_loss:.4f} (epoch {best_epoch})")
         
-        # 9. Evaluate on test set (within training process for immediate feedback)
-        # Note: We also save test dataset for the standalone component
+
+        # 9. Save test set for independent evaluation component
         print(f"\n{'='*70}")
-        print("EVALUATING ON TEST SET")
+        print("SAVING TEST SET")
+        print("="*70)
+        trainer.save_test_set(args.test_dataset_path)
+
+        # 10. Quick in-process evaluation (logging only)
+        # We assume the external component handles the detailed report/plots
+        print(f"\n{'='*70}")
+        print("LOGGING METRICS")
         print("="*70)
         
         _, _, test_dataset = trainer.create_datasets()
-        # Note: create_datasets() uses internal state. 
-        # We need to save the test *dataframe* corresponding to these indices for the next component.
-        
-        # Logic to save test split matches create_datasets slice:
-        # test_dataset = build_from_indices(val_end, None, is_training=False)
-        # val_end = int(n * (train_split + val_split))
-        
-        # Re-read raw data to slice it (trainer.input_x is numpy array)
-        # We can use trainer.input_x directly but we need it as a dataframe or CSV to save?
-        # The next component expects a CSV.
-        
-        df_full = pd.read_csv(args.input_csv)
-        n = len(df_full)
-        val_end = int(n * (config.train_split + config.val_split))
-        df_test = df_full.iloc[val_end:]
-        
-        os.makedirs(os.path.dirname(args.test_dataset_path), exist_ok=True)
-        print(f"Saving test dataset ({len(df_test)} rows) to {args.test_dataset_path}")
-        df_test.to_csv(args.test_dataset_path, index=False)
-        
-        
         test_results = model.evaluate(test_dataset, verbose=1, return_dict=True)
         
-        print("\nTest Set Results:")
         for metric_name, metric_value in test_results.items():
-            print(f"  {metric_name}: {metric_value:.4f}")
             tracker.log_metric(f"test/{metric_name}", metric_value, step=config.epochs)
         
-        # 10. Save model
-        print(f"Saving model to {args.model_dir}")
+        # 11. Save model
+        print(f"\nSaving model to {args.model_dir}")
         model.save(args.model_dir)
-        print(f"\n✓ Model saved: {args.model_dir}")
         print(f"✓ Experiment: {config.experiment_name}/{run_name}")
         print(f"✓ TensorBoard: {tracking_config.get_tensorboard_command()}")
         

@@ -19,8 +19,8 @@ import seaborn as sns
 import tensorflow as tf
 from tensorflow import keras
 
-from config.model_config import ModelConfig
-from evaluation.metrics import MAESeconds
+from ml_pipelines.config.model_config import ModelConfig
+from ml_pipelines.evaluation.metrics import MAESeconds
 
 
 class ModelEvaluator:
@@ -625,11 +625,8 @@ def main():
             'route_accuracy': evaluator.metrics['route_classification']['accuracy']
         }
         with open(args.metrics_output, 'w') as f:
-            json.dump(kfp_metrics, f
-    evaluator.load_and_evaluate(data_path=args.data)
-    evaluator.plot_all()
-    evaluator.save_summary()
-    
+            json.dump(kfp_metrics, f)
+
     print("\n" + "=" * 70)
     print("EVALUATION COMPLETE")
     print("=" * 70)
