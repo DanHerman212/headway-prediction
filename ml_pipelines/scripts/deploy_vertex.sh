@@ -40,12 +40,14 @@ ARTIFACT_REGION=${ARTIFACT_REGION:-"us-east1"}
 REPO_NAME="headway-pipelines"
 IMAGE_NAME="headway-training"
 
-# Try to get git commit hash for tag, otherwise use timestamp
-if git rev-parse --short HEAD >/dev/null 2>&1; then
-    TAG="git-$(git rev-parse --short HEAD)"
-else
-    TAG="date-$(date +%Y%m%d-%H%M%S)"
-fi
+# Always use timestamp for development iteration (bypasses git tag caching)
+TAG="date-$(date +%Y%m%d-%H%M%S)"
+
+# if git rev-parse --short HEAD >/dev/null 2>&1; then
+#     TAG="git-$(git rev-parse --short HEAD)"
+# else
+#     TAG="date-$(date +%Y%m%d-%H%M%S)"
+# fi
 
 # Detect TensorBoard instance for the region
 echo "Checking for existing TensorBoard instance in $REGION..."

@@ -235,10 +235,10 @@ class ModelEvaluator:
                     data = pd.read_csv(path)
                     print(f"SUCCESS: Read {len(data)} rows from {path}")
                     break
-            except Exception as e:
-                # Catching all exceptions because GCS FUSE can throw OSErrors, FileNotFound, IsDirectory, etc.
-                print(f"DEBUG: Failed to read from {path}. Error: {str(e)}")
-                continue
+                except Exception as e:
+                    # Catching all exceptions because GCS FUSE can throw OSErrors, FileNotFound, IsDirectory, etc.
+                    print(f"DEBUG: Failed to read from {path}. Error: {str(e)}")
+                    continue
         
         if data is None:
             # Diagnostics before crashing
