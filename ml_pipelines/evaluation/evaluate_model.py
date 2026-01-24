@@ -235,9 +235,22 @@ class ModelEvaluator:
         """Generate predictions on test set."""
         predictions = self.model.predict(self.test_data['X'], batch_size=self.config.batch_size)
         
-        # predictions is dict: {'headway': array, 'route': array}
-        pred_headway_log = predictions['headway'].flatten()
-        pred_route_probs = predictions['route']
+        # predictions comes back as a list [headway_output, route_output] because
+        # we defined the model with outputs=[out_headway, out_route] without specific dictionary output keys
+        # unless the model was compiled with output_names that handle that mapping automatically
+        # which isn't guaranteed when loading from H5.
+        
+        if isinstance(predictions, list):
+            pred_headway_log = predictions[0].flatten()
+            pred_route_probs = predictions[1]
+        elif isinstance(predictions, dict):
+             # Just in case it DOES return a dict
+            pred_headway_log = predictions['headway'].flatten()
+            pred_route_probs = predictions['route']
+        else:
+             # Assume single output if not list/dict? Unexpected for this model.
+             raise ValueError(f"Unexpected predictions format: {type(predictions)}")
+        
         pred_route = np.argmax(pred_route_probs, axis=1)
         
         # Convert headway from log-space to seconds

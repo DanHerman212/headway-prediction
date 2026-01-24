@@ -1,0 +1,45 @@
+======================================================================
+TEST SET EVALUATION SUMMARY
+======================================================================
+Timestamp: 2026-01-24 06:40:06
+Model: test_artifacts/model
+Test samples: 170
+
+OVERALL METRICS
+----------------------------------------------------------------------
+headway_loss: 0.5729
+loss: 1.6858
+route_loss: 1.0832
+
+HEADWAY PREDICTION (in seconds)
+----------------------------------------------------------------------
+MAE: 0.80 seconds
+RMSE: 1.01 seconds
+
+ROUTE CLASSIFICATION
+----------------------------------------------------------------------
+Accuracy: 0.4235
+
+PER-ROUTE PERFORMANCE
+----------------------------------------------------------------------
+
+Route A:
+  MAE: 0.84 seconds
+  RMSE: 1.07 seconds
+  Samples: 109
+
+Route C:
+  MAE: 0.64 seconds
+  RMSE: 0.79 seconds
+  Samples: 35
+
+Route E:
+  MAE: 0.83 seconds
+  RMSE: 1.00 seconds
+  Samples: 26
+
+PEAK VS OFF-PEAK
+----------------------------------------------------------------------
+Off Peak Hours:
+  MAE: 0.80 seconds
+  Samples: 170
