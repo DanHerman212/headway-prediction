@@ -167,24 +167,50 @@ class ModelEvaluator:
         Args:
             data_path: Path to test dataset CSV
         """
-        # Handle directory vs file path robustly (ignoring os.path.isdir unreliability on GCS Fuse)
-        potential_child_file = os.path.join(data_path, 'test_data.csv')
+        print(f"DEBUG: Received data_path: {data_path}")
         
-        if os.path.exists(potential_child_file):
-            print(f"Found test_data.csv inside directory: {data_path}")
-            data_path = potential_child_file
-        elif os.path.isdir(data_path):
-             # Directory exists but test_data.csv not found?
-             print(f"Warning: Path {data_path} is directory but test_data.csv not found.")
-             print(f"Files in {data_path}: {os.listdir(data_path)}")
-        elif not os.path.exists(data_path):
-             # Try appending .csv just in case
-             if os.path.exists(data_path + '.csv'):
-                 data_path = data_path + '.csv'
-
-        print(f"Loading test data from: {data_path}")
-        # Load data
-        data = pd.read_csv(data_path)
+        # Robust loading strategy for KFP GCS paths
+        # KFP passes a directory path, but GCS FUSE sometimes behaves oddly with directories
+        
+        files_to_try = []
+        
+        # Priority 1: Check for standard file name inside the directory (Most likely)
+        if not data_path.endswith('.csv'):
+             files_to_try.append(os.path.join(data_path, 'test_data.csv'))
+        
+        # Priority 2: Check the path as-is (If it is a file)
+        files_to_try.append(data_path)
+        
+        # Priority 3: Check path with extension appended
+        files_to_try.append(data_path + '.csv')
+        
+        data = None
+        for path in files_to_try:
+            try:
+                print(f"DEBUG: Attempting to read CSV from: {path}")
+                data = pd.read_csv(path)
+                print(f"SUCCESS: Read {len(data)} rows from {path}")
+                break
+            except Exception as e:
+                # Catching all exceptions because GCS FUSE can throw OSErrors, FileNotFound, IsDirectory, etc.
+                print(f"DEBUG: Failed to read from {path}. Error: {str(e)}")
+                continue
+        
+        if data is None:
+            # Diagnostics before crashing
+            print(f"CRITICAL ERROR: Could not read CSV from any attempted path.")
+            try:
+                if os.path.exists(data_path):
+                    if os.path.isdir(data_path):
+                        print(f"Listing directory {data_path}: {os.listdir(data_path)}")
+                    else:
+                        print(f"Path exists but is not a directory.")
+                else:
+                    print(f"Path {data_path} does not exist.")
+            except Exception as e:
+                print(f"Diagnostics failed: {e}")
+                
+            raise FileNotFoundError(f"Could not load test data from {data_path}")
         
         input_x = data.values
         input_t = data['log_headway'].values

@@ -52,6 +52,7 @@ def train_model(
     vertex_location: str,
     tensorboard_root: str,
     tensorboard_resource_name: str,
+    run_name: str = "",
     epochs: int = 100,
 ):
     """
@@ -70,12 +71,14 @@ def train_model(
             EPOCHS="$5"
             TB_ROOT="$6"
             TB_RESOURCE="$7"
+            export RUN_NAME="$8"
             
             # Local log directory for TensorBoard uploader
             LOCAL_LOG_DIR="/tmp/tensorboard_logs"
             mkdir -p $LOCAL_LOG_DIR
             
             # Start TensorBoard Uploader in background
+            # We explicitly tell it to watch the exact dir we write to
             echo "Starting TensorBoard Uploader..."
             tb-gcp-uploader --tensorboard_resource_name $TB_RESOURCE \
                 --logdir $LOCAL_LOG_DIR \
@@ -115,7 +118,8 @@ def train_model(
             test_dataset.path,
             str(epochs),
             tensorboard_root,
-            tensorboard_resource_name
+            tensorboard_resource_name,
+            run_name
         ]
     )
 
@@ -151,6 +155,7 @@ def training_pipeline(
     vertex_location: str,
     tensorboard_root: str,
     tensorboard_resource_name: str,
+    run_name: str = "",
     epochs: int = 50,
 ):
     """
@@ -161,6 +166,7 @@ def training_pipeline(
         vertex_location: Vertex AI location (region)
         tensorboard_root: GCS path for TensorBoard logs
         tensorboard_resource_name: Resource Name of Managed TensorBoard
+        run_name: Optional unique name for the experiment run
         epochs: Number of training epochs
     """
     # 1. Extract
@@ -180,7 +186,8 @@ def training_pipeline(
         project_id=project_id,
         vertex_location=vertex_location,
         tensorboard_root=tensorboard_root,
-        tensorboard_resource_name=tensorboard_resource_name
+        tensorboard_resource_name=tensorboard_resource_name,
+        run_name=run_name
     )
     # Configure A100 GPU for training
     train_op.set_accelerator_type("NVIDIA_TESLA_A100")

@@ -325,13 +325,24 @@ def main():
     # Vertex AI requires run names to match [a-z0-9][a-z0-9-]{0,127}
     # We replace underscores with hyphens to ensure validity
     safe_model_name = config.model_name.replace('_', '-')
-    run_name = f"{safe_model_name}-{timestamp}"
+    
+    # Check for RUN_NAME env var (injected by pipeline)
+    env_run_name = os.environ.get("RUN_NAME")
+    if env_run_name:
+        run_name = env_run_name
+        print(f"Using custom run name: {run_name}")
+    else:
+        run_name = f"{safe_model_name}-{timestamp}"
+        print(f"Generated run name: {run_name}")
     
     # Determine log directory (prefer GCS path if provided)
     log_dir = None
     if args.tensorboard_dir:
-        # Use provided root + run name
-        log_dir = f"{args.tensorboard_dir}/{run_name}"
+        # SIMPLIFIED: Write directly to the provided directory.
+        # This ensures tb-gcp-uploader (watching this dir) sees the events at root.
+        # The container is isolated, so we don't need a unique subdir here.
+        log_dir = args.tensorboard_dir
+        print(f"Logging to TensorBoard dir: {log_dir}")
     
     tracking_config = TrackingConfig.create_from_model_config(
         model_config=config,

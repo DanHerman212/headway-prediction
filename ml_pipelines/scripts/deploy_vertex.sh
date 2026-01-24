@@ -28,6 +28,14 @@ fi
 
 PROJECT_ID=${GCP_PROJECT_ID:-"your-project-id"}
 REGION=${VERTEX_LOCATION:-"us-east1"}
+TB_RESOURCE_NAME=${TENSORFLOW_RESOURCE_NAME:-""}
+RUN_NAME=${RUN_NAME:-""} # Load RUN_NAME from env or default to empty
+
+if [[ -z "$TB_RESOURCE_NAME" ]]; then
+    echo "Error: TENSORFLOW_RESOURCE_NAME not set in .env or environment"
+    exit 1
+fi
+
 ARTIFACT_REGION=${ARTIFACT_REGION:-"us-east1"}
 REPO_NAME="headway-pipelines"
 IMAGE_NAME="headway-training"
@@ -163,6 +171,7 @@ job = aiplatform.PipelineJob(
         'vertex_location': '${REGION}',
         'tensorboard_root': '${PIPELINE_ROOT}/tensorboard',
         'tensorboard_resource_name': '${TB_RESOURCE_NAME}',
+        'run_name': '${RUN_NAME}',
         'epochs': 50
     },
     enable_caching=True
