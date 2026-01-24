@@ -75,6 +75,14 @@ class Trainer:
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             
         df_test.to_csv(output_path, index=False)
+        # FORCE SYNC to ensure GCS Fuse writes it immediately
+        try:
+            with open(output_path, 'r+') as f:
+                os.fsync(f.fileno())
+            print("✓ Forced fsync on test dataset")
+        except Exception as e:
+            print(f"Warning: fsync failed (might not be supported on this fs): {e}")
+
         print(f"Saved test dataset ({len(df_test)} rows) to {output_path}")
 
     def create_datasets(self) -> Tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset]:
