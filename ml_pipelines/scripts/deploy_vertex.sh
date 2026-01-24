@@ -39,6 +39,19 @@ else
     TAG="date-$(date +%Y%m%d-%H%M%S)"
 fi
 
+# Detect TensorBoard instance for the region
+echo "Checking for existing TensorBoard instance in $REGION..."
+TB_RESOURCE_NAME=$(gcloud ai tensorboards list --region=$REGION --project=$PROJECT_ID --format="value(name)" --limit=1 2>/dev/null)
+
+if [ -z "$TB_RESOURCE_NAME" ]; then
+    echo "Warning: No Managed TensorBoard instance found in $REGION. Creation skipped to save time, but tracking will be limited."
+    # Optional: Create one if critical
+    # gcloud ai tensorboards create --display-name="Headway TensorBoard" --region=$REGION --project=$PROJECT_ID
+    TB_RESOURCE_NAME=""
+else
+    echo "Using TensorBoard: $TB_RESOURCE_NAME"
+fi
+
 # Artifact Registry URI Base
 REPO_URI="${ARTIFACT_REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}"
 IMAGE_URI="${REPO_URI}:${TAG}"
@@ -149,6 +162,7 @@ job = aiplatform.PipelineJob(
         'project_id': '${PROJECT_ID}',
         'vertex_location': '${REGION}',
         'tensorboard_root': '${PIPELINE_ROOT}/tensorboard',
+        'tensorboard_resource_name': '${TB_RESOURCE_NAME}',
         'epochs': 50
     },
     enable_caching=True

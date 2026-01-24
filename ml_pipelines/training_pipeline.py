@@ -51,6 +51,7 @@ def train_model(
     project_id: str,
     vertex_location: str,
     tensorboard_root: str,
+    tensorboard_resource_name: str,
     epochs: int = 100,
 ):
     """
@@ -60,14 +61,15 @@ def train_model(
         image=TENSORFLOW_IMAGE_URI,
         command=["bash", "-c"],
         args=[
-            'export GCP_PROJECT_ID="$0" && export VERTEX_LOCATION="$1" && python -m ml_pipelines.training.train --input_csv "$2" --model_dir "$3" --test_dataset_path "$4" --epochs "$5" --tensorboard_dir "$6"',
+            'export GCP_PROJECT_ID="$0" && export VERTEX_LOCATION="$1" && python -m ml_pipelines.training.train --input_csv "$2" --model_dir "$3" --test_dataset_path "$4" --epochs "$5" --tensorboard_dir "$6" --tensorboard_resource_name "$7"',
             project_id,
             vertex_location,
             input_csv.path,
             model_dir.path,
             test_dataset.path,
             str(epochs),
-            tensorboard_root
+            tensorboard_root,
+            tensorboard_resource_name
         ]
     )
 
@@ -102,6 +104,7 @@ def training_pipeline(
     project_id: str,
     vertex_location: str,
     tensorboard_root: str,
+    tensorboard_resource_name: str,
     epochs: int = 50,
 ):
     """
@@ -111,6 +114,7 @@ def training_pipeline(
         project_id: GCP Project ID for BigQuery access
         vertex_location: Vertex AI location (region)
         tensorboard_root: GCS path for TensorBoard logs
+        tensorboard_resource_name: Resource Name of Managed TensorBoard
         epochs: Number of training epochs
     """
     # 1. Extract
@@ -129,7 +133,8 @@ def training_pipeline(
         epochs=epochs,
         project_id=project_id,
         vertex_location=vertex_location,
-        tensorboard_root=tensorboard_root
+        tensorboard_root=tensorboard_root,
+        tensorboard_resource_name=tensorboard_resource_name
     )
     # Configure A100 GPU for training
     train_op.set_accelerator_type("NVIDIA_TESLA_A100")

@@ -286,6 +286,7 @@ def main():
     parser.add_argument("--epochs", type=int, default=None, help="Override config epochs")
     parser.add_argument("--batch_size", type=int, default=None, help="Override config batch size")
     parser.add_argument("--tensorboard_dir", type=str, default=None, help="GCS path for TensorBoard logs")
+    parser.add_argument("--tensorboard_resource_name", type=str, default=None, help="Vertex AI TensorBoard resource name")
     args = parser.parse_args()
     
     # 1. Load configuration
@@ -332,7 +333,9 @@ def main():
         vertex_project=config.bq_project,
         vertex_location=config.vertex_location,
         use_vertex_experiments=config.use_vertex_experiments,
+        tensorboard_resource_name=args.tensorboard_resource_name,
         histograms=config.track_histograms,
+        histogram_freq=config.histogram_freq,
         histogram_freq=config.histogram_freq,
         profiling=config.track_profiling,
         profile_batch_range=config.profile_batch_range

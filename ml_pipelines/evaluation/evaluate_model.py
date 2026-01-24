@@ -69,8 +69,23 @@ class ModelEvaluator:
         
     def load_model(self):
         """Load trained model from checkpoint."""
+        # Handle case where model_path is a directory containing model.h5
+        path_to_load = self.model_path
+        if os.path.isdir(path_to_load):
+            h5_path = os.path.join(path_to_load, 'model.h5')
+            if os.path.exists(h5_path):
+                path_to_load = h5_path
+                print(f"Found model.h5 in directory, loading from: {path_to_load}")
+            else:
+                # Check for .keras
+                keras_path = os.path.join(path_to_load, 'model.keras')
+                if os.path.exists(keras_path):
+                    path_to_load = keras_path
+                    print(f"Found model.keras in directory, loading from: {path_to_load}")
+        
+        print(f"Loading model from: {path_to_load}")
         self.model = keras.models.load_model(
-            self.model_path,
+            path_to_load,
             custom_objects={'MAESeconds': MAESeconds}
         )
         
