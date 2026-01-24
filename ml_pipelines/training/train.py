@@ -65,26 +65,54 @@ class Trainer:
         
         print(f"DEBUG: Output Path provided by KFP: {output_path}")
 
-        # KFP standard: Artifact paths are directories.
-        # We enforce specific filename 'test.csv' for consistency.
-        # We bypass ambiguous extension checking.
+        # FORCE NATIVE GCS UPLOAD
+        # Relying on GCS Fuse (file system) is causing consistency errors between pods.
+        # We must push to the cloud API directly to guarantee visibility for the next step.
+        if output_path.startswith('/gcs/'):
+            try:
+                from google.cloud import storage
+                print("DEBUG: Detected GCS path. Switching to Native Client for atomic upload.")
+                
+                # Clean path: /gcs/bucket/path -> bucket, path
+                path_parts = output_path[5:].split('/')
+                bucket_name = path_parts[0]
+                # Reconstruct the blob prefix
+                prefix = '/'.join(path_parts[1:])
+                
+                # Check if KFP gave us a file path or a dir path
+                if output_path.endswith('.csv'):
+                    blob_name = prefix
+                else:
+                    blob_name = f"{prefix}/test_data.csv"
+                
+                print(f"DEBUG: Uploading to gs://{bucket_name}/{blob_name}")
+                
+                # Write locally first
+                local_tmp = '/tmp/test_data_upload.csv'
+                df_test.to_csv(local_tmp, index=False)
+                
+                # Push
+                client = storage.Client()
+                bucket = client.bucket(bucket_name)
+                blob = bucket.blob(blob_name)
+                blob.upload_from_filename(local_tmp)
+                
+                print("SUCCESS: Native Upload Complete.")
+                return
+            except Exception as e:
+                print(f"CRITICAL WARNING: Native upload failed: {e}. Falling back to FS.")
+
+        # Fallback (Local Test or Fuse Failure)
         if output_path.endswith('.csv'):
             final_path = output_path
             os.makedirs(os.path.dirname(final_path), exist_ok=True)
         else:
             os.makedirs(output_path, exist_ok=True)
-            final_path = os.path.join(output_path, 'test.csv')
+            final_path = os.path.join(output_path, 'test_data.csv')
 
-        print(f"DEBUG: Saving test data to: {final_path}")
+        print(f"DEBUG: Saving test data locally to: {final_path}")
         df_test.to_csv(final_path, index=False)
         print("DEBUG: File write complete.")
-        
-        # Verify existence immediately (GCS Fuse diagnostic)
-        if os.path.exists(final_path):
-            size = os.path.getsize(final_path)
-            print(f"SUCCESS: File confirmed on disk. Size: {size} bytes")
-        else:
-            print("WARNING: File write completed but file not found immediately (GCS Fuse Lag?)")
 
     def create_datasets(self) -> Tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset]:
         """

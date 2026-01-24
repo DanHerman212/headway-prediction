@@ -162,46 +162,75 @@ class ModelEvaluator:
 
     def load_pre_split_test_data(self, data_path: str):
         """
-        Load a test dataset that has already been split (contains only test data).
+        Load a test dataset.
         
         Args:
             data_path: Path to test dataset CSV or Directory
         """
         print(f"DEBUG: Received data_path: {data_path}")
         
-        # Standardize target path selection
-        # We expect KFP to pass a directory, where we wrote 'test.csv'
-        files_to_check = []
-        
-        if data_path.endswith('.csv'):
-            files_to_check.append(data_path)
-        else:
-            # Check standard names
-            files_to_check.append(os.path.join(data_path, 'test.csv'))
-            files_to_check.append(os.path.join(data_path, 'test_data.csv')) # legacy compat
-        
         data = None
-        for path in files_to_check:
-            print(f"DEBUG: Checking {path}...")
-            if os.path.exists(path):
-                try:
-                    data = pd.read_csv(path)
-                    print(f"SUCCESS: Loaded {len(data)} rows from {path}")
-                    break
-                except Exception as e:
-                    print(f"WARNING: Found file at {path} but failed to read: {e}")
+
+        # FORCE NATIVE GCS DOWNLOAD
+        if data_path.startswith('/gcs/'):
+            try:
+                from google.cloud import storage
+                print("DEBUG: Detected GCS path. Switching to Native Client.")
+                
+                path_parts = data_path[5:].split('/')
+                bucket_name = path_parts[0]
+                prefix = '/'.join(path_parts[1:])
+                
+                client = storage.Client()
+                bucket = client.bucket(bucket_name)
+
+                # Explicitly look for the file we wrote in train.py
+                # 1. Check exact path (if it ended in .csv)
+                # 2. Check path + /test_data.csv (if it was a dir)
+                
+                candidates = [prefix]
+                if not prefix.endswith('.csv'):
+                    candidates.append(f"{prefix}/test_data.csv")
+                
+                target_blob = None
+                for c in candidates:
+                    print(f"DEBUG: Checking blob: {c}")
+                    blob = bucket.get_blob(c)
+                    if blob and blob.exists():
+                        target_blob = blob
+                        print(f"SUCCESS: Found blob: {c}")
+                        break
+                
+                if target_blob:
+                    local_tmp = '/tmp/downloaded_test.csv'
+                    target_blob.download_to_filename(local_tmp)
+                    data = pd.read_csv(local_tmp)
+                    print(f"SUCCESS: Loaded {len(data)} rows via Native API.")
+                else:
+                    print("DEBUG: Native Client could not find file in candidates.")
+
+            except Exception as e:
+                print(f"WARNING: Native GCS failed: {e}")
+
+        # Fallback to FS
+        if data is None:
+            files_to_check = []
+            if data_path.endswith('.csv'):
+                files_to_check.append(data_path)
+            else:
+                files_to_check.append(os.path.join(data_path, 'test_data.csv'))
+                files_to_check.append(os.path.join(data_path, 'test.csv')) # legacy
+            
+            for path in files_to_check:
+                if os.path.exists(path):
+                    try:
+                        data = pd.read_csv(path)
+                        print(f"SUCCESS: Loaded from FS: {path}")
+                        break
+                    except:
+                        pass
         
         if data is None:
-            print(f"CRITICAL: Test data not found in {data_path}")
-            print(f"DEBUG: Directory contents of {data_path}:")
-            try:
-                if os.path.isdir(data_path):
-                    print(os.listdir(data_path))
-                else:
-                    print("(Not a directory)")
-            except Exception:
-                print("(Could not list directory)")
-            
             raise FileNotFoundError(f"Missing test data in {data_path}")
         
         input_x = data.values
