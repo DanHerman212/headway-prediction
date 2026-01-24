@@ -169,9 +169,66 @@ class ModelEvaluator:
         """
         print(f"DEBUG: Received data_path: {data_path}")
         
-        # Robust loading strategy for KFP GCS paths
-        # KFP passes a directory path, but GCS FUSE sometimes behaves oddly with directories
-        
+        # STRATEGY: Native GCS Download (Bypass Fuse)
+        # If the path looks like a GCS mount, use the API directly to pull the file.
+        # This solves consistency issues where Fuse says "File Not Found" but the API knows it's there.
+        if data_path.startswith('/gcs/'):
+            try:
+                from google.cloud import storage
+                print("DEBUG: Detected GCS path. Attempting Native Client download...")
+                
+                # Parse /gcs/bucket/path -> bucket, blob_prefix
+                relative_path = data_path[5:] # Strip /gcs/
+                bucket_name = relative_path.split('/')[0]
+                prefix = '/'.join(relative_path.split('/')[1:])
+                
+                client = storage.Client()
+                bucket = client.bucket(bucket_name)
+                
+                # We don't know if 'prefix' is the file or a directory containing the file.
+                # List blobs starting with this prefix to find the CSV.
+                print(f"DEBUG: Listing blobs in gs://{bucket_name}/{prefix}")
+                blobs = list(client.list_blobs(bucket, prefix=prefix))
+                
+                target_blob = None
+                for blob in blobs:
+                    if blob.name.endswith('.csv'):
+                        target_blob = blob
+                        break
+                
+                if target_blob:
+                    print(f"DEBUG: Found CSV via API: {target_blob.name}")
+                    local_temp = '/tmp/downloaded_test_data.csv'
+                    target_blob.download_to_filename(local_temp)
+                    print(f"DEBUG: Downloaded to {local_temp}")
+                    
+                    data = pd.read_csv(local_temp)
+                    
+                    input_x = data.values
+                    input_t = data['log_headway'].values
+                    input_r = data[['route_A', 'route_C', 'route_E']].values
+                    
+                    # Store data and finish
+                    n = len(data)
+                    self.test_dataset = tf.data.Dataset.from_tensor_slices((
+                        input_x[:n - self.config.lookback_steps],
+                        tuple([
+                            input_t[self.config.lookback_steps:],
+                            input_r[self.config.lookback_steps:]
+                        ])
+                    )).map(self._create_window_fn(self.config.lookback_steps)).batch(self.config.batch_size)
+                    
+                    self.input_x = input_x
+                    self.input_t = input_t
+                    self.input_r = input_r
+                    return
+                else:
+                    print("DEBUG: No CSV found via GCS List Blobs.")
+            except Exception as e:
+                print(f"WARNING: Native GCS download failed: {e}")
+                print("Falling back to local file system read...")
+
+        # Fallback to existing file system logic (for local runs or if API fails)
         files_to_try = []
         
         # Priority 1: Check for standard file name inside the directory (Most likely)
