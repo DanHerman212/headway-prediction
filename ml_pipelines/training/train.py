@@ -65,7 +65,15 @@ class Trainer:
         # Test set is from val_end to the end
         df_test = self.data.iloc[val_end:]
         
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        # Handle directory vs file path
+        if not output_path.endswith('.csv'):
+            # Assume it's a directory (common in KFP)
+            os.makedirs(output_path, exist_ok=True)
+            output_path = os.path.join(output_path, 'test_data.csv')
+        else:
+            # Ensure parent directory exists
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
         df_test.to_csv(output_path, index=False)
         print(f"Saved test dataset ({len(df_test)} rows) to {output_path}")
 

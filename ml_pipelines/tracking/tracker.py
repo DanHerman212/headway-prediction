@@ -15,6 +15,7 @@ import numpy as np
 from ml_pipelines.config import TrackingConfig
 from .callbacks import (
     ScalarCallback,
+    VertexCallback,
     HistogramCallback,
     GraphCallback,
     HParamsCallback,
@@ -227,20 +228,29 @@ class ExperimentTracker:
             tf.summary.scalar(name, value, step=step)
         
         # Log to Vertex AI Experiments
+        # Convert name to valid metric key (replace / with _)
+        metric_key = name.replace("/", "_").replace("-", "_")
+        self.log_vertex_metric(metric_key, value, step)
+
+    def log_vertex_metric(self, name: str, value: float, step: int):
+        """
+        Log a scalar metric ONLY to Vertex AI Experiments.
+        
+        Args:
+            name: Metric name
+            value: Value
+            step: Step
+        """
         if self.config.use_vertex_experiments and self._vertex_run:
             try:
                 from google.cloud import aiplatform
-                # Convert name to valid metric key (replace / with _)
-                metric_key = name.replace("/", "_").replace("-", "_")
-                
                 # Use log_time_series_metrics for historical plotting
                 aiplatform.log_time_series_metrics(
-                    {metric_key: float(value)},
+                    {name: float(value)},
                     step=step
                 )
             except Exception as e:
                 # Silently fail for Vertex AI logging to avoid training interruption
-                # print(f"Warning: Failed to log to Vertex: {e}") 
                 pass
     
     def log_scalars(self, metrics: Dict[str, float], step: int, prefix: str = ""):
@@ -428,31 +438,28 @@ class ExperimentTracker:
         """
         callbacks = []
         
-        # Scalar metrics (loss, accuracy, etc.)
-        if self.config.scalars:
-            callbacks.append(ScalarCallback(self))
+        # 1. Standard TensorBoard Callback (The Heavy Lifter)
+        # This handles Scalars (TB), Histograms, Graphs, Images, Profiling
+        # using the robust standard implementation.
+        callbacks.append(tf.keras.callbacks.TensorBoard(
+            log_dir=self.log_dir,
+            histogram_freq=self.config.histogram_freq if self.config.histograms else 0,
+            write_graph=self.config.graphs,
+            write_images=False,
+            profile_batch=self.config.profile_batch_range if self.config.profiling else 0,
+            update_freq='epoch'
+        ))
         
-        # Weight and gradient histograms
-        if self.config.histograms:
-            callbacks.append(HistogramCallback(
-                self,
-                freq=self.config.histogram_freq
-            ))
+        # 2. Vertex AI Sync Callback
+        # Syncs scalar metrics to the Vertex AI Experiments UI charts.
+        # This gives us the "nice plots" in the cloud console.
+        if self.config.use_vertex_experiments:
+            callbacks.append(VertexCallback(self))
         
-        # Model architecture graph
-        if self.config.graphs:
-            callbacks.append(GraphCallback(self))
-        
-        # Hyperparameter tracking
+        # 3. Hyperparameter tracking
+        # Logs final metrics to the HParams dashboard.
         if self.config.hparams:
             callbacks.append(HParamsCallback(self))
-        
-        # GPU/CPU profiling
-        if self.config.profiling:
-            callbacks.append(ProfilerCallback(
-                self,
-                batch_range=self.config.profile_batch_range
-            ))
         
         # Add custom callbacks
         if custom_callbacks:

@@ -63,6 +63,35 @@ class ScalarCallback(tf.keras.callbacks.Callback):
         self.tracker.flush()
 
 
+class VertexCallback(tf.keras.callbacks.Callback):
+    """
+    Logs metrics ONLY to Vertex AI Experiments.
+    
+    Designed to be used alongside the standard tf.keras.callbacks.TensorBoard.
+    This ensures we get native Vertex UI charts without interfering with
+    TensorBoard's own scalar logging.
+    """
+    
+    def __init__(self, tracker: "ExperimentTracker"):
+        super().__init__()
+        self.tracker = tracker
+    
+    def on_epoch_end(self, epoch, logs=None):
+        if logs is None: return
+        
+        # Log metrics to Vertex
+        for name, value in logs.items():
+            # Clean name for Vertex (replace / with _)
+            metric_key = name.replace("/", "_").replace("-", "_")
+            if name.startswith("val_"):
+                metric_key = f"val_{metric_key[4:]}" # Ensure val_ prefix is clean
+            
+            # Use tracker's Vertex logging method
+            self.tracker.log_vertex_metric(metric_key, float(value), step=epoch)
+            
+        self.tracker.flush()
+
+
 class HistogramCallback(tf.keras.callbacks.Callback):
     """
     Logs weight and gradient distributions to TensorBoard.

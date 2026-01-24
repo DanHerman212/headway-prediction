@@ -167,6 +167,19 @@ class ModelEvaluator:
         Args:
             data_path: Path to test dataset CSV
         """
+        # Handle directory vs file path
+        if os.path.isdir(data_path):
+            print(f"Path {data_path} is a directory. Looking for test_data.csv...")
+            possible_file = os.path.join(data_path, 'test_data.csv')
+            if os.path.exists(possible_file):
+                data_path = possible_file
+            else:
+                # Fallback: check generally for csvs? Or just assume the filename
+                # Let's try to be helpful and list files
+                print(f"Files in {data_path}: {os.listdir(data_path)}")
+                raise FileNotFoundError(f"Could not find test_data.csv in {data_path}")
+
+        print(f"Loading test data from: {data_path}")
         # Load data
         data = pd.read_csv(data_path)
         
