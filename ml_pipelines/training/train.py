@@ -55,35 +55,59 @@ class Trainer:
         Save the test split of the data to CSV.
         
         Args:
-            output_path: Path to save the test dataset
+            output_path: Path to save the test dataset (KFP /gcs/ path)
         """
         if self.data is None:
             raise ValueError("Must call load_data() before save_test_set()")
             
         _, val_end = self._get_split_indices()
-        
-        # Test set is from val_end to the end
         df_test = self.data.iloc[val_end:]
         
-        # Handle directory vs file path
+        print(f"Saving test set to: {output_path}")
+
+        # STRATEGY: Use Native GCS Client to guarantee upload completion
+        # Check if this is a GCS Fuse path
+        if output_path.startswith('/gcs/'):
+            try:
+                from google.cloud import storage
+                
+                # Clean up path to get bucket and blob name
+                # /gcs/my-bucket/path/to/file -> gs://my-bucket/path/to/file
+                relative_path = output_path[5:] # Strip /gcs/
+                bucket_name = relative_path.split('/')[0]
+                blob_name = '/'.join(relative_path.split('/')[1:])
+                
+                # Handle directory output from KFP
+                if not blob_name.endswith('.csv'):
+                    blob_name = os.path.join(blob_name, 'test_data.csv')
+                
+                print(f"Detected GCS path. Uploading via Client to: gs://{bucket_name}/{blob_name}")
+                
+                # Write to temp file first
+                temp_file = '/tmp/temp_test_data.csv'
+                df_test.to_csv(temp_file, index=False)
+                
+                # Upload
+                client = storage.Client()
+                bucket = client.bucket(bucket_name)
+                blob = bucket.blob(blob_name)
+                blob.upload_from_filename(temp_file)
+                
+                print("✓ Upload confirmed by GCS API")
+                return # Success
+            except Exception as e:
+                print(f"Warning: Native GCS upload failed: {e}")
+                print("Falling back to standard file write...")
+        
+        # Fallback (or Local) logic
         if not output_path.endswith('.csv'):
-            # Assume it's a directory (common in KFP)
             os.makedirs(output_path, exist_ok=True)
             output_path = os.path.join(output_path, 'test_data.csv')
         else:
-            # Ensure parent directory exists
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             
         df_test.to_csv(output_path, index=False)
-        # FORCE SYNC to ensure GCS Fuse writes it immediately
-        try:
-            with open(output_path, 'r+') as f:
-                os.fsync(f.fileno())
-            print("✓ Forced fsync on test dataset")
-        except Exception as e:
-            print(f"Warning: fsync failed (might not be supported on this fs): {e}")
-
-        print(f"Saved test dataset ({len(df_test)} rows) to {output_path}")
+        print(f"Saved locally to {output_path}")
 
     def create_datasets(self) -> Tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset]:
         """
