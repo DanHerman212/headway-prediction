@@ -336,7 +336,6 @@ def main():
         tensorboard_resource_name=args.tensorboard_resource_name,
         histograms=config.track_histograms,
         histogram_freq=config.histogram_freq,
-        histogram_freq=config.histogram_freq,
         profiling=config.track_profiling,
         profile_batch_range=config.profile_batch_range
     )
