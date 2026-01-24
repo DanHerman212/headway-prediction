@@ -116,12 +116,17 @@ class ExperimentTracker:
         """Initialize TensorFlow summary writer for TensorBoard."""
         self.log_dir = self.config.log_dir
         
-        # Create directory if it doesn't exist
-        if not self.log_dir.startswith('gs://'):
-            os.makedirs(self.log_dir, exist_ok=True)
+        # FIX: Write custom events to 'train' subdirectory to match Keras
+        # This prevents 'split brain' logging where some events are at root and some are in subdirs.
+        # Ensure consistent visualization in Vertex TensorBoard.
+        self.writer_dir = os.path.join(self.log_dir, 'train')
         
-        self.writer = tf.summary.create_file_writer(self.log_dir)
-        print(f"✓ TensorBoard logging initialized: {self.log_dir}")
+        # Create directory if it doesn't exist
+        if not self.writer_dir.startswith('gs://'):
+            os.makedirs(self.writer_dir, exist_ok=True)
+        
+        self.writer = tf.summary.create_file_writer(self.writer_dir)
+        print(f"✓ TensorBoard logging initialized: {self.writer_dir}")
         print(f"  View with: {self.config.get_tensorboard_command()}")
     
     def _init_vertex_experiments(self):
