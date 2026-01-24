@@ -77,16 +77,6 @@ def train_model(
             LOCAL_LOG_DIR="/tmp/tensorboard_logs"
             mkdir -p $LOCAL_LOG_DIR
             
-            # Start TensorBoard Uploader in background
-            # We explicitly tell it to watch the exact dir we write to
-            echo "Starting TensorBoard Uploader..."
-            tb-gcp-uploader --tensorboard_resource_name $TB_RESOURCE \
-                --logdir $LOCAL_LOG_DIR \
-                --experiment_name "headway-prediction-experiments" \
-                --one_shot=False &
-            
-            UPLOADER_PID=$!
-            
             # Run Training
             # We pass the LOCAL log dir to the training script so it writes events there
             python -m ml_pipelines.training.train \
@@ -99,12 +89,20 @@ def train_model(
                 
             TRAIN_EXIT_CODE=$?
             
-            # Wait for final logs to upload (Histograms/Graphs can be large)
-            echo "Training finished. Waiting 30s for TensorBoard logs to sync..."
-            sleep 30
-            
-            # Cleanup
-            kill $UPLOADER_PID || true
+            if [ $TRAIN_EXIT_CODE -eq 0 ]; then
+                echo "Training success. Starting Deterministic TensorBoard Upload..."
+                
+                # ONE SHOT MODE: Reads all files, uploads them, and exits only when done.
+                # This guarantees no data loss.
+                tb-gcp-uploader --tensorboard_resource_name $TB_RESOURCE \
+                    --logdir $LOCAL_LOG_DIR \
+                    --experiment_name "headway-prediction-experiments" \
+                    --one_shot=True
+                
+                echo "TensorBoard Upload Complete."
+            else
+                echo "Training failed. Skipping upload to preserve error logs."
+            fi
             
             # If we also want GCS backup of logs (optional, but good for persistence)
             # gsutil cp -r $LOCAL_LOG_DIR $TB_ROOT || true
