@@ -471,8 +471,9 @@ def main():
             trainer.save_test_set(args.test_dataset_path)
             print("✓ Test set saved successfully")
         except Exception as e:
-            print(f"ERROR: Failed to save test set: {str(e)}")
-            # Don't raise, try to continue to save model
+            print(f"CRITICAL ERROR: Failed to save test set: {str(e)}")
+            # We must raise this to fail the component, otherwise Eval will fail mysteriously later
+            raise e
 
         # 10. Quick in-process evaluation (logging only)
         print(f"\n{'='*70}")

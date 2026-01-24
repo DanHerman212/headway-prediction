@@ -147,9 +147,27 @@ if gcs_path.startswith('gs://'):
                 --epochs "$EPOCHS" \
                 --tensorboard_dir "$TB_ROOT" \
                 --tensorboard_resource_name "$TB_RESOURCE"
-                
+            
+            TRAIN_EXIT_CODE=$?
+            
+            echo "Training Script Exit Code: $TRAIN_EXIT_CODE"
+            
+            if [ $TRAIN_EXIT_CODE -ne 0 ]; then
+                echo "Critical: Training failed. See logs above."
+                exit $TRAIN_EXIT_CODE
+            fi
+            
+            # Verify file creation (Debugging for GCS Fuse consistency)
+            echo "Verifying test dataset creation..."
+            if [ -d "$TEST_DATASET_PATH" ]; then
+                echo "Listing $TEST_DATASET_PATH:"
+                ls -la "$TEST_DATASET_PATH" || echo "Listing failed"
+            else
+                echo "Warning: $TEST_DATASET_PATH is not a directory or does not exist locally (via Fuse)."
+            fi
+
             # Capture exit code (trap will fire after this)
-            exit $?
+            exit 0
             ''',
             project_id,
             vertex_location,

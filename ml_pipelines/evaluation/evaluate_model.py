@@ -187,14 +187,31 @@ class ModelEvaluator:
                 
                 # We don't know if 'prefix' is the file or a directory containing the file.
                 # List blobs starting with this prefix to find the CSV.
-                print(f"DEBUG: Listing blobs in gs://{bucket_name}/{prefix}")
-                blobs = list(client.list_blobs(bucket, prefix=prefix))
+                # WARNING: prefix matching in GCS is essentially folder matching.
+                # If prefix is '.../folder', it matches '.../folder/file.csv'
+                # If prefix is '.../folder/', it matches '.../folder/file.csv'
                 
-                target_blob = None
-                for blob in blobs:
-                    if blob.name.endswith('.csv'):
-                        target_blob = blob
-                        break
+                # Check 1: Is the prefix exactly a file?
+                direct_blob = bucket.get_blob(prefix)
+                if direct_blob:
+                     print(f"DEBUG: Found direct blob match: {prefix}")
+                     target_blob = direct_blob
+                else:
+                    # Check 2: List contents (treating it as a "directory")
+                    print(f"DEBUG: Listing blobs in gs://{bucket_name}/{prefix}")
+                    blobs = list(client.list_blobs(bucket, prefix=prefix))
+                    
+                    for blob in blobs:
+                        if blob.name.endswith('.csv'):
+                            target_blob = blob
+                            break
+                            
+                    # Check 3: If nothing found, try appending /test_data.csv manually
+                    # This handles the case where list_blobs(prefix) might be behaving strictly
+                    if not target_blob:
+                        potential_path = os.path.join(prefix, 'test_data.csv')
+                        print(f"DEBUG: Checking constructed path: {potential_path}")
+                        target_blob = bucket.get_blob(potential_path)
                 
                 if target_blob:
                     print(f"DEBUG: Found CSV via API: {target_blob.name}")
