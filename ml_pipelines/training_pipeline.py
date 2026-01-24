@@ -71,12 +71,22 @@ def train_model(
             EPOCHS="$5"
             TB_ROOT="$6"
             TB_RESOURCE="$7"
-            export RUN_NAME="$8"
+            # Ensure RUN_NAME is set for consistent directory structure
+            if [ -z "$RUN_NAME" ]; then
+                # Fallback if not passed by pipeline
+                echo "Warning: RUN_NAME env var not set. Generating timestamp-based name."
+                RUN_NAME="headway-model-$(date +%Y%m%d-%H%M%S)"
+            fi
+            export RUN_NAME
             
             # 1. Train directly to GCS (Source of Truth)
             # We use the tensorboard_root (gs:// bucket) passed from pipeline
+            # We append RUN_NAME to ensure we write to a unique subdirectory
             # This ensures logs are safely persisted on cloud even if container crashes
             GCS_LOG_DIR="$TB_ROOT/$RUN_NAME"
+            
+            echo "Training with Run Name: $RUN_NAME"
+            echo "Logs will be written to: $GCS_LOG_DIR"
             
             python -m ml_pipelines.training.train \
                 --input_csv "$INPUT_CSV" \

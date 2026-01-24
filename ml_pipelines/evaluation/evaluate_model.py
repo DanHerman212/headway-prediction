@@ -203,51 +203,38 @@ class ModelEvaluator:
                     print(f"DEBUG: Downloaded to {local_temp}")
                     
                     data = pd.read_csv(local_temp)
+                    print(f"SUCCESS: Loaded {len(data)} rows from GCS via Native Client.")
                     
-                    input_x = data.values
-                    input_t = data['log_headway'].values
-                    input_r = data[['route_A', 'route_C', 'route_E']].values
-                    
-                    # Store data and finish
-                    n = len(data)
-                    self.test_dataset = tf.data.Dataset.from_tensor_slices((
-                        input_x[:n - self.config.lookback_steps],
-                        tuple([
-                            input_t[self.config.lookback_steps:],
-                            input_r[self.config.lookback_steps:]
-                        ])
-                    )).map(self._create_window_fn(self.config.lookback_steps)).batch(self.config.batch_size)
-                    
-                    self.input_x = input_x
-                    self.input_t = input_t
-                    self.input_r = input_r
-                    return
                 else:
                     print("DEBUG: No CSV found via GCS List Blobs.")
             except Exception as e:
                 print(f"WARNING: Native GCS download failed: {e}")
                 print("Falling back to local file system read...")
 
+        # Initialize data if not loaded by Native GCS
+        if 'data' not in locals():
+            data = None
+
         # Fallback to existing file system logic (for local runs or if API fails)
-        files_to_try = []
-        
-        # Priority 1: Check for standard file name inside the directory (Most likely)
-        if not data_path.endswith('.csv'):
-             files_to_try.append(os.path.join(data_path, 'test_data.csv'))
-        
-        # Priority 2: Check the path as-is (If it is a file)
-        files_to_try.append(data_path)
-        
-        # Priority 3: Check path with extension appended
-        files_to_try.append(data_path + '.csv')
-        
-        data = None
-        for path in files_to_try:
-            try:
-                print(f"DEBUG: Attempting to read CSV from: {path}")
-                data = pd.read_csv(path)
-                print(f"SUCCESS: Read {len(data)} rows from {path}")
-                break
+        if data is None:
+            files_to_try = []
+            
+            # Priority 1: Check for standard file name inside the directory (Most likely)
+            if not data_path.endswith('.csv'):
+                 files_to_try.append(os.path.join(data_path, 'test_data.csv'))
+            
+            # Priority 2: Check the path as-is (If it is a file)
+            files_to_try.append(data_path)
+            
+            # Priority 3: Check path with extension appended
+            files_to_try.append(data_path + '.csv')
+            
+            for path in files_to_try:
+                try:
+                    print(f"DEBUG: Attempting to read CSV from: {path}")
+                    data = pd.read_csv(path)
+                    print(f"SUCCESS: Read {len(data)} rows from {path}")
+                    break
             except Exception as e:
                 # Catching all exceptions because GCS FUSE can throw OSErrors, FileNotFound, IsDirectory, etc.
                 print(f"DEBUG: Failed to read from {path}. Error: {str(e)}")
