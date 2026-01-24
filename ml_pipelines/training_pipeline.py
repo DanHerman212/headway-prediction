@@ -92,13 +92,16 @@ def train_model(
             upload_logs() {
                 echo "Initiating Post-Training Log Upload..."
                 
-                # 2. Sync GCS -> Local for Uploader
+                # 2. Sync Logs to Local Dir
                 LOCAL_SYNC_DIR="/tmp/tb_sync"
                 mkdir -p $LOCAL_SYNC_DIR
                 
-                echo "Downloading logs from GCS to local..."
-                python -c "
+                # Check if GCS_LOG_DIR is a gs:// path or a local/fuse path
+                if [[ "$GCS_LOG_DIR" == gs://* ]]; then
+                    echo "Downloading logs from GCS ($GCS_LOG_DIR) to local..."
+                    python -c "
 import os
+import sys
 from google.cloud import storage
 
 def download_blob_folder(bucket_name, source_folder, destination_dir):
@@ -106,32 +109,56 @@ def download_blob_folder(bucket_name, source_folder, destination_dir):
         storage_client = storage.Client()
         bucket = storage_client.bucket(bucket_name)
         blobs = list(bucket.list_blobs(prefix=source_folder))
+        
+        if not blobs:
+            print(f'Warning: No files found in gs://{bucket_name}/{source_folder}')
+            return
+
         print(f'Found {len(blobs)} files in {source_folder}')
         
         for blob in blobs:
             # Construct local path
+            # blob.name is full path (e.g. root/run/train/events...)
+            # source_folder is root/run
+            # relpath is train/events...
             relative_path = os.path.relpath(blob.name, source_folder)
             local_path = os.path.join(destination_dir, relative_path)
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
             blob.download_to_filename(local_path)
+            print(f'Downloaded: {local_path}')
+            
     except Exception as e:
         print(f'Log Sync Error: {e}')
+        # Do not exit hard here, let the uploader try or fail
+        sys.exit(1)
 
 # Parse gs://bucket/path
 gcs_path = '$GCS_LOG_DIR'
-if gcs_path.startswith('gs://'):
-    path_parts = gcs_path.replace('gs://', '').split('/')
-    bucket_name = path_parts[0]
-    prefix = '/'.join(path_parts[1:])
-    download_blob_folder(bucket_name, prefix, '$LOCAL_SYNC_DIR')
+path_parts = gcs_path.replace('gs://', '').split('/')
+bucket_name = path_parts[0]
+prefix = '/'.join(path_parts[1:])
+download_blob_folder(bucket_name, prefix, '$LOCAL_SYNC_DIR')
 "
+                else:
+                    # Assume Local or FUSE path
+                    echo "Detailed check of log path: $GCS_LOG_DIR"
+                    if [ -d "$GCS_LOG_DIR" ]; then
+                        echo "Recursively copying logs from filesystem/FUSE..."
+                        cp -r "$GCS_LOG_DIR"/* "$LOCAL_SYNC_DIR"/ || echo "Copy warning: directory might be empty"
+                    else
+                        echo "Warning: Log directory $GCS_LOG_DIR does not exist on filesystem."
+                    fi
+                fi
+                
+                echo "Verifying Sync Directory Contents:"
+                ls -R $LOCAL_SYNC_DIR
                 
                 # 3. Deterministic Upload
                 echo "Starting Batch Upload to Vertex TensorBoard..."
                 tb-gcp-uploader --tensorboard_resource_name $TB_RESOURCE \
                     --logdir $LOCAL_SYNC_DIR \
                     --experiment_name "headway-prediction-experiments" \
-                    --one_shot=True || echo "Upload warning: Non-zero exit from tb-gcp-uploader"
+                    --one_shot=True
                 
                 echo "TensorBoard Upload Sequence Complete."
             }
