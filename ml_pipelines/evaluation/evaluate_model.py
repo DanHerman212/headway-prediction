@@ -167,17 +167,20 @@ class ModelEvaluator:
         Args:
             data_path: Path to test dataset CSV
         """
-        # Handle directory vs file path
-        if os.path.isdir(data_path):
-            print(f"Path {data_path} is a directory. Looking for test_data.csv...")
-            possible_file = os.path.join(data_path, 'test_data.csv')
-            if os.path.exists(possible_file):
-                data_path = possible_file
-            else:
-                # Fallback: check generally for csvs? Or just assume the filename
-                # Let's try to be helpful and list files
-                print(f"Files in {data_path}: {os.listdir(data_path)}")
-                raise FileNotFoundError(f"Could not find test_data.csv in {data_path}")
+        # Handle directory vs file path robustly (ignoring os.path.isdir unreliability on GCS Fuse)
+        potential_child_file = os.path.join(data_path, 'test_data.csv')
+        
+        if os.path.exists(potential_child_file):
+            print(f"Found test_data.csv inside directory: {data_path}")
+            data_path = potential_child_file
+        elif os.path.isdir(data_path):
+             # Directory exists but test_data.csv not found?
+             print(f"Warning: Path {data_path} is directory but test_data.csv not found.")
+             print(f"Files in {data_path}: {os.listdir(data_path)}")
+        elif not os.path.exists(data_path):
+             # Try appending .csv just in case
+             if os.path.exists(data_path + '.csv'):
+                 data_path = data_path + '.csv'
 
         print(f"Loading test data from: {data_path}")
         # Load data

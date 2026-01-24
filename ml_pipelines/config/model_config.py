@@ -137,7 +137,7 @@ class ModelConfig:
     vertex_location: str = "us-east1"
     track_histograms: bool = True
     histogram_freq: int = 5
-    track_profiling: bool = False
+    track_profiling: bool = True  # Enable profiling to see hardware usage
     profile_batch_range: tuple = (10, 20)
     
     # =========================================================================

@@ -96,8 +96,9 @@ def train_model(
                 
             TRAIN_EXIT_CODE=$?
             
-            # Wait a moment for final logs to upload
-            sleep 5
+            # Wait for final logs to upload (Histograms/Graphs can be large)
+            echo "Training finished. Waiting 30s for TensorBoard logs to sync..."
+            sleep 30
             
             # Cleanup
             kill $UPLOADER_PID || true
