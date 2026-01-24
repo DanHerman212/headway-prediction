@@ -165,113 +165,44 @@ class ModelEvaluator:
         Load a test dataset that has already been split (contains only test data).
         
         Args:
-            data_path: Path to test dataset CSV
+            data_path: Path to test dataset CSV or Directory
         """
         print(f"DEBUG: Received data_path: {data_path}")
         
-        # STRATEGY: Native GCS Download (Bypass Fuse)
-        # If the path looks like a GCS mount, use the API directly to pull the file.
-        # This solves consistency issues where Fuse says "File Not Found" but the API knows it's there.
-        if data_path.startswith('/gcs/'):
-            try:
-                from google.cloud import storage
-                print("DEBUG: Detected GCS path. Attempting Native Client download...")
-                
-                # Parse /gcs/bucket/path -> bucket, blob_prefix
-                relative_path = data_path[5:] # Strip /gcs/
-                bucket_name = relative_path.split('/')[0]
-                prefix = '/'.join(relative_path.split('/')[1:])
-                
-                client = storage.Client()
-                bucket = client.bucket(bucket_name)
-                
-                # We don't know if 'prefix' is the file or a directory containing the file.
-                # List blobs starting with this prefix to find the CSV.
-                # WARNING: prefix matching in GCS is essentially folder matching.
-                # If prefix is '.../folder', it matches '.../folder/file.csv'
-                # If prefix is '.../folder/', it matches '.../folder/file.csv'
-                
-                # Check 1: Is the prefix exactly a file?
-                direct_blob = bucket.get_blob(prefix)
-                if direct_blob:
-                     print(f"DEBUG: Found direct blob match: {prefix}")
-                     target_blob = direct_blob
-                else:
-                    # Check 2: List contents (treating it as a "directory")
-                    print(f"DEBUG: Listing blobs in gs://{bucket_name}/{prefix}")
-                    blobs = list(client.list_blobs(bucket, prefix=prefix))
-                    
-                    for blob in blobs:
-                        if blob.name.endswith('.csv'):
-                            target_blob = blob
-                            break
-                            
-                    # Check 3: If nothing found, try appending /test_data.csv manually
-                    # This handles the case where list_blobs(prefix) might be behaving strictly
-                    if not target_blob:
-                        potential_path = os.path.join(prefix, 'test_data.csv')
-                        print(f"DEBUG: Checking constructed path: {potential_path}")
-                        target_blob = bucket.get_blob(potential_path)
-                
-                if target_blob:
-                    print(f"DEBUG: Found CSV via API: {target_blob.name}")
-                    local_temp = '/tmp/downloaded_test_data.csv'
-                    target_blob.download_to_filename(local_temp)
-                    print(f"DEBUG: Downloaded to {local_temp}")
-                    
-                    data = pd.read_csv(local_temp)
-                    print(f"SUCCESS: Loaded {len(data)} rows from GCS via Native Client.")
-                    
-                else:
-                    print("DEBUG: No CSV found via GCS List Blobs.")
-            except Exception as e:
-                print(f"WARNING: Native GCS download failed: {e}")
-                print("Falling back to local file system read...")
-
-        # Initialize data if not loaded by Native GCS
-        if 'data' not in locals():
-            data = None
-
-        # Fallback to existing file system logic (for local runs or if API fails)
-        if data is None:
-            files_to_try = []
-            
-            # Priority 1: Check for standard file name inside the directory (Most likely)
-            if not data_path.endswith('.csv'):
-                 files_to_try.append(os.path.join(data_path, 'test_data.csv'))
-            
-            # Priority 2: Check the path as-is (If it is a file)
-            files_to_try.append(data_path)
-            
-            # Priority 3: Check path with extension appended
-            files_to_try.append(data_path + '.csv')
-            
-            for path in files_to_try:
+        # Standardize target path selection
+        # We expect KFP to pass a directory, where we wrote 'test.csv'
+        files_to_check = []
+        
+        if data_path.endswith('.csv'):
+            files_to_check.append(data_path)
+        else:
+            # Check standard names
+            files_to_check.append(os.path.join(data_path, 'test.csv'))
+            files_to_check.append(os.path.join(data_path, 'test_data.csv')) # legacy compat
+        
+        data = None
+        for path in files_to_check:
+            print(f"DEBUG: Checking {path}...")
+            if os.path.exists(path):
                 try:
-                    print(f"DEBUG: Attempting to read CSV from: {path}")
                     data = pd.read_csv(path)
-                    print(f"SUCCESS: Read {len(data)} rows from {path}")
+                    print(f"SUCCESS: Loaded {len(data)} rows from {path}")
                     break
                 except Exception as e:
-                    # Catching all exceptions because GCS FUSE can throw OSErrors, FileNotFound, IsDirectory, etc.
-                    print(f"DEBUG: Failed to read from {path}. Error: {str(e)}")
-                    continue
+                    print(f"WARNING: Found file at {path} but failed to read: {e}")
         
         if data is None:
-            # Diagnostics before crashing
-            print(f"CRITICAL ERROR: Could not read CSV from any attempted path.")
+            print(f"CRITICAL: Test data not found in {data_path}")
+            print(f"DEBUG: Directory contents of {data_path}:")
             try:
-                if os.path.exists(data_path):
-                    if os.path.isdir(data_path):
-                        print(f"Listing directory {data_path}: {os.listdir(data_path)}")
-                    else:
-                        print(f"Path exists but is not a directory.")
+                if os.path.isdir(data_path):
+                    print(os.listdir(data_path))
                 else:
-                    print(f"Path {data_path} does not exist.")
-            except Exception as e:
-                print(f"Diagnostics failed: {e}")
-                
-            raise FileNotFoundError(f"Could not load test data from {data_path}")
+                    print("(Not a directory)")
+            except Exception:
+                print("(Could not list directory)")
+            
+            raise FileNotFoundError(f"Missing test data in {data_path}")
         
         input_x = data.values
         input_t = data['log_headway'].values
