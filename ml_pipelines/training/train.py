@@ -346,10 +346,9 @@ def main():
     # Determine log directory (prefer GCS path if provided)
     log_dir = None
     if args.tensorboard_dir:
-        # SIMPLIFIED: Write directly to the provided directory.
-        # This ensures tb-gcp-uploader (watching this dir) sees the events at root.
-        # The container is isolated, so we don't need a unique subdir here.
-        log_dir = args.tensorboard_dir
+        # Re-enable subdirectory structure for correct Run Name in TensorBoard
+        # The uploader watches the root, so creating a subdir here defines the Run Name in the UI.
+        log_dir = f"{args.tensorboard_dir}/{run_name}"
         print(f"Logging to TensorBoard dir: {log_dir}")
     
     tracking_config = TrackingConfig.create_from_model_config(
