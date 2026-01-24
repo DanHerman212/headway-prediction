@@ -222,7 +222,7 @@ class Trainer:
         # Model checkpoint - save best model
         callbacks.append(
             keras.callbacks.ModelCheckpoint(
-                filepath=f"{self.config.checkpoint_dir}/best_model.keras",
+                filepath=f"{self.config.checkpoint_dir}/best_model.h5",
                 monitor='val_loss',
                 save_best_only=True,
                 verbose=1
@@ -285,6 +285,7 @@ def main():
     parser.add_argument("--test_dataset_path", type=str, required=True, help="Path to save the test dataset for evaluation")
     parser.add_argument("--epochs", type=int, default=None, help="Override config epochs")
     parser.add_argument("--batch_size", type=int, default=None, help="Override config batch size")
+    parser.add_argument("--tensorboard_dir", type=str, default=None, help="GCS path for TensorBoard logs")
     args = parser.parse_args()
     
     # 1. Load configuration
@@ -317,10 +318,17 @@ def main():
     safe_model_name = config.model_name.replace('_', '-')
     run_name = f"{safe_model_name}-{timestamp}"
     
+    # Determine log directory (prefer GCS path if provided)
+    log_dir = None
+    if args.tensorboard_dir:
+        # Use provided root + run name
+        log_dir = f"{args.tensorboard_dir}/{run_name}"
+    
     tracking_config = TrackingConfig.create_from_model_config(
         model_config=config,
         experiment_name=config.experiment_name or "headway-prediction",
         run_name=run_name,
+        log_dir=log_dir,
         vertex_project=config.bq_project,
         vertex_location=config.vertex_location,
         use_vertex_experiments=config.use_vertex_experiments,
@@ -405,25 +413,47 @@ def main():
 
         # 9. Save test set for independent evaluation component
         print(f"\n{'='*70}")
-        print("SAVING TEST SET")
+        print(f"SAVING TEST SET to {args.test_dataset_path}")
         print("="*70)
-        trainer.save_test_set(args.test_dataset_path)
+        try:
+            trainer.save_test_set(args.test_dataset_path)
+            print("✓ Test set saved successfully")
+        except Exception as e:
+            print(f"ERROR: Failed to save test set: {str(e)}")
+            # Don't raise, try to continue to save model
 
         # 10. Quick in-process evaluation (logging only)
-        # We assume the external component handles the detailed report/plots
         print(f"\n{'='*70}")
         print("LOGGING METRICS")
         print("="*70)
         
-        _, _, test_dataset = trainer.create_datasets()
-        test_results = model.evaluate(test_dataset, verbose=1, return_dict=True)
-        
-        for metric_name, metric_value in test_results.items():
-            tracker.log_metric(f"test/{metric_name}", metric_value, step=config.epochs)
+        try:
+            _, _, test_dataset = trainer.create_datasets()
+            test_results = model.evaluate(test_dataset, verbose=1, return_dict=True)
+            
+            for metric_name, metric_value in test_results.items():
+                tracker.log_metric(f"test/{metric_name}", metric_value, step=config.epochs)
+            print("✓ Metrics logged successfully")
+        except Exception as e:
+            print(f"ERROR: Failed to evaluate model: {str(e)}")
+            test_results = {}
         
         # 11. Save model
-        print(f"\nSaving model to {args.model_dir}")
-        model.save(args.model_dir)
+        print(f"\n{'='*70}")
+        print(f"SAVING MODEL to {args.model_dir}")
+        print("="*70)
+        try:
+            # Force .h5 format within the output directory
+            # args.model_dir provided by KFP is typically a directory path
+            save_path = os.path.join(args.model_dir, 'model.h5')
+            os.makedirs(args.model_dir, exist_ok=True)
+            print(f"Saving to HDF5 format: {save_path}")
+            model.save(save_path)
+            print("✓ Model saved successfully")
+        except Exception as e:
+            print(f"ERROR: Failed to save model: {str(e)}")
+            raise e
+
         print(f"✓ Experiment: {config.experiment_name}/{run_name}")
         print(f"✓ TensorBoard: {tracking_config.get_tensorboard_command()}")
         

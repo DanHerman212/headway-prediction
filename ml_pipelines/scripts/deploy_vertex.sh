@@ -28,6 +28,7 @@ fi
 
 PROJECT_ID=${GCP_PROJECT_ID:-"your-project-id"}
 REGION=${VERTEX_LOCATION:-"us-east1"}
+ARTIFACT_REGION=${ARTIFACT_REGION:-"us-east1"}
 REPO_NAME="headway-pipelines"
 IMAGE_NAME="headway-training"
 
@@ -38,8 +39,33 @@ else
     TAG="date-$(date +%Y%m%d-%H%M%S)"
 fi
 
-# Artifact Registry URI
-IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}:${TAG}"
+# Artifact Registry URI Base
+REPO_URI="${ARTIFACT_REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}"
+IMAGE_URI="${REPO_URI}:${TAG}"
+
+# Check for skip build and missing image
+if [ "$SKIP_BUILD" = true ]; then
+    if ! gcloud artifacts docker images describe ${IMAGE_URI} &>/dev/null; then
+        echo "Image ${IMAGE_URI} does not exist."
+        echo "Searching for latest available image..."
+        
+        # Find latest tag using tags list sorted by version creation time
+        LATEST_TAG=$(gcloud artifacts docker tags list ${REPO_URI} \
+            --sort-by=~version.createTime \
+            --limit=1 \
+            --format="value(tag)")
+        
+        if [ -n "$LATEST_TAG" ]; then
+            TAG=$LATEST_TAG
+            IMAGE_URI="${REPO_URI}:${TAG}"
+            echo "Falling back to latest image: ${IMAGE_URI}"
+        else
+            echo "Error: No existing images found in ${REPO_URI}. Cannot skip build."
+            exit 1
+        fi
+    fi
+fi
+
 PIPELINE_ROOT="gs://${PROJECT_ID}-pipelines/headway-prediction"
 
 echo "========================================================================"
@@ -51,11 +77,11 @@ echo "========================================================================"
 
 # 1. Create Artifact Registry Repository (if not exists)
 echo -e "\n[Step 1/4] Checking Artifact Registry..."
-if ! gcloud artifacts repositories describe ${REPO_NAME} --location=${REGION} --project=${PROJECT_ID} &>/dev/null; then
+if ! gcloud artifacts repositories describe ${REPO_NAME} --location=${ARTIFACT_REGION} --project=${PROJECT_ID} &>/dev/null; then
     echo "Creating repository ${REPO_NAME}..."
     gcloud artifacts repositories create ${REPO_NAME} \
         --repository-format=docker \
-        --location=${REGION} \
+        --location=${ARTIFACT_REGION} \
         --description="Headway Prediction Pipeline Images"
 else
     echo "Repository ${REPO_NAME} exists."
@@ -77,7 +103,6 @@ elif gcloud artifacts docker images describe ${IMAGE_URI} &>/dev/null; then
         BUILD_IMAGE=false
     fi
 fi
-
 
 # 3. Build and Push Image (Cloud Build)
 if [ "$BUILD_IMAGE" = true ]; then
@@ -116,13 +141,14 @@ aiplatform.init(
     staging_bucket='${PIPELINE_ROOT}'
 )
 
-
 job = aiplatform.PipelineJob(
     display_name='headway-training-${TAG}',
     template_path='headway_pipeline.json',
     pipeline_root='${PIPELINE_ROOT}',
     parameter_values={
         'project_id': '${PROJECT_ID}',
+        'vertex_location': '${REGION}',
+        'tensorboard_root': '${PIPELINE_ROOT}/tensorboard',
         'epochs': 50
     },
     enable_caching=True

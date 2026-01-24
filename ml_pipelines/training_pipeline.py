@@ -48,6 +48,9 @@ def train_model(
     input_csv: dsl.Input[dsl.Dataset],
     model_dir: dsl.Output[artifact_types.UnmanagedContainerModel],
     test_dataset: dsl.Output[dsl.Dataset],
+    project_id: str,
+    vertex_location: str,
+    tensorboard_root: str,
     epochs: int = 100,
 ):
     """
@@ -55,12 +58,16 @@ def train_model(
     """
     return dsl.ContainerSpec(
         image=TENSORFLOW_IMAGE_URI,
-        command=["python", "-m", "ml_pipelines.training.train"],
+        command=["bash", "-c"],
         args=[
-            "--input_csv", input_csv.path,
-            "--model_dir", model_dir.path,
-            "--test_dataset_path", test_dataset.path,
-            "--epochs", str(epochs)
+            'export GCP_PROJECT_ID="$0" && export VERTEX_LOCATION="$1" && python -m ml_pipelines.training.train --input_csv "$2" --model_dir "$3" --test_dataset_path "$4" --epochs "$5" --tensorboard_dir "$6"',
+            project_id,
+            vertex_location,
+            input_csv.path,
+            model_dir.path,
+            test_dataset.path,
+            str(epochs),
+            tensorboard_root
         ]
     )
 
@@ -93,6 +100,8 @@ def evaluate_model(
 )
 def training_pipeline(
     project_id: str,
+    vertex_location: str,
+    tensorboard_root: str,
     epochs: int = 50,
 ):
     """
@@ -100,6 +109,8 @@ def training_pipeline(
     
     Args:
         project_id: GCP Project ID for BigQuery access
+        vertex_location: Vertex AI location (region)
+        tensorboard_root: GCS path for TensorBoard logs
         epochs: Number of training epochs
     """
     # 1. Extract
@@ -115,9 +126,13 @@ def training_pipeline(
     # 3. Train
     train_op = train_model(
         input_csv=preprocess_op.outputs["output_csv"],
-        epochs=epochs
+        epochs=epochs,
+        project_id=project_id,
+        vertex_location=vertex_location,
+        tensorboard_root=tensorboard_root
     )
     # Configure A100 GPU for training
+    train_op.set_accelerator_type("NVIDIA_TESLA_A100")
     train_op.set_accelerator_type("NVIDIA_TESLA_A100")
     train_op.set_accelerator_limit(1)
     # Ensure sufficient CPU/RAM for the A100 instance type (e.g., a2-highgpu-1g)
