@@ -5,7 +5,7 @@
 # Google Cloud & Vertex AI
 google-cloud-bigquery>=3.0.0
 google-cloud-bigquery-storage>=2.0.0
-google-cloud-aiplatform>=1.38.0
+google-cloud-aiplatform[tensorboard]>=1.38.0
 google-cloud-storage>=2.0.0
 
 # Kubeflow Pipelines (KFP)

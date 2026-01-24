@@ -232,9 +232,16 @@ class ExperimentTracker:
                 from google.cloud import aiplatform
                 # Convert name to valid metric key (replace / with _)
                 metric_key = name.replace("/", "_").replace("-", "_")
-                aiplatform.log_metrics({metric_key: float(value)})
-            except Exception:
-                pass  # Silently fail for Vertex AI logging
+                
+                # Use log_time_series_metrics for historical plotting
+                aiplatform.log_time_series_metrics(
+                    {metric_key: float(value)},
+                    step=step
+                )
+            except Exception as e:
+                # Silently fail for Vertex AI logging to avoid training interruption
+                # print(f"Warning: Failed to log to Vertex: {e}") 
+                pass
     
     def log_scalars(self, metrics: Dict[str, float], step: int, prefix: str = ""):
         """

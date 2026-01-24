@@ -61,7 +61,52 @@ def train_model(
         image=TENSORFLOW_IMAGE_URI,
         command=["bash", "-c"],
         args=[
-            'export GCP_PROJECT_ID="$0" && export VERTEX_LOCATION="$1" && python -m ml_pipelines.training.train --input_csv "$2" --model_dir "$3" --test_dataset_path "$4" --epochs "$5" --tensorboard_dir "$6" --tensorboard_resource_name "$7"',
+            '''
+            export GCP_PROJECT_ID="$0"
+            export VERTEX_LOCATION="$1"
+            INPUT_CSV="$2"
+            MODEL_DIR="$3"
+            TEST_DATASET_PATH="$4"
+            EPOCHS="$5"
+            TB_ROOT="$6"
+            TB_RESOURCE="$7"
+            
+            # Local log directory for TensorBoard uploader
+            LOCAL_LOG_DIR="/tmp/tensorboard_logs"
+            mkdir -p $LOCAL_LOG_DIR
+            
+            # Start TensorBoard Uploader in background
+            echo "Starting TensorBoard Uploader..."
+            tb-gcp-uploader --tensorboard_resource_name $TB_RESOURCE \
+                --logdir $LOCAL_LOG_DIR \
+                --experiment_name "headway-prediction-experiments" \
+                --one_shot=False &
+            
+            UPLOADER_PID=$!
+            
+            # Run Training
+            # We pass the LOCAL log dir to the training script so it writes events there
+            python -m ml_pipelines.training.train \
+                --input_csv "$INPUT_CSV" \
+                --model_dir "$MODEL_DIR" \
+                --test_dataset_path "$TEST_DATASET_PATH" \
+                --epochs "$EPOCHS" \
+                --tensorboard_dir "$LOCAL_LOG_DIR" \
+                --tensorboard_resource_name "$TB_RESOURCE"
+                
+            TRAIN_EXIT_CODE=$?
+            
+            # Wait a moment for final logs to upload
+            sleep 5
+            
+            # Cleanup
+            kill $UPLOADER_PID || true
+            
+            # If we also want GCS backup of logs (optional, but good for persistence)
+            # gsutil cp -r $LOCAL_LOG_DIR $TB_ROOT || true
+            
+            exit $TRAIN_EXIT_CODE
+            ''',
             project_id,
             vertex_location,
             input_csv.path,
