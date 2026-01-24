@@ -88,21 +88,11 @@ def train_model(
             echo "Training with Run Name: $RUN_NAME"
             echo "Logs will be written to: $GCS_LOG_DIR"
             
-            python -m ml_pipelines.training.train \
-                --input_csv "$INPUT_CSV" \
-                --model_dir "$MODEL_DIR" \
-                --test_dataset_path "$TEST_DATASET_PATH" \
-                --epochs "$EPOCHS" \
-                --tensorboard_dir "$TB_ROOT" \
-                --tensorboard_resource_name "$TB_RESOURCE"
-                
-            TRAIN_EXIT_CODE=$?
-            
-            if [ $TRAIN_EXIT_CODE -eq 0 ]; then
-                echo "Training success. Logs written to $GCS_LOG_DIR"
+            # Define function to sync and upload logs (to be called on exit)
+            upload_logs() {
+                echo "Initiating Post-Training Log Upload..."
                 
                 # 2. Sync GCS -> Local for Uploader
-                # We use Python to download recursively since gsutil might not be in the image
                 LOCAL_SYNC_DIR="/tmp/tb_sync"
                 mkdir -p $LOCAL_SYNC_DIR
                 
@@ -112,41 +102,54 @@ import os
 from google.cloud import storage
 
 def download_blob_folder(bucket_name, source_folder, destination_dir):
-    storage_client = storage.Client()
-    bucket = storage_client.bucket(bucket_name)
-    blobs = bucket.list_blobs(prefix=source_folder)
-    
-    for blob in blobs:
-        # Construct local path
-        relative_path = os.path.relpath(blob.name, source_folder)
-        local_path = os.path.join(destination_dir, relative_path)
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        blob.download_to_filename(local_path)
-        print(f'Downloaded: {local_path}')
+    try:
+        storage_client = storage.Client()
+        bucket = storage_client.bucket(bucket_name)
+        blobs = list(bucket.list_blobs(prefix=source_folder))
+        print(f'Found {len(blobs)} files in {source_folder}')
+        
+        for blob in blobs:
+            # Construct local path
+            relative_path = os.path.relpath(blob.name, source_folder)
+            local_path = os.path.join(destination_dir, relative_path)
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            blob.download_to_filename(local_path)
+    except Exception as e:
+        print(f'Log Sync Error: {e}')
 
 # Parse gs://bucket/path
 gcs_path = '$GCS_LOG_DIR'
-path_parts = gcs_path.replace('gs://', '').split('/')
-bucket_name = path_parts[0]
-prefix = '/'.join(path_parts[1:])
-
-download_blob_folder(bucket_name, prefix, '$LOCAL_SYNC_DIR')
+if gcs_path.startswith('gs://'):
+    path_parts = gcs_path.replace('gs://', '').split('/')
+    bucket_name = path_parts[0]
+    prefix = '/'.join(path_parts[1:])
+    download_blob_folder(bucket_name, prefix, '$LOCAL_SYNC_DIR')
 "
                 
                 # 3. Deterministic Upload
-                # Now pointing to a static, fully downloaded directory
                 echo "Starting Batch Upload to Vertex TensorBoard..."
                 tb-gcp-uploader --tensorboard_resource_name $TB_RESOURCE \
                     --logdir $LOCAL_SYNC_DIR \
                     --experiment_name "headway-prediction-experiments" \
-                    --one_shot=True
+                    --one_shot=True || echo "Upload warning: Non-zero exit from tb-gcp-uploader"
                 
-                echo "TensorBoard Upload Complete."
-            else
-                echo "Training failed."
-            fi
+                echo "TensorBoard Upload Sequence Complete."
+            }
             
-            exit $TRAIN_EXIT_CODE
+            # TRAP exit to ensure upload happens even on failure
+            trap upload_logs EXIT
+            
+            # Execute Training
+            python -m ml_pipelines.training.train \
+                --input_csv "$INPUT_CSV" \
+                --model_dir "$MODEL_DIR" \
+                --test_dataset_path "$TEST_DATASET_PATH" \
+                --epochs "$EPOCHS" \
+                --tensorboard_dir "$TB_ROOT" \
+                --tensorboard_resource_name "$TB_RESOURCE"
+                
+            # Capture exit code (trap will fire after this)
+            exit $?
             ''',
             project_id,
             vertex_location,

@@ -1,6 +1,7 @@
 """Model evaluation and metrics."""
 
 from .metrics import MAESeconds
-from .evaluate_model import ModelEvaluator
+# Lazy import or direct import recommended to avoid coupling
+# from .evaluate_model import ModelEvaluator
 
-__all__ = ["MAESeconds", "ModelEvaluator"]
+__all__ = ["MAESeconds"]
