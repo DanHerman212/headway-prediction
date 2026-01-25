@@ -15,7 +15,7 @@ PIPELINE_ROOT = config.get("PIPELINE_ROOT", "gs://headway-prediction-pipelines/r
 
 @dsl.container_component
 def extract_op(
-    output_data: dsl.OutputPath("CSV")
+    output_data: dsl.OutputPath(str)
 ):
     return dsl.ContainerSpec(
         image=IMAGE_URI,
@@ -27,8 +27,8 @@ def extract_op(
 
 @dsl.container_component
 def preprocess_op(
-    input_data: dsl.InputPath("CSV"),
-    output_data: dsl.OutputPath("CSV")
+    input_data: dsl.InputPath(str),
+    output_data: dsl.OutputPath(str)
 ):
     return dsl.ContainerSpec(
         image=IMAGE_URI,
@@ -41,9 +41,9 @@ def preprocess_op(
 
 @dsl.container_component
 def train_op(
-    input_data: dsl.InputPath("CSV"),
-    model_output: dsl.OutputPath("Model"),
-    test_data_output: dsl.OutputPath("CSV"),
+    input_data: dsl.InputPath(str),
+    model_output: dsl.OutputPath(str),
+    test_data_output: dsl.OutputPath(str),
 ):
     return dsl.ContainerSpec(
         image=IMAGE_URI,
@@ -57,9 +57,9 @@ def train_op(
 
 @dsl.container_component
 def eval_op(
-    model_input: dsl.InputPath("Model"),
-    test_data_input: dsl.InputPath("CSV"),
-    metrics_output: dsl.OutputPath("JSON")
+    model_input: dsl.InputPath(str),
+    test_data_input: dsl.InputPath(str),
+    metrics_output: dsl.OutputPath(str)
 ):
     return dsl.ContainerSpec(
         image=IMAGE_URI,
