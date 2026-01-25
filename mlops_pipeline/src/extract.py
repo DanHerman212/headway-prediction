@@ -31,7 +31,7 @@ def extract_data(output_path: str):
         ROUND(headway, 2) AS headway,
         time_of_day_seconds
     FROM `{table_ref}`
-    WHERE track = 'S'
+    WHERE track = 'A1'
         AND route_id IN ({route_ids_str})
     ORDER BY arrival_time
     """
