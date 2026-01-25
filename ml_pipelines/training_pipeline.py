@@ -99,6 +99,7 @@ def train_model(
                 # Check if GCS_LOG_DIR is a gs:// path or a local/fuse path
                 if [[ "$GCS_LOG_DIR" == gs://* ]]; then
                     echo "Downloading logs from GCS ($GCS_LOG_DIR) to local..."
+                    
                     # Write Python script to file to avoid nesting quote issues
                     cat <<EOF_PY > /tmp/sync_logs.py
 import os
@@ -146,38 +147,13 @@ EOF_PY
                     export GCS_LOG_DIR
                     export LOCAL_SYNC_DIR
                     python /tmp/sync_logs.py
+                    
                 else:
                     # Assume Local or FUSE path
                     echo "Detailed check of log path: $GCS_LOG_DIR"
                     if [ -d "$GCS_LOG_DIR" ]; then
                         echo "Recursively copying logs from filesystem/FUSE..."
-                        cp -r "$GCS_LOG_DIR"/* "$LOCAL_SYNC_DIR"/ || echo "Copy warning: directory might be empty"
-                    else
-                        echo "Warning: Log directory $GCS_LOG_DIR does not exist on filesystem."
-                    fi
-                fi
-                
-                echo "Verifying Sync Directory Contents:"
-                ls -R $LOCAL_SYNC_DIR
-                
-                # 3. Deterministic Upload
-                echo "Starting Batch Upload to Vertex TensorBoard..."
-                tb-gcp-uploader --tensorboard_resource_name $TB_RESOURCE \
-                    --logdir $LOCAL_SYNC_DIR \
-                    --experiment_name "headway-prediction-experiments" \
-                    --one_shot=True
-# Parse gs://bucket/path
-gcs_path = '$GCS_LOG_DIR'
-path_parts = gcs_path.replace('gs://', '').split('/')
-bucket_name = path_parts[0]
-prefix = '/'.join(path_parts[1:])
-download_blob_folder(bucket_name, prefix, '$LOCAL_SYNC_DIR')
-"
-                else:
-                    # Assume Local or FUSE path
-                    echo "Detailed check of log path: $GCS_LOG_DIR"
-                    if [ -d "$GCS_LOG_DIR" ]; then
-                        echo "Recursively copying logs from filesystem/FUSE..."
+                        # Use cp -r
                         cp -r "$GCS_LOG_DIR"/* "$LOCAL_SYNC_DIR"/ || echo "Copy warning: directory might be empty"
                     else
                         echo "Warning: Log directory $GCS_LOG_DIR does not exist on filesystem."
@@ -310,7 +286,7 @@ def training_pipeline(
     )
     # Configure A100 GPU for training
     train_op.set_accelerator_type("NVIDIA_TESLA_A100")
-    train_op.set_accelerator_type("NVIDIA_TESLA_A100")
+    # train_op.set_accelerator_type("NVIDIA_TESLA_T4")
     train_op.set_accelerator_limit(1)
     # Ensure sufficient CPU/RAM for the A100 instance type (e.g., a2-highgpu-1g)
     train_op.set_cpu_limit("12")
@@ -321,4 +297,3 @@ def training_pipeline(
         model_dir=train_op.outputs["model_dir"],
         test_dataset=train_op.outputs["test_dataset"]
     )
-

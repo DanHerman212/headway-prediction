@@ -501,13 +501,26 @@ def main():
         print(f"SAVING MODEL to {args.model_dir}")
         print("="*70)
         try:
-            # Force .h5 format within the output directory
-            # args.model_dir provided by KFP is typically a directory path
-            save_path = os.path.join(args.model_dir, 'model.h5')
+            # Save as SavedModel (default when path is directory)
+            # This is required for the Evaluation component which uses tf.keras.models.load_model(dir)
+            
+            # Ensure directory exists
             os.makedirs(args.model_dir, exist_ok=True)
-            print(f"Saving to HDF5 format: {save_path}")
-            model.save(save_path)
-            print("✓ Model saved successfully")
+            
+            print(f"Saving to SavedModel format: {args.model_dir}")
+            # Use export if available (Keras 3/recent), else save
+            if hasattr(model, 'export'):
+                model.export(args.model_dir)
+                print("✓ Model exported successfully (SavedModel)")
+                
+                # Also save .keras for backup/compatibility
+                backup_path = os.path.join(args.model_dir, 'model.keras')
+                model.save(backup_path)
+                print(f"✓ Model saved to .keras format: {backup_path}")
+            else:
+                model.save(args.model_dir)
+                print("✓ Model saved successfully (SavedModel)")
+                
         except Exception as e:
             print(f"ERROR: Failed to save model: {str(e)}")
             raise e
