@@ -332,6 +332,11 @@ def main():
     parser.add_argument("--batch_size", type=int, default=None, help="Override config batch size")
     parser.add_argument("--tensorboard_dir", type=str, default=None, help="GCS path for TensorBoard logs")
     parser.add_argument("--tensorboard_resource_name", type=str, default=None, help="Vertex AI TensorBoard resource name")
+    parser.add_argument("--run_name", type=str, default=None, help="Experiment run name")
+    parser.add_argument("--dropout_rate", type=float, default=None, help="Dropout rate")
+    parser.add_argument("--gru_units", type=str, default=None, help="GRU units (comma separated)")
+    parser.add_argument("--lookback_steps", type=int, default=None, help="Lookback steps")
+    parser.add_argument("--learning_rate", type=float, default=None, help="Learning rate")
     args = parser.parse_args()
     
     # 1. Load configuration
@@ -345,6 +350,18 @@ def main():
         config.epochs = args.epochs
     if args.batch_size:
         config.batch_size = args.batch_size
+    if args.dropout_rate is not None:
+        config.dropout_rate = args.dropout_rate
+    if args.gru_units:
+        # Parse string "128,64" -> [128, 64]
+        try:
+            config.gru_units = [int(u) for u in args.gru_units.split(',')]
+        except ValueError:
+            print(f"Warning: Could not parse gru_units '{args.gru_units}'. Using default.")
+    if args.lookback_steps:
+        config.lookback_steps = args.lookback_steps
+    if args.learning_rate:
+        config.learning_rate = args.learning_rate
         
     print(f"Model: {config.model_name}")
     print(f"Architecture: {config.model_type}")
@@ -352,6 +369,7 @@ def main():
     print(f"Lookback: {config.lookback_steps} steps")
     print(f"Batch size: {config.batch_size}")
     print(f"Epochs: {config.epochs}")
+    print(f"Dropout: {config.dropout_rate}")
     
     # 2. Create tracking configuration
     print(f"\n{'='*70}")
@@ -363,11 +381,17 @@ def main():
     # We replace underscores with hyphens to ensure validity
     safe_model_name = config.model_name.replace('_', '-')
     
-    # Check for RUN_NAME env var (injected by pipeline)
-    env_run_name = os.environ.get("RUN_NAME")
-    if env_run_name:
-        run_name = env_run_name
-        print(f"Using custom run name: {run_name}")
+    # Check for RUN_NAME env var or Arg
+    if args.run_name:
+        run_name = args.run_name
+        # Start Clean: If the user provides a run name, we assume they want THAT run name.
+        # But if it looks static (from pipeline definition default), we might want to append timestamp?
+        # The pipeline usually sends a unique run_name if constructed with dsl.PIPELINE_JOB_ID_PLACEHOLDER or similar?
+        # For now, trust the arg.
+        print(f"Using provided run name: {run_name}")
+    elif os.environ.get("RUN_NAME"):
+        run_name = os.environ.get("RUN_NAME")
+        print(f"Using environment run name: {run_name}")
     else:
         run_name = f"{safe_model_name}-{timestamp}"
         print(f"Generated run name: {run_name}")
