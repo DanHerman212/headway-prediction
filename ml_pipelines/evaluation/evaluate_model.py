@@ -44,11 +44,13 @@ class ModelEvaluator:
             keras_file_path = os.path.join(self.model_path, "model.keras")
             if os.path.exists(keras_file_path):
                 logger.info(f"Found .keras backup file at {keras_file_path}. Loading using Keras format.")
-                self.model = tf.keras.models.load_model(keras_file_path)
+                # compile=False avoids loading the optimizer state, which often causes version conflicts (e.g. Adam.build missing)
+                # We don't need the optimizer for evaluation/inference.
+                self.model = tf.keras.models.load_model(keras_file_path, compile=False)
             else:
                 # Fallback to standard directory load (SavedModel)
                 logger.info(f"Loading model from directory {self.model_path}")
-                self.model = tf.keras.models.load_model(self.model_path)
+                self.model = tf.keras.models.load_model(self.model_path, compile=False)
                 
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
