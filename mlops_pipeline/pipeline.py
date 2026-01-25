@@ -98,6 +98,10 @@ def headway_pipeline(
     train_task = train_op(
         input_data=preprocess_task.outputs['output_data']
     )
+    # Configure A100 GPU (requires A2 machine series)
+    train_task.set_machine_type("a2-highgpu-1g")
+    train_task.set_gpu_limit(1) 
+    
     for key, val in config.items():
         train_task.set_env_variable(key, val)
         
