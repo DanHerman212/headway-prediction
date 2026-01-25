@@ -6,11 +6,21 @@ from dotenv import dotenv_values
 # Load environment variables from .env
 # We use a safe loading mechanism to prevent crashes if file is missing
 env_path = os.path.join(os.path.dirname(__file__), '.env')
-config = dotenv_values(env_path) if os.path.exists(env_path) else {}
+file_config = dotenv_values(env_path) if os.path.exists(env_path) else {}
 
-# Defaults if not in .env
-IMAGE_URI = config.get("TENSORFLOW_IMAGE_URI", "us-docker.pkg.dev/headway-prediction/ml-pipelines/headway-training:latest")
-PIPELINE_ROOT = config.get("PIPELINE_ROOT", "gs://headway-prediction-pipelines/root")
+# Helper to get config from Env Vars first, then .env file, then default
+def get_config(key, default):
+    return os.environ.get(key, file_config.get(key, default))
+
+# Defaults
+IMAGE_URI = get_config("TENSORFLOW_IMAGE_URI", "us-docker.pkg.dev/headway-prediction/ml-pipelines/headway-training:latest")
+PIPELINE_ROOT = get_config("PIPELINE_ROOT", "gs://headway-prediction-pipelines/root")
+PROJECT_ID = get_config("GCP_PROJECT_ID", "")
+REGION = get_config("VERTEX_LOCATION", "us-east1")
+
+# Use file_config for iterating over env vars, but we could also merge os.environ if needed.
+# For now, sticking to file_config for iteration is safer to avoid polluting with system env vars.
+config = file_config
 
 @dsl.container_component
 def extract_op(output_data: dsl.Output[dsl.Dataset]):
@@ -71,8 +81,8 @@ def eval_op(
     pipeline_root=PIPELINE_ROOT,
 )
 def headway_pipeline(
-    project_id: str = config.get("GCP_PROJECT_ID", ""),
-    region: str = config.get("VERTEX_LOCATION", "us-east1"),
+    project_id: str = PROJECT_ID,
+    region: str = REGION,
 ):
     # 1. Extract
     extract_task = extract_op()

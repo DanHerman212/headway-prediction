@@ -32,9 +32,20 @@ PROJECT_ID=${PROJECT_ID:-$GCP_PROJECT_ID}
 REGION=${REGION:-$VERTEX_LOCATION}
 BUCKET_NAME=${BUCKET_NAME:-$GCS_BUCKET_NAME}
 
-IMAGE_URI=${TENSORFLOW_IMAGE_URI:-"us-docker.pkg.dev/${PROJECT_ID}/headway-pipelines/training:latest"}
+# Generate a unique tag for this build execution to bypass Vertex AI caching
+TIMESTAMP=$(date +%s)
+IMAGE_TAG="v${TIMESTAMP}"
+
+# Base Image URI
+BASE_IMAGE_URI=${TENSORFLOW_IMAGE_URI:-"us-docker.pkg.dev/${PROJECT_ID}/headway-pipelines/training"}
+# Full Image URI with unique tag
+IMAGE_URI="${BASE_IMAGE_URI}:${IMAGE_TAG}"
+
 # pipeline.py uses config("PIPELINE_ROOT"), ensure it matches or defaulted here for the runner
 PIPELINE_ROOT=${PIPELINE_ROOT:-"gs://${BUCKET_NAME}/pipeline_root"}
+
+# Export IMAGE_URI so pipeline.py picks it up (it prefers os.environ now)
+export TENSORFLOW_IMAGE_URI=$IMAGE_URI
 
 # Service Account Logic:
 # If SERVICE_ACCOUNT is not set in .env, we default to empty to let Vertex AI use the default Compute Engine SA.
