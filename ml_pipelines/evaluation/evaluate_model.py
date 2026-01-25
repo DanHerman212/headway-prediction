@@ -40,14 +40,18 @@ class ModelEvaluator:
         
         # 1. Load Model
         try:
-            # Handle GCS/Local path differences
-            # If path ends in /, TF might expect a SavedModel directory.
-            # If it's a .keras file, it's a file.
-            self.model = tf.keras.models.load_model(self.model_path)
+            # OPTION 1: Try loading specific .keras file first (preferred for preserving Keras API)
+            keras_file_path = os.path.join(self.model_path, "model.keras")
+            if os.path.exists(keras_file_path):
+                logger.info(f"Found .keras backup file at {keras_file_path}. Loading using Keras format.")
+                self.model = tf.keras.models.load_model(keras_file_path)
+            else:
+                # Fallback to standard directory load (SavedModel)
+                logger.info(f"Loading model from directory {self.model_path}")
+                self.model = tf.keras.models.load_model(self.model_path)
+                
         except Exception as e:
-            logger.error(f"Failed to load model using standard path: {e}")
-            logger.info("Assumption: Path might be GCS. TF handles GCS usually, but checking permissions.")
-            # If TF fails on GCS, there's usually a deeper auth issue, but we'll re-raise.
+            logger.error(f"Failed to load model: {e}")
             raise
             
         logger.info(f"Loading test data from {self.test_data_path}")

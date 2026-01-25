@@ -76,13 +76,27 @@ def train_model(
                 # Fallback if not passed by pipeline
                 echo "Warning: RUN_NAME env var not set. Generating timestamp-based name."
                 RUN_NAME="headway-model-$(date +%Y%m%d-%H%M%S)"
+            else
+                # Append random/timestamp to user-provided name to ensure uniqueness if they re-use the same string
+                # or just accept it if they want to append to same run.
+                # Here we assume unique runs per pipeline job:
+                # But actually, the .env RUN_NAME is usually static. To separate runs we need dynamic suffix.
+                # However, User asked why .env RUN_NAME is ignored. 
+                # Pipelines passes parameters as arguments, not env vars usually, unless explicitly mapped.
+                # But here we are inside the script args.
+                echo "Using provided Run Name: $RUN_NAME"
+                # If the user wants exact name, we keep it. If they want uniqueness, they should manage it.
+                # But Vertex usually needs unique Folder per run for cleanest TB.
+                # Let's append timestamp if the name looks static (e.g. doesn't end in numbers)
+                if [[ ! "$RUN_NAME" =~ [0-9]{6} ]]; then
+                     RUN_NAME="${RUN_NAME}-$(date +%Y%m%d-%H%M%S)"
+                fi
             fi
             export RUN_NAME
             
             # 1. Train directly to GCS (Source of Truth)
             # We use the tensorboard_root (gs:// bucket) passed from pipeline
             # We append RUN_NAME to ensure we write to a unique subdirectory
-            # This ensures logs are safely persisted on cloud even if container crashes
             GCS_LOG_DIR="$TB_ROOT/$RUN_NAME"
             
             echo "Training with Run Name: $RUN_NAME"
@@ -94,7 +108,9 @@ def train_model(
                 
                 # 2. Sync Logs to Local Dir
                 LOCAL_SYNC_DIR="/tmp/tb_sync"
-                mkdir -p $LOCAL_SYNC_DIR
+                # Ensure we sync into a subdir matching run name so TB sees structure: root/run_name/events
+                LOCAL_RUN_DIR="$LOCAL_SYNC_DIR"
+                mkdir -p $LOCAL_RUN_DIR
                 
                 # Check if GCS_LOG_DIR is a gs:// path or a local/fuse path
                 if [[ "$GCS_LOG_DIR" == gs://* ]]; then
@@ -120,7 +136,12 @@ def download_blob_folder(bucket_name, source_folder, destination_dir):
         
         for blob in blobs:
             # Construct local path
+            # blob.name includes full prefix (e.g. users/me/runs/run1/train/events...)
+            # source_folder is (users/me/runs/run1)
+            # relative is (train/events...)
             relative_path = os.path.relpath(blob.name, source_folder)
+            
+            # We want to preserve 'train/' or 'validation/' structure
             local_path = os.path.join(destination_dir, relative_path)
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
             blob.download_to_filename(local_path)
@@ -129,7 +150,7 @@ def download_blob_folder(bucket_name, source_folder, destination_dir):
     except Exception as e:
         print(f'Log Sync Error: {e}')
         # Log error but don't crash main process
-        sys.exit(0)
+        # sys.exit(0) 
 
 # Get env vars
 gcs_path = os.environ.get('GCS_LOG_DIR', '')
@@ -145,7 +166,7 @@ else:
 EOF_PY
                     # Run the sync script
                     export GCS_LOG_DIR
-                    export LOCAL_SYNC_DIR
+                    export LOCAL_SYNC_DIR="$LOCAL_RUN_DIR"
                     python /tmp/sync_logs.py
                     
                 else:
@@ -154,7 +175,7 @@ EOF_PY
                     if [ -d "$GCS_LOG_DIR" ]; then
                         echo "Recursively copying logs from filesystem/FUSE..."
                         # Use cp -r
-                        cp -r "$GCS_LOG_DIR"/* "$LOCAL_SYNC_DIR"/ || echo "Copy warning: directory might be empty"
+                        cp -r "$GCS_LOG_DIR"/* "$LOCAL_RUN_DIR"/ || echo "Copy warning: directory might be empty"
                     else
                         echo "Warning: Log directory $GCS_LOG_DIR does not exist on filesystem."
                     fi
@@ -164,6 +185,11 @@ EOF_PY
                 ls -R $LOCAL_SYNC_DIR
                 
                 # 3. Deterministic Upload
+                # We upload the parent of the run dir to ensure the run name is key
+                # BUT tb-gcp-uploader uploads the CONTENTS of --logdir.
+                # So if logdir=/tmp/tb_sync, and it contains files, they are uploaded to root.
+                # If we have subdirs /tmp/tb_sync/train, it works.
+                
                 echo "Starting Batch Upload to Vertex TensorBoard..."
                 tb-gcp-uploader --tensorboard_resource_name $TB_RESOURCE \
                     --logdir $LOCAL_SYNC_DIR \
