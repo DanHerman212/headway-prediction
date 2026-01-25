@@ -1,0 +1,32 @@
+# Critical: Exclude secrets and config
+.env
+*.env
+config.py
+
+# Exclude compilation artifacts
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Exclude virtual environments
+venv/
+env/
+.venv/
+
+# Exclude version control
+.git
+.gitignore
+
+# Exclude MacOS system files
+.DS_Store
+
+# Exclude local output/pipeline artifacts
+*.json
+outputs/
+test_metrics.json
+
+# Exclude the pipeline definition and build scripts (only needed locally)
+pipeline.py
+build_run_pipeline.sh
+README.md
