@@ -76,6 +76,7 @@ def headway_pipeline(
 ):
     # 1. Extract
     extract_task = extract_op()
+    extract_task.set_caching_options(False) # Force re-execution to pick up code changes
     extract_task.set_env_variable("PYTHONPATH", "/app") # Ensure src module is found
     for key, val in config.items():
         if val: # SAFETY CHECK: Prevent crash if .env has empty keys
@@ -85,6 +86,7 @@ def headway_pipeline(
     preprocess_task = preprocess_op(
         input_data=extract_task.outputs['output_data']
     )
+    preprocess_task.set_caching_options(False)
     preprocess_task.set_env_variable("PYTHONPATH", "/app")
     for key, val in config.items():
         if val:
@@ -94,6 +96,7 @@ def headway_pipeline(
     train_task = train_op(
         input_data=preprocess_task.outputs['output_data']
     )
+    train_task.set_caching_options(False)
     
     # Configure A100 GPU
     train_task.set_gpu_limit(1)

@@ -176,7 +176,7 @@ def train_model(input_path: str, model_output_path: str, test_data_output_path: 
     )
     
     # Start the run
-    aiplatform.start_run(run=config.run_name)
+    aiplatform.start_run(run=config.run_name, resume=True)
     
     # Log Hyperparameters
     params_to_log = {
