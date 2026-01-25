@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ src/
 
 # Set PYTHONPATH
-ENV PYTHONPATH=/app
+ENV PYTHONPATH="${PYTHONPATH}:/app"
 
 # Default command (overridden by pipeline)
 CMD ["python", "src/train.py", "--help"]

@@ -1,73 +1,67 @@
-
 import os
 from kfp import dsl
 from kfp import compiler
 from dotenv import dotenv_values
 
 # Load environment variables from .env
+# We use a safe loading mechanism to prevent crashes if file is missing
 env_path = os.path.join(os.path.dirname(__file__), '.env')
-config = dotenv_values(env_path)
+config = dotenv_values(env_path) if os.path.exists(env_path) else {}
 
-# Extract Image URI from config
-# In a real setup, this should be the image built from the Dockerfile
+# Defaults if not in .env
 IMAGE_URI = config.get("TENSORFLOW_IMAGE_URI", "us-docker.pkg.dev/headway-prediction/ml-pipelines/headway-training:latest")
 PIPELINE_ROOT = config.get("PIPELINE_ROOT", "gs://headway-prediction-pipelines/root")
 
 @dsl.container_component
-def extract_op(
-    output_data: dsl.OutputPath(str)
-):
+def extract_op(output_data: dsl.Output[dsl.Dataset]):
     return dsl.ContainerSpec(
         image=IMAGE_URI,
         command=["python", "src/extract.py"],
         args=[
-            "--output_path", output_data
+            "--output_path", output_data.path
         ]
     )
 
 @dsl.container_component
-def preprocess_op(
-    input_data: dsl.InputPath(str),
-    output_data: dsl.OutputPath(str)
-):
+def preprocess_op(input_data: dsl.Input[dsl.Dataset], output_data: dsl.Output[dsl.Dataset]):
     return dsl.ContainerSpec(
         image=IMAGE_URI,
         command=["python", "src/preprocess.py"],
         args=[
-            "--input_path", input_data,
-            "--output_path", output_data
+            "--input_path", input_data.path,
+            "--output_path", output_data.path
         ]
     )
 
 @dsl.container_component
 def train_op(
-    input_data: dsl.InputPath(str),
-    model_output: dsl.OutputPath(str),
-    test_data_output: dsl.OutputPath(str),
+    input_data: dsl.Input[dsl.Dataset],
+    model_output: dsl.Output[dsl.Model],
+    test_data_output: dsl.Output[dsl.Dataset],
 ):
     return dsl.ContainerSpec(
         image=IMAGE_URI,
         command=["python", "src/train.py"],
         args=[
-            "--input_path", input_data,
-            "--model_output_path", model_output,
-            "--test_data_output_path", test_data_output
+            "--input_path", input_data.path,
+            "--model_output_path", model_output.path,
+            "--test_data_output_path", test_data_output.path
         ]
     )
 
 @dsl.container_component
 def eval_op(
-    model_input: dsl.InputPath(str),
-    test_data_input: dsl.InputPath(str),
-    metrics_output: dsl.OutputPath(str)
+    model_input: dsl.Input[dsl.Model],
+    test_data_input: dsl.Input[dsl.Dataset],
+    metrics_output: dsl.Output[dsl.Metrics]
 ):
     return dsl.ContainerSpec(
         image=IMAGE_URI,
         command=["python", "src/eval.py"],
         args=[
-            "--model_path", model_input,
-            "--test_data_path", test_data_input,
-            "--output_metrics_path", metrics_output
+            "--model_path", model_input.path,
+            "--test_data_path", test_data_input.path,
+            "--output_metrics_path", metrics_output.path
         ]
     )
 
@@ -82,36 +76,43 @@ def headway_pipeline(
 ):
     # 1. Extract
     extract_task = extract_op()
-    
-    # Apply env vars to task
+    extract_task.set_env_variable("PYTHONPATH", "/app") # Ensure src module is found
     for key, val in config.items():
-        extract_task.set_env_variable(key, val)
+        if val: # SAFETY CHECK: Prevent crash if .env has empty keys
+            extract_task.set_env_variable(key, val)
         
     # 2. Preprocess
     preprocess_task = preprocess_op(
         input_data=extract_task.outputs['output_data']
     )
+    preprocess_task.set_env_variable("PYTHONPATH", "/app")
     for key, val in config.items():
-        preprocess_task.set_env_variable(key, val)
+        if val:
+            preprocess_task.set_env_variable(key, val)
         
     # 3. Train
     train_task = train_op(
         input_data=preprocess_task.outputs['output_data']
     )
-    # Configure A100 GPU (requires A2 machine series)
-    train_task.set_machine_type("a2-highgpu-1g")
-    train_task.set_gpu_limit(1) 
+    
+    # Configure A100 GPU
+    train_task.set_gpu_limit(1)
+    train_task.set_accelerator_type("NVIDIA_TESLA_A100")
+    train_task.set_env_variable("PYTHONPATH", "/app")
     
     for key, val in config.items():
-        train_task.set_env_variable(key, val)
+        if val:
+            train_task.set_env_variable(key, val)
         
     # 4. Evaluate
     eval_task = eval_op(
         model_input=train_task.outputs['model_output'],
         test_data_input=train_task.outputs['test_data_output']
     )
+    eval_task.set_env_variable("PYTHONPATH", "/app")
     for key, val in config.items():
-        eval_task.set_env_variable(key, val)
+        if val:
+            eval_task.set_env_variable(key, val)
 
 if __name__ == "__main__":
     compiler.Compiler().compile(

@@ -27,10 +27,19 @@ else
     exit 1
 fi
 
-IMAGE_URI=${TENSORFLOW_IMAGE_URI:-"us-docker.pkg.dev/headway-prediction/ml-pipelines/headway-training:latest"}
+# Map .env variables to script variables if needed
+PROJECT_ID=${PROJECT_ID:-$GCP_PROJECT_ID}
+REGION=${REGION:-$VERTEX_LOCATION}
+BUCKET_NAME=${BUCKET_NAME:-$GCS_BUCKET_NAME}
+
+IMAGE_URI=${TENSORFLOW_IMAGE_URI:-"us-docker.pkg.dev/${PROJECT_ID}/headway-pipelines/training:latest"}
 # pipeline.py uses config("PIPELINE_ROOT"), ensure it matches or defaulted here for the runner
 PIPELINE_ROOT=${PIPELINE_ROOT:-"gs://${BUCKET_NAME}/pipeline_root"}
-SERVICE_ACCOUNT=${SERVICE_ACCOUNT:-"your-service-account@${PROJECT_ID}.iam.gserviceaccount.com"}
+
+# Service Account Logic:
+# If SERVICE_ACCOUNT is not set in .env, we default to empty to let Vertex AI use the default Compute Engine SA.
+# We do NOT want to force a dummy "your-service-account@" string.
+SERVICE_ACCOUNT=${SERVICE_ACCOUNT:-""}
 
 echo "--------------------------------------------------------"
 echo "Configuration:"
@@ -40,10 +49,10 @@ echo "Image URI: $IMAGE_URI"
 echo "Run Mode:  Skip Build=$SKIP_BUILD, Submit Job=$SUBMIT_JOB"
 echo "--------------------------------------------------------"
 
-# Check for local KFP
-if ! python -c "import kfp" &> /dev/null; then
-    echo "Warning: KFP SDK not found. Installing..."
-    pip install kfp python-dotenv
+# Check for local KFP and AIPlatform
+if ! python3 -c "import kfp; import google.cloud.aiplatform" &> /dev/null; then
+    echo "Warning: KFP or AI Platform SDK not found. Installing..."
+    python3 -m pip install kfp google-cloud-aiplatform python-dotenv
 fi
 
 # 1. Build Docker Image (Conditional)
@@ -57,7 +66,7 @@ fi
 
 # 2. Compile Pipeline
 echo "Compiling KFP pipeline..."
-python pipeline.py
+python3 pipeline.py
 
 echo "Pipeline compiled to 'headway_pipeline.json'."
 
@@ -65,24 +74,35 @@ echo "Pipeline compiled to 'headway_pipeline.json'."
 if [ "$SUBMIT_JOB" = true ]; then
     echo "Submitting pipeline job to Vertex AI..."
 
-    # Capture the output to get the name/ID, but allow stdout to show progress
-    RUN_ID=$(gcloud beta ai pipelines run \
-      --pipeline-file="headway_pipeline.json" \
-      --display-name="headway-training-$(date +%Y%m%d-%H%M%S)" \
-      --region="$REGION" \
-      --project="$PROJECT_ID" \
-      --service-account="$SERVICE_ACCOUNT" \
-      --pipeline-root="$PIPELINE_ROOT" \
-      --format="value(name)")
-    
-    # Run name format: projects/123/locations/region/pipelineJobs/pipeline-job-id
-    # We strip to just ID for link convenience usually, or just use the full link.
-    JOB_ID=$(basename $RUN_ID)
+    # Submit using Python SDK (more reliable than gcloud beta)
+    python3 -c "
+from google.cloud import aiplatform
+import sys
+
+try:
+    print(f'Submitting pipeline job to {sys.argv[1]}...')
+    aiplatform.init(project='${PROJECT_ID}', location='${REGION}')
+    job = aiplatform.PipelineJob(
+        display_name='headway-training-$(date +%Y%m%d-%H%M%S)',
+        template_path='headway_pipeline.json',
+        pipeline_root='${PIPELINE_ROOT}',
+        enable_caching=True
+    )
+    sa_arg = '${SERVICE_ACCOUNT}'
+    if sa_arg and sa_arg != 'None':
+        print(f'Submitting with Service Account: {sa_arg}')
+        job.submit(service_account=sa_arg)
+    else:
+        print('Submitting with Default Service Account...')
+        job.submit()
+except Exception as e:
+    print(f'Error submitting job: {e}')
+    sys.exit(1)
+" "$PROJECT_ID"
 
     echo ""
     echo "✅ Job Submitted Successfully!"
-    echo "Job ID: $JOB_ID"
-    echo "Link:   https://console.cloud.google.com/vertex-ai/locations/$REGION/pipelines/runs/$JOB_ID?project=$PROJECT_ID"
+
 else
     echo ""
     echo "Dry run complete. Use normal execution or remove --dry-run to submit to Vertex AI."

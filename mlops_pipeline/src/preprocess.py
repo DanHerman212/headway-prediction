@@ -81,8 +81,8 @@ def preprocess_data(input_path: str, output_path: str):
     
     # 4. Assemble Final DataFrame
     # Structure: [log_headway, route_A, route_C, route_E, hour_sin, hour_cos, day_sin, day_cos]
-    # We rely on the sorted order of config.ROUTE_IDS for column naming
-    sorted_routes = sorted(config.ROUTE_IDS)
+    # We rely on the sorted order of config.route_ids for column naming
+    sorted_routes = sorted(config.route_ids)
     route_columns = [f"route_{r}" for r in sorted_routes]
     
     # Create dictionary for DataFrame creation

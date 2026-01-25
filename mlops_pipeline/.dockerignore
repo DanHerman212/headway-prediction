@@ -1,7 +1,7 @@
 # Critical: Exclude secrets and config
 .env
 *.env
-config.py
+# config.py  <-- COMMENTED OUT to ensure src/config.py is included
 
 # Exclude compilation artifacts
 __pycache__
