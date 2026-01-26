@@ -63,7 +63,8 @@ def train_op(
 def eval_op(
     model_input: dsl.Input[dsl.Model],
     test_data_input: dsl.Input[dsl.Dataset],
-    metrics_output: dsl.Output[dsl.Metrics]
+    metrics_output: dsl.Output[dsl.Metrics],
+    html_report: dsl.Output[dsl.HTML]
 ):
     return dsl.ContainerSpec(
         image=IMAGE_URI,
@@ -71,7 +72,8 @@ def eval_op(
         args=[
             "--model_path", model_input.path,
             "--test_data_path", test_data_input.path,
-            "--output_metrics_path", metrics_output.path
+            "--output_metrics_path", metrics_output.path,
+            "--output_html_path", html_report.path
         ]
     )
 
