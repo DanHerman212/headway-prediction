@@ -117,7 +117,12 @@ def train_model(input_path: str, model_output_path: str, test_data_output_path: 
     print(f"Data Loaded. Shape: {df.shape}")
     
     # Detect num features
-    n_features = df.shape[1]
+    # NOTE: 'scheduled_headway' is metadata, not a feature. Exclude from count if present.
+    feature_cols = df.columns.tolist()
+    if 'scheduled_headway' in feature_cols:
+        feature_cols.remove('scheduled_headway')
+    n_features = len(feature_cols)
+
     num_routes = len([c for c in df.columns if c.startswith('route_')])
     
     print("Creating datasets...")

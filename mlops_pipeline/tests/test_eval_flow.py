@@ -19,8 +19,9 @@ def create_synthetic_data(path, n_samples=200):
     # log_headway, route_A, route_C, route_E, hour_sin, hour_cos, day_sin, day_cos
     # Plus Metadata: scheduled_headway
     
+    # Update: Align log_headway with ~5 min schedule (300s -> ln(301) ~= 5.7)
     data = {
-        'log_headway': np.random.normal(1.5, 0.2, n_samples),
+        'log_headway': np.random.normal(5.7, 0.2, n_samples),
         'route_A': np.ones(n_samples),
         'route_C': np.zeros(n_samples),
         'route_E': np.zeros(n_samples),

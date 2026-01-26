@@ -110,7 +110,13 @@ def generate_plots(y_true, y_pred, hour_sin, hour_cos, y_sched=None):
              plt.plot(ts_sched_min, label='Scheduled', color='#95a5a6', linestyle='--', alpha=0.7, linewidth=1.5) # Gray Dashed
         
         # Shade peak areas (where is_peak is True)
-        y_max = max(ts_true_min.max(), ts_pred_min.max()) * 1.05
+        # Calculate Y-axis max dynamically including Schedule if present
+        max_vals = [ts_true_min.max(), ts_pred_min.max()]
+        if ts_sched is not None:
+             max_vals.append(ts_sched_min.max())
+             
+        y_max = max(max_vals) * 1.05
+        
         plt.fill_between(range(len(ts_peak)), 0, y_max, where=ts_peak, 
                          color='#e74c3c', alpha=0.1, label='Peak Period') # Red tint
         
@@ -245,6 +251,9 @@ def evaluate_model(model_path: str, test_data_path: str, metrics_output_path: st
     # --- Inverse Transform ---
     print("Inverse converting predictions (Log -> Seconds)...")
     y_pred_seconds = inverse_transform_headway(y_pred_headway_log)
+    
+    # SAFETY: Clamp predictions to non-negative to avoid plot/metric issues
+    y_pred_seconds = np.maximum(y_pred_seconds, 0.0)
     
     # --- Extract True Values ---
     # We need the true targets corresponding to the windows in `ds`.
