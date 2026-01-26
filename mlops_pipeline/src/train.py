@@ -12,6 +12,18 @@ from src.data_utils import create_windowed_dataset, MAESeconds
 from typing import Tuple, Optional
 
 # --- Model Builder ---
+class VertexAILoggingCallback(keras.callbacks.Callback):
+    """Logs metrics to Vertex AI Experiments at the end of each epoch."""
+    def on_epoch_end(self, epoch, logs=None):
+        if logs:
+            # Cast all metrics to Python float to avoid Vertex AI TypeError with numpy types
+            metrics = {k: float(v) for k, v in logs.items()}
+            try:
+                # log_time_series_metrics handles plotting over time (step=epoch)
+                aiplatform.log_time_series_metrics(metrics, step=epoch + 1)
+            except Exception as e:
+                print(f"Warning: Failed to log metrics to Vertex AI: {e}")
+
 def build_model(lookback_steps: int, n_features: int, num_routes: int) -> keras.Model:
     """Builds the Stacked GRU Model with Dual Outputs."""
     
@@ -160,7 +172,8 @@ def train_model(input_path: str, model_output_path: str, test_data_output_path: 
             factor=0.5,
             patience=2,
             verbose=1
-        )
+        ),
+        VertexAILoggingCallback()
     ]
     
     # TensorBoard & Experiment Tracking
@@ -227,10 +240,13 @@ def train_model(input_path: str, model_output_path: str, test_data_output_path: 
     for metric, values in history.history.items():
         # Log the final value (or best if we added logic for that, sticking to last/min for val_loss)
         if "val_" in metric and "loss" in metric:
-            final_metrics[metric] = min(values) # Best val loss
+            final_metrics[metric] = float(min(values)) # Best val loss
         else:
-            final_metrics[metric] = values[-1] # Last value for others
+            final_metrics[metric] = float(values[-1]) # Last value for others
             
+    # Remove callbacks object from serialization if present (rare in metrics but good safety)
+    
+    print(f"Logging metrics: {final_metrics}")
     aiplatform.log_metrics(final_metrics)
     aiplatform.end_run()
     

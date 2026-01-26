@@ -36,8 +36,9 @@ BUCKET_NAME=${BUCKET_NAME:-$GCS_BUCKET_NAME}
 TIMESTAMP=$(date +%s)
 IMAGE_TAG="v${TIMESTAMP}"
 
-# Base Image URI
-BASE_IMAGE_URI=${TENSORFLOW_IMAGE_URI:-"us-docker.pkg.dev/${PROJECT_ID}/headway-pipelines/training"}
+# Base Image URI (Hardcoded pattern to avoid :latest duplication from .env)
+# We force the base URI to be clean, ignoring potentially malformed .env values for this specific build
+BASE_IMAGE_URI="us-docker.pkg.dev/${PROJECT_ID}/headway-pipelines/training"
 # Full Image URI with unique tag
 IMAGE_URI="${BASE_IMAGE_URI}:${IMAGE_TAG}"
 
