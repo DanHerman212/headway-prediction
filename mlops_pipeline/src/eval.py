@@ -332,16 +332,16 @@ def evaluate_model(model_path: str, test_data_path: str, metrics_output_path: st
         
         metrics["baseline_mae_seconds"] = float(baseline_mae)
         
-        # Skill Score (1 - ModelError / BaselineError)
+        # MAE Reduction (1 - ModelError / BaselineError)
         # Positive = Model is better than schedule
         if baseline_mae > 0:
-            metrics["model_skill_score"] = float(1.0 - (mae / baseline_mae))
+            metrics["mae_reduction"] = float(1.0 - (mae / baseline_mae))
         else:
-            metrics["model_skill_score"] = 0.0
+            metrics["mae_reduction"] = 0.0
             
         print(f"  Baseline MAE: {baseline_mae:.2f} s")
         print(f"  Model MAE:    {mae:.2f} s")
-        print(f"  Skill Score:  {metrics.get('model_skill_score', 0):.4f}")
+        print(f"  MAE Reduction: {metrics.get('mae_reduction', 0):.4f}")
     else:
         print("Warning: 'scheduled_headway' not found in test data. Baseline metrics skipped.")
     
