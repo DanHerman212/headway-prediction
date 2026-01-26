@@ -15,9 +15,14 @@ from typing import Tuple, Optional
 class VertexAILoggingCallback(keras.callbacks.Callback):
     """Logs metrics to Vertex AI Experiments at the end of each epoch."""
     def on_epoch_end(self, epoch, logs=None):
-        if logs:
-            # Cast all metrics to Python float to avoid Vertex AI TypeError with numpy types
-            metrics = {k: float(v) for k, v in logs.items()}
+        try:
+            if logs:
+                # Cast all metrics to Python float to avoid Vertex AI TypeError with numpy types
+                metrics = {k: float(v) for k, v in logs.items()}
+                aiplatform.log_metrics(metrics)
+        except Exception as e:
+            # Silence logging errors (e.g. no active run in smoke test)
+            pass
             try:
                 # log_time_series_metrics handles plotting over time (step=epoch)
                 aiplatform.log_time_series_metrics(metrics, step=epoch + 1)
@@ -186,15 +191,18 @@ def train_model(input_path: str, model_output_path: str, test_data_output_path: 
     # 1. Initialize Vertex AI Experiment
     # -------------------------------------------------------------------------
     print(f"Initializing Vertex AI Experiment: {config.experiment_name}, Run: {config.run_name}")
-    aiplatform.init(
-        project=config.project_id,
-        location=config.region,
-        experiment=config.experiment_name,
-        experiment_tensorboard=config.tensorboard_resource
-    )
-    
-    # Start the run
-    aiplatform.start_run(run=config.run_name, resume=True)
+    try:
+        aiplatform.init(
+            project=config.project_id,
+            location=config.region,
+            experiment=config.experiment_name,
+            experiment_tensorboard=config.tensorboard_resource
+        )
+        
+        # Start the run
+        aiplatform.start_run(run=config.run_name, resume=True)
+    except Exception as e:
+        print(f"Warning: Failed to initialize/start Vertex AI Experiment ({e}). Continuing without tracking.")
     
     # Log Hyperparameters
     params_to_log = {
@@ -207,7 +215,10 @@ def train_model(input_path: str, model_output_path: str, test_data_output_path: 
         "optimizer": config.optimizer,
         "train_split": config.train_split
     }
-    aiplatform.log_params(params_to_log)
+    try:
+        aiplatform.log_params(params_to_log)
+    except Exception:
+        pass
     
     # -------------------------------------------------------------------------
     # 2. Configure TensorBoard Callback
@@ -252,8 +263,11 @@ def train_model(input_path: str, model_output_path: str, test_data_output_path: 
     # Remove callbacks object from serialization if present (rare in metrics but good safety)
     
     print(f"Logging metrics: {final_metrics}")
-    aiplatform.log_metrics(final_metrics)
-    aiplatform.end_run()
+    try:
+        aiplatform.log_metrics(final_metrics)
+        aiplatform.end_run()
+    except Exception as e:
+        print(f"Warning: Failed to log metrics to Vertex AI ({e}).")
     
     print(f"Saving model to {model_output_path}...")
     # KFP output path could be a file path (model.h5) or directory? 

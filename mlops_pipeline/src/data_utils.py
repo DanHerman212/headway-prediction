@@ -17,8 +17,9 @@ class MAESeconds(keras.metrics.Metric):
         self.count = self.add_weight(name='count', initializer='zeros')
     
     def update_state(self, y_true, y_pred, sample_weight=None):
-        y_true_seconds = tf.exp(y_true)
-        y_pred_seconds = tf.exp(y_pred)
+        # Input is log1p(minutes). Convert to seconds for metric.
+        y_true_seconds = tf.math.expm1(y_true) * 60.0
+        y_pred_seconds = tf.math.expm1(y_pred) * 60.0
         errors = tf.abs(y_true_seconds - y_pred_seconds)
         if sample_weight is not None:
             errors = errors * sample_weight

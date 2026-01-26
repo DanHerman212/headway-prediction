@@ -250,7 +250,7 @@ def evaluate_model(model_path: str, test_data_path: str, metrics_output_path: st
     
     # --- Inverse Transform ---
     print("Inverse converting predictions (Log -> Seconds)...")
-    y_pred_seconds = inverse_transform_headway(y_pred_headway_log)
+    y_pred_seconds = inverse_transform_headway(y_pred_headway_log) * 60.0 # Convert Minutes -> Seconds
     
     # SAFETY: Clamp predictions to non-negative to avoid plot/metric issues
     y_pred_seconds = np.maximum(y_pred_seconds, 0.0)
@@ -268,7 +268,7 @@ def evaluate_model(model_path: str, test_data_path: str, metrics_output_path: st
     
     # Slicing to match windowed dataset output
     y_true_log = input_t[lookback_steps:]
-    y_true_seconds = inverse_transform_headway(y_true_log)
+    y_true_seconds = inverse_transform_headway(y_true_log) * 60.0 # Convert Minutes -> Seconds
     
     # Classification targets
     y_true_routes = input_r[lookback_steps:]

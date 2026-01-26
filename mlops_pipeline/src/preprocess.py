@@ -115,6 +115,12 @@ def preprocess_data(input_path: str, output_path: str):
         merged = merged.sort_values('orig_idx')
         # Fill missing schedule with mean (neutral baseline)
         mean_sched = merged['scheduled_headway_min'].mean()
+        
+        # If no schedule data matched (all NaNs), fallback to 3.0
+        if pd.isna(mean_sched):
+            print("Warning: No schedule overlap found. Using 3.0 min fallback.")
+            mean_sched = 3.0
+            
         scheduled_headway = merged['scheduled_headway_min'].fillna(mean_sched).values
         print(f"Baseline generated. Mean: {mean_sched:.2f} min")
         

@@ -171,7 +171,13 @@ class GtfsProvider:
             
         if not schedule_rows:
             self.logger.warning("No scheduled arrivals found for this range.")
-            return pd.DataFrame(columns=['timestamp', 'route_id', 'scheduled_headway_min'])
+            # Return empty DataFrame with correct types to avoid merge errors
+            df_empty = pd.DataFrame({
+                'timestamp': pd.Series(dtype='datetime64[ns]'),
+                'route_id': pd.Series(dtype='str'),
+                'scheduled_headway_min': pd.Series(dtype='float64')
+            })
+            return df_empty
             
         full_schedule = pd.concat(schedule_rows).sort_values('timestamp').reset_index(drop=True)
         
