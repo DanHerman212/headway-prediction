@@ -370,8 +370,16 @@ def evaluate_model(model_path: str, test_data_path: str, metrics_output_path: st
             experiment=config.experiment_name
         )
         # Log to the active run
-        with aiplatform.start_run(run=config.run_name, resume=True) as run:
+        # NOTE: Resume=True can fail with 404 if context is missing. Fallback to create.
+        try:
+            run = aiplatform.start_run(run=config.run_name, resume=True)
+        except Exception:
+            print("Warning: resume=True failed. Attempting to create new run via resume=False.")
+            run = aiplatform.start_run(run=config.run_name, resume=False)
+
+        with run:
             run.log_metrics(metrics)
+
             
             # Log Images
             for plot_file in plot_files:

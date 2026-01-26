@@ -200,7 +200,14 @@ def train_model(input_path: str, model_output_path: str, test_data_output_path: 
         )
         
         # Start the run
-        aiplatform.start_run(run=config.run_name, resume=True)
+        # NOTE: Resume=True can sometimes fail with 404 if the underlying Metadata Context is missing/corrupted
+        # We try strict resume, then fallback to creating a new run context.
+        try:
+            aiplatform.start_run(run=config.run_name, resume=True)
+        except Exception as start_err:
+            print(f"Warning: conflicting run state or missing context ({start_err}). Attempting to reset/create run...")
+            aiplatform.start_run(run=config.run_name, resume=False)
+            
     except Exception as e:
         print(f"Warning: Failed to initialize/start Vertex AI Experiment ({e}). Continuing without tracking.")
     
