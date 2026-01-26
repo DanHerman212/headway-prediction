@@ -30,7 +30,7 @@ load_dotenv()
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
 GCS_BUCKET_NAME = os.environ.get("GCP_BUCKET")
 GTFS_URL = os.environ.get("GTFS_URL", "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_subway.zip")
-GCS_PREFIX = "static-files/"
+GCS_PREFIX = "gtfs/"
 
 print("=" * 60)
 print("Downloading GTFS Static Files")

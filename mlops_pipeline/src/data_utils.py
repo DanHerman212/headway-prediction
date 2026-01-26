@@ -60,9 +60,10 @@ def prepare_tensors(df: pd.DataFrame) -> Tuple[tf.Tensor, tf.Tensor]:
     # Input Features
     # Note: We assume DataFrame columns are already correct from preprocessing
     # The order of columns in X must match what the model expects.
-    # In preprocess.py we saved: log_headway, route_*, hour_*, day_*
-    # We iterate over df.columns to get X.
-    input_x = df.values.astype(np.float32)
+    # In preprocess.py we saved: log_headway, route_*, hour_*, day_*, scheduled_headway
+    # We explicitly drop 'scheduled_headway' as it is only for evaluation metadata
+    feature_df = df.drop(columns=['scheduled_headway'], errors='ignore')
+    input_x = feature_df.values.astype(np.float32)
 
     # Targets
     # Headway is 'log_headway'

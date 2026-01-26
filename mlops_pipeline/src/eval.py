@@ -32,7 +32,7 @@ def get_peak_mask(hours):
     evening_peak = (hours >= 16) & (hours < 19)
     return morning_peak | evening_peak
 
-def generate_plots(y_true, y_pred, hour_sin, hour_cos):
+def generate_plots(y_true, y_pred, hour_sin, hour_cos, y_sched=None):
     """Generates evaluation plots and returns list of file paths."""
     plot_files = [] 
     
@@ -86,11 +86,13 @@ def generate_plots(y_true, y_pred, hour_sin, hour_cos):
             ts_pred = y_pred[:subset_n]
             ts_peak = is_peak[:subset_n]
             ts_hours = hours_est[:subset_n]
+            ts_sched = y_sched[:subset_n] if y_sched is not None else None
         else:
             ts_true = y_true
             ts_pred = y_pred
             ts_peak = is_peak
             ts_hours = hours_est
+            ts_sched = y_sched
             
         # Convert to minutes for Y-axis
         ts_true_min = ts_true / 60.0
@@ -100,7 +102,12 @@ def generate_plots(y_true, y_pred, hour_sin, hour_cos):
         
         # Plot lines (Minutes)
         plt.plot(ts_true_min, label='Actual', color='black', alpha=0.7, linewidth=1.5)
-        plt.plot(ts_pred_min, label='Predicted', color='#2ecc71', alpha=0.8, linewidth=1.5) # Green
+        plt.plot(ts_pred_min, label='Predicted', color='#2ecc71', alpha=0.9, linewidth=1.5) # Bright Green
+        
+        if ts_sched is not None:
+             # Convert schedule (seconds) -> minutes
+             ts_sched_min = ts_sched / 60.0
+             plt.plot(ts_sched_min, label='Scheduled', color='#95a5a6', linestyle='--', alpha=0.7, linewidth=1.5) # Gray Dashed
         
         # Shade peak areas (where is_peak is True)
         y_max = max(ts_true_min.max(), ts_pred_min.max()) * 1.05
@@ -283,7 +290,7 @@ def evaluate_model(model_path: str, test_data_path: str, metrics_output_path: st
     # --- Calculate Metrics ---
     # 1. Regression Metrics (Seconds)
     mae = np.mean(np.abs(y_true_seconds - y_pred_seconds))
-    rmse = np.sqrt(np.mean((y_true_seconds - y_pred_seconds)**2))
+    # Removed RMSE per user request
     
     # 2. Classification Metrics
     y_true_class = np.argmax(y_true_routes, axis=1)
@@ -291,16 +298,48 @@ def evaluate_model(model_path: str, test_data_path: str, metrics_output_path: st
     
     accuracy = np.mean(y_true_class == y_pred_class)
     
+    # Core Metrics
     metrics = {
         "mae_seconds": float(mae),
-        "rmse_seconds": float(rmse),
         "route_accuracy": float(accuracy)
     }
+
+    # 3. Baseline Metrics (Common Sense)
+    baseline_sched_sec_eval = None # For plotting
+    
+    if 'scheduled_headway' in df_test.columns:
+        print("Calculating Common Sense Baseline metrics...")
+        # Slice to align with windowed output
+        baseline_sched_min = df_test['scheduled_headway'].values[lookback_steps:]
+        baseline_sched_min = baseline_sched_min[:min_len] # Truncate if needed
+        
+        # Convert to seconds for comparison
+        baseline_sched_sec = baseline_sched_min * 60.0
+        
+        # Keep variable for plotting
+        baseline_sched_sec_eval = baseline_sched_sec
+        
+        baseline_mae = np.mean(np.abs(y_true_seconds - baseline_sched_sec))
+        
+        metrics["baseline_mae_seconds"] = float(baseline_mae)
+        
+        # Skill Score (1 - ModelError / BaselineError)
+        # Positive = Model is better than schedule
+        if baseline_mae > 0:
+            metrics["model_skill_score"] = float(1.0 - (mae / baseline_mae))
+        else:
+            metrics["model_skill_score"] = 0.0
+            
+        print(f"  Baseline MAE: {baseline_mae:.2f} s")
+        print(f"  Model MAE:    {mae:.2f} s")
+        print(f"  Skill Score:  {metrics.get('model_skill_score', 0):.4f}")
+    else:
+        print("Warning: 'scheduled_headway' not found in test data. Baseline metrics skipped.")
     
     print(f"Evaluation Results: {metrics}")
     
     # --- Generate Visuals ---
-    plot_files = generate_plots(y_true_seconds, y_pred_seconds, hour_sin, hour_cos)
+    plot_files = generate_plots(y_true_seconds, y_pred_seconds, hour_sin, hour_cos, y_sched=baseline_sched_sec_eval)
     
     # --- Save Metrics JSON ---
     os.makedirs(os.path.dirname(metrics_output_path), exist_ok=True)
