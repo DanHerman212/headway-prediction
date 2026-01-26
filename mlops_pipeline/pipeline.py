@@ -85,11 +85,16 @@ def eval_op(
 def headway_pipeline(
     project_id: str = PROJECT_ID,
     region: str = REGION,
+    run_name: str = "manual-run"
 ):
     # 1. Extract
     extract_task = extract_op()
     extract_task.set_caching_options(False) # Force re-execution to pick up code changes
     extract_task.set_env_variable("PYTHONPATH", "/app") # Ensure src module is found
+    
+    # Inject run_name into config via env var
+    extract_task.set_env_variable("RUN_NAME", run_name)
+    
     for key, val in config.items():
         if val: # SAFETY CHECK: Prevent crash if .env has empty keys
             extract_task.set_env_variable(key, val)
@@ -100,6 +105,7 @@ def headway_pipeline(
     )
     preprocess_task.set_caching_options(False)
     preprocess_task.set_env_variable("PYTHONPATH", "/app")
+    preprocess_task.set_env_variable("RUN_NAME", run_name)
     for key, val in config.items():
         if val:
             preprocess_task.set_env_variable(key, val)
@@ -114,6 +120,7 @@ def headway_pipeline(
     train_task.set_gpu_limit(1)
     train_task.set_accelerator_type("NVIDIA_TESLA_A100")
     train_task.set_env_variable("PYTHONPATH", "/app")
+    train_task.set_env_variable("RUN_NAME", run_name)
     
     for key, val in config.items():
         if val:
@@ -125,6 +132,7 @@ def headway_pipeline(
         test_data_input=train_task.outputs['test_data_output']
     )
     eval_task.set_env_variable("PYTHONPATH", "/app")
+    eval_task.set_env_variable("RUN_NAME", run_name)
     for key, val in config.items():
         if val:
             eval_task.set_env_variable(key, val)

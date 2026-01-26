@@ -36,7 +36,8 @@ class Config:
     # GCP
     project_id: str = os.getenv("GCP_PROJECT_ID", "")
     region: str = os.getenv("VERTEX_LOCATION", "us-east1")
-    bucket_name: str = os.getenv("GCS_BUCKET_NAME", "")
+    artifact_bucket: str = os.getenv("ARTIFACT_BUCKET", "")
+    data_lake_bucket: str = os.getenv("DATA_LAKE_BUCKET", "")
     tensorboard_resource: str = os.getenv("TENSORBOARD_RESOURCE_NAME", "")
     bq_table_name: str = os.getenv("BQ_TABLE_NAME", "headway_prediction.ml")
     

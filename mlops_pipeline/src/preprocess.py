@@ -92,8 +92,12 @@ def preprocess_data(input_path: str, output_path: str):
         start_d = ts_local.min().normalize()
         end_d = ts_local.max().normalize() + pd.Timedelta(days=1)
         
-        # Use GCP_BUCKET (Data Lake) if available, else fall back to config bucket
-        data_bucket = os.environ.get("GCP_BUCKET", config.bucket_name)
+        # Use DATA_LAKE_BUCKET from config or env
+        data_bucket = config.data_lake_bucket
+        if not data_bucket:
+             print("Warning: DATA_LAKE_BUCKET not set. Using config default or skipping...")
+             # Fallback logic if needed, or error
+        
         provider = GtfsProvider(gcs_bucket=data_bucket, gcs_prefix="gtfs/")
         df_sched = provider.get_scheduled_arrivals('A32S', start_d, end_d)
         

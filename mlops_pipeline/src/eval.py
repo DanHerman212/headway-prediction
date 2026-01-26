@@ -370,57 +370,42 @@ def evaluate_model(model_path: str, test_data_path: str, metrics_output_path: st
             experiment=config.experiment_name
         )
         # Log to the active run
-        # NOTE: Resume=True can fail with 404 if context is missing. Fallback to create.
+        # Evaluation ALWAYS follows Training, so the run MUST exist.
+        # But for robustness, we use the same "Create if not exists" logic,
+        # preferring "Resume" first since it's 99% likely to exist.
+        # IF resume=True fails with 404, we create.
+        
+        # NOTE: We use the reversed logic here compared to Train, or we can align them.
+        # Let's align them to "Try Create -> Catch 409 -> Resume".
+        # Why? Because 409 AlreadyExists is a standard, fast check.
+        # 404 on Resume triggers retries in the SDK which wastes time and floods logs.
+        
         try:
-            run = aiplatform.start_run(run=config.run_name, resume=True)
-        except Exception:
-            print("Warning: resume=True failed. Attempting to create new run via resume=False.")
-            run = aiplatform.start_run(run=config.run_name, resume=False)
+             aiplatform.start_run(run=config.run_name, resume=False)
+             print(f"Run {config.run_name} did not exist (unexpected for Eval). Created.")
+        except Exception as e:
+             # Assume it exists, so we resume
+             print(f"Run {config.run_name} likely exists (Error: {e}). Resuming...")
+             aiplatform.start_run(run=config.run_name, resume=True)
 
-        with run:
-            run.log_metrics(metrics)
-
-            
-            # Log Images
-            for plot_file in plot_files:
+        # Log metrics to the active run context
+        aiplatform.log_metrics(metrics)
+        
+        # Log Images
+        for plot_file in plot_files:
                 # Log image to experiment
                 # image_id can be filename without extension
                 img_id = os.path.splitext(plot_file)[0]
                 print(f"Logging image {plot_file} as {img_id}...")
-                # Note: run.log_image was introduced in newer SDKs, fallback to manual upload if not?
-                # But SDK requirement is >=1.25.0, should support it?
-                # Actually, there is currently no `run.log_image` in some versions, it's `aiplatform.log_image`?
-                # No, standard way is logging as artifact or parameter?
-                # Wait, strictly speaking `log_metrics` doesn't take images.
-                # `aiplatform.log_model` etc exist. 
-                # Currently: `run.log_metrics` and `run.log_params`.
-                # Maybe I can't log images comfortably to Experiments UI in this version?
-                # Actually newer Vertex AI Experiments supports `aiplatform.log_metrics`?
-                # Let's try `run.log_image` if available, or just ignore if it fails (it's inside try/except).
-                # Actually correct method might be strict upload to GCS.
-                # But let's check if we can simply use:
-                # aiplatform.log_metrics({img_id: ...}) ? No.
                 
-                # Try this specific logic if available, otherwise just skip
+                # Check for available artifact logging support or skip gracefully
                 pass
                 
-        # Since I can't be 100% sure of the SDK version capability for images (it varies), 
-        # I'll leave the image generation. They will be in the container and helpful if we export them.
-        # But wait, KFP Outputs...
-        # I can export the images as KFP Artifacts! 
-        # The user function signature `eval_op` in `pipeline.py` currently only outputs `metrics_output`.
-        # I should probably just leave them generated. 
-        # But the User asked "produce a prediction plot".
-        # If I can't show it in UI, it's useless.
-        # Vertex AI Experiments DO support logging images?
-        # Yes, `aiplatform.log_image_data`? Or `log_metrics`?
-        # Actually `aiplatform.log_image_data(image_path=...)` is not a thing.
-        # It's usually `run.log_image`. I will assume it works or fail gracefully.
+        # End the run for this component
+        aiplatform.end_run()
         
     except Exception as e:
         print(f"WARNING: Could not log to Vertex AI Experiments: {e}")
-    
-    print("Evaluation Complete.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

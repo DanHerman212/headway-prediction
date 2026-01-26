@@ -33,8 +33,26 @@ REGION=${REGION:-$VERTEX_LOCATION}
 BUCKET_NAME=${BUCKET_NAME:-$GCS_BUCKET_NAME}
 
 # Generate a unique tag for this build execution to bypass Vertex AI caching
-TIMESTAMP=$(date +%s)
-IMAGE_TAG="v${TIMESTAMP}"
+if [ "$SKIP_BUILD" = true ]; then
+    echo "Retrieving latest image tag from Artifact Registry..."
+    # Fetch the most recently updated tag
+    # Uses gcloud artifacts docker tags list, sorted reverse by update time, limit 1
+    LATEST_TAG=$(gcloud artifacts docker tags list "us-docker.pkg.dev/${PROJECT_ID}/headway-pipelines/training" \
+        --sort-by=~UPDATE_TIME \
+        --limit=1 \
+        --format="value(tag)")
+        
+    if [ -z "$LATEST_TAG" ]; then
+        echo "Error: No existing image tags found. Cannot skip build."
+        exit 1
+    fi
+    
+    echo "Found latest tag: $LATEST_TAG"
+    IMAGE_TAG="$LATEST_TAG"
+else
+    TIMESTAMP=$(date +%s)
+    IMAGE_TAG="v${TIMESTAMP}"
+fi
 
 # Base Image URI (Hardcoded pattern to avoid :latest duplication from .env)
 # We force the base URI to be clean, ignoring potentially malformed .env values for this specific build
@@ -94,11 +112,22 @@ import sys
 try:
     print(f'Submitting pipeline job to {sys.argv[1]}...')
     aiplatform.init(project='${PROJECT_ID}', location='${REGION}')
+    
+    # Generate Run Name dynamically
+    import time
+    ts = int(time.time())
+    run_name_id = f'headway-run-{ts}'
+    
     job = aiplatform.PipelineJob(
-        display_name='headway-training-$(date +%Y%m%d-%H%M%S)',
+        display_name=f'headway-training-{ts}',
         template_path='headway_pipeline.json',
         pipeline_root='${PIPELINE_ROOT}',
-        enable_caching=True
+        enable_caching=True,
+        parameter_values={
+            'project_id': '${PROJECT_ID}',
+            'region': '${REGION}',
+            'run_name': run_name_id
+        }
     )
     sa_arg = '${SERVICE_ACCOUNT}'
     if sa_arg and sa_arg != 'None':

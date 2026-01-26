@@ -19,15 +19,18 @@ class VertexAILoggingCallback(keras.callbacks.Callback):
             if logs:
                 # Cast all metrics to Python float to avoid Vertex AI TypeError with numpy types
                 metrics = {k: float(v) for k, v in logs.items()}
+                # Log both scalar metrics (for summary) and time-series (for plotting)
                 aiplatform.log_metrics(metrics)
         except Exception as e:
-            # Silence logging errors (e.g. no active run in smoke test)
-            pass
-            try:
-                # log_time_series_metrics handles plotting over time (step=epoch)
-                aiplatform.log_time_series_metrics(metrics, step=epoch + 1)
-            except Exception as e:
-                print(f"Warning: Failed to log metrics to Vertex AI: {e}")
+            print(f"ERROR: Failed to log metrics to Vertex AI in callback: {e}")
+
+        # Attempt Time Series Logging (Experimental)
+        try:
+            if logs:
+                 metrics = {k: float(v) for k, v in logs.items()}
+                 aiplatform.log_time_series_metrics(metrics, step=epoch + 1)
+        except Exception as e:
+            print(f"Warning: Failed to log time series metrics: {e}")
 
 def build_model(lookback_steps: int, n_features: int, num_routes: int) -> keras.Model:
     """Builds the Stacked GRU Model with Dual Outputs."""
@@ -200,16 +203,34 @@ def train_model(input_path: str, model_output_path: str, test_data_output_path: 
         )
         
         # Start the run
-        # NOTE: Resume=True can sometimes fail with 404 if the underlying Metadata Context is missing/corrupted
-        # We try strict resume, then fallback to creating a new run context.
+        # Logic: 
+        # 1. Try to create the run (resume=False). 
+        # 2. If it fails because it exists, then resume it (resume=True).
+        # This is SAFER than the reverse, because catching "NotFound" from resume=True is tricky 
+        # as seen in recent failures where the SDK retries and raises confusing exceptions.
+        # But wait, creating a duplicate run raises "AlreadyExists" (409), which is cleaner to catch.
+        
+        print(f"Attempting to create run: {config.run_name}")
         try:
-            aiplatform.start_run(run=config.run_name, resume=True)
-        except Exception as start_err:
-            print(f"Warning: conflicting run state or missing context ({start_err}). Attempting to reset/create run...")
-            aiplatform.start_run(run=config.run_name, resume=False)
-            
+             aiplatform.start_run(run=config.run_name, resume=False)
+             print(f"Successfully created run: {config.run_name}")
+        except Exception as e:
+             if "409" in str(e) or "AlreadyExists" in str(e):
+                 print(f"Run {config.run_name} already exists. Resuming...")
+                 aiplatform.start_run(run=config.run_name, resume=True)
+                 print(f"Successfully resumed run: {config.run_name}")
+             else:
+                 # It was some other error (permissions, etc)
+                 # Try resuming anyway just in case the error message was weird
+                 print(f"Failed to create run ({e}). Attempting resume...")
+                 aiplatform.start_run(run=config.run_name, resume=True)
+
     except Exception as e:
-        print(f"Warning: Failed to initialize/start Vertex AI Experiment ({e}). Continuing without tracking.")
+        print(f"CRITICAL ERROR: Failed to initialize/start Vertex AI Experiment: {e}")
+        # We enforce tracking now. If this fails, we want to see it in logs, but maybe not crash training?
+        # User wants "working experiments". If experiment fails, is the run useful?
+        # Let's crash to alert the user immediately.
+        raise e
     
     # Log Hyperparameters
     params_to_log = {
@@ -230,10 +251,9 @@ def train_model(input_path: str, model_output_path: str, test_data_output_path: 
     # -------------------------------------------------------------------------
     # 2. Configure TensorBoard Callback
     # -------------------------------------------------------------------------
-    if config.bucket_name:
-        # Construct GCS log path: gs://bucket_name/tensorboard_logs/run_name
-        # Note: bucket_name in config might strictly be the name "my-bucket"
-        tb_log_dir = f"gs://{config.bucket_name}/tensorboard_logs/{config.run_name}"
+    if config.artifact_bucket:
+        # Construct GCS log path: gs://artifact_bucket/tensorboard_logs/run_name
+        tb_log_dir = f"gs://{config.artifact_bucket}/tensorboard_logs/{config.run_name}"
         print(f"TensorBoard logging enabled: {tb_log_dir}")
         
         callbacks.append(
