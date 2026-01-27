@@ -32,33 +32,41 @@ PROJECT_ID=${PROJECT_ID:-$GCP_PROJECT_ID}
 REGION=${REGION:-$VERTEX_LOCATION}
 BUCKET_NAME=${BUCKET_NAME:-$GCS_BUCKET_NAME}
 
-# Generate a unique tag for this build execution to bypass Vertex AI caching
-if [ "$SKIP_BUILD" = true ]; then
-    echo "Retrieving latest image tag from Artifact Registry..."
-    # Fetch the most recently updated tag
-    # Uses gcloud artifacts docker tags list, sorted reverse by update time, limit 1
-    LATEST_TAG=$(gcloud artifacts docker tags list "us-docker.pkg.dev/${PROJECT_ID}/headway-pipelines/training" \
-        --sort-by=~UPDATE_TIME \
-        --limit=1 \
-        --format="value(tag)")
-        
-    if [ -z "$LATEST_TAG" ]; then
-        echo "Error: No existing image tags found. Cannot skip build."
-        exit 1
-    fi
-    
-    echo "Found latest tag: $LATEST_TAG"
-    IMAGE_TAG="$LATEST_TAG"
+# Check if TENSORFLOW_IMAGE_URI is already set in .env or environment
+if [ -n "$TENSORFLOW_IMAGE_URI" ]; then
+    echo "Using configured TENSORFLOW_IMAGE_URI: $TENSORFLOW_IMAGE_URI"
+    IMAGE_URI="$TENSORFLOW_IMAGE_URI"
+    # Extract tag if possible for logging, though not strictly needed logic-wise
+    IMAGE_TAG=$(echo "$IMAGE_URI" | cut -d':' -f2)
 else
-    TIMESTAMP=$(date +%s)
-    IMAGE_TAG="v${TIMESTAMP}"
-fi
+    # Generate a unique tag for this build execution to bypass Vertex AI caching
+    if [ "$SKIP_BUILD" = true ]; then
+        echo "Retrieving latest image tag from Artifact Registry..."
+        # Fetch the most recently updated tag
+        # Uses gcloud artifacts docker tags list, sorted reverse by update time, limit 1
+        LATEST_TAG=$(gcloud artifacts docker tags list "us-docker.pkg.dev/${PROJECT_ID}/headway-pipelines/training" \
+            --sort-by=~UPDATE_TIME \
+            --limit=1 \
+            --format="value(tag)")
+            
+        if [ -z "$LATEST_TAG" ]; then
+            echo "Error: No existing image tags found. Cannot skip build."
+            exit 1
+        fi
+        
+        echo "Found latest tag: $LATEST_TAG"
+        IMAGE_TAG="$LATEST_TAG"
+    else
+        TIMESTAMP=$(date +%s)
+        IMAGE_TAG="v${TIMESTAMP}"
+    fi
 
-# Base Image URI (Hardcoded pattern to avoid :latest duplication from .env)
-# We force the base URI to be clean, ignoring potentially malformed .env values for this specific build
-BASE_IMAGE_URI="us-docker.pkg.dev/${PROJECT_ID}/headway-pipelines/training"
-# Full Image URI with unique tag
-IMAGE_URI="${BASE_IMAGE_URI}:${IMAGE_TAG}"
+    # Base Image URI (Hardcoded pattern to avoid :latest duplication from .env)
+    # We force the base URI to be clean, ignoring potentially malformed .env values for this specific build
+    BASE_IMAGE_URI="us-docker.pkg.dev/${PROJECT_ID}/headway-pipelines/training"
+    # Full Image URI with unique tag
+    IMAGE_URI="${BASE_IMAGE_URI}:${IMAGE_TAG}"
+fi
 
 # pipeline.py uses config("PIPELINE_ROOT"), ensure it matches or defaulted here for the runner
 PIPELINE_ROOT=${PIPELINE_ROOT:-"gs://${BUCKET_NAME}/pipeline_root"}
