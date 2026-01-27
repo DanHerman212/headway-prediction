@@ -18,3 +18,7 @@ db-dtypes>=1.0.0
 hydra-core>=1.3.2
 typer[all]
 rich
+
+# Pipeline Orchestration (Required for internal compilation validation)
+kfp>=2.0.0
+PyYAML>=6.0
