@@ -3,6 +3,7 @@ steps:
   # We use the standard docker builder.
   # We use --cache-from to speed up builds if the 'latest' tag exists.
   - name: 'gcr.io/cloud-builders/docker'
+    dir: 'mlops_pipeline'
     entrypoint: 'bash'
     args:
       - '-c'
@@ -21,15 +22,18 @@ steps:
   #   b) The Python code is syntax-free and imports work.
   #   c) KFP compiles the pipeline definition correctly.
   - name: 'gcr.io/cloud-builders/docker'
+    dir: 'mlops_pipeline'
     args: ['run', '$_IMAGE_URI:$SHORT_SHA', 'python', 'manage.py', 'compile']
 
   # 3. Push the images to Artifact Registry
   # This happens automatically via the 'images' field below, 
   # but declaring it ensures explicit control if needed.
   - name: 'gcr.io/cloud-builders/docker'
+    dir: 'mlops_pipeline'
     args: ['push', '$_IMAGE_URI:$SHORT_SHA']
   
   - name: 'gcr.io/cloud-builders/docker'
+    dir: 'mlops_pipeline'
     args: ['push', '$_IMAGE_URI:latest']
 
 # Substitutions allow variables to be passed at trigger time or inferred.
