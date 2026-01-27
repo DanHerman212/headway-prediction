@@ -1,79 +1,30 @@
 
 import argparse
 import os
+import hydra
+from omegaconf import DictConfig, OmegaConf
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 from google.cloud import aiplatform
 from tensorflow import keras
-from tensorflow.keras import layers
-from src.config import config
-from src.data_utils import create_windowed_dataset, MAESeconds
+from src.data_utils import create_windowed_dataset
+from src.metrics import MAESeconds
+from src.model import build_model
+from src.callbacks import VertexAILoggingCallback
+from src.constants import ROUTE_COL_PREFIX, SCHEDULED_HEADWAY_COL
 from typing import Tuple, Optional
 
-# --- Model Builder ---
-class VertexAILoggingCallback(keras.callbacks.Callback):
-    """Logs metrics to Vertex AI Experiments at the end of each epoch."""
-    def on_epoch_end(self, epoch, logs=None):
-        try:
-            if logs:
-                # Cast all metrics to Python float to avoid Vertex AI TypeError with numpy types
-                metrics = {k: float(v) for k, v in logs.items()}
-                # Log both scalar metrics (for summary) and time-series (for plotting)
-                aiplatform.log_metrics(metrics)
-        except Exception as e:
-            print(f"ERROR: Failed to log metrics to Vertex AI in callback: {e}")
-
-        # Attempt Time Series Logging (Experimental)
-        try:
-            if logs:
-                 metrics = {k: float(v) for k, v in logs.items()}
-                 aiplatform.log_time_series_metrics(metrics, step=epoch + 1)
-        except Exception as e:
-            print(f"Warning: Failed to log time series metrics: {e}")
-
-def build_model(lookback_steps: int, n_features: int, num_routes: int) -> keras.Model:
-    """Builds the Stacked GRU Model with Dual Outputs."""
-    
-    inputs = layers.Input(shape=(lookback_steps, n_features), name='input_sequence')
-    
-    x = inputs
-    
-    # Tunable GRU Layers
-    # config.gru_units is likely [64, 32]
-    # We iterate, returning sequences for all but the last
-    
-    gru_units = config.gru_units
-    dropout_rate = config.dropout_rate
-    
-    for i, units in enumerate(gru_units):
-        return_sequences = (i < len(gru_units) - 1)
-        x = layers.GRU(
-            units,
-            return_sequences=return_sequences,
-            name=f'gru_{i}'
-        )(x)
-        x = layers.Dropout(dropout_rate)(x)
-    
-    # Dual Output Heads
-    
-    # 1. Regression Head (Headway)
-    headway_out = layers.Dense(1, name='headway')(x)
-    
-    # 2. Classification Head (Route)
-    route_out = layers.Dense(num_routes, activation='softmax', name='route')(x)
-    
-    model = keras.Model(inputs=inputs, outputs=[headway_out, route_out])
-    
-    return model
-
 # --- Data Loading & Windowing ---
-def create_datasets(df: pd.DataFrame, test_output_path: Optional[str] = None) -> Tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset]:
+def create_datasets(df: pd.DataFrame, test_output_path: Optional[str] = None, cfg: DictConfig = None) -> Tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset]:
     """Generates Windowed TF Datasets using shared utility logic."""
     
     n = len(df)
-    train_end = int(n * config.train_split)
-    val_end = int(n * (config.train_split + config.val_split))
+    train_n = int(n * cfg.data.train_split)
+    val_n = int(n * cfg.data.val_split)
+    
+    train_end = train_n
+    val_end = train_n + val_n
     
     # Export Test Artifact Logic
     if test_output_path:
@@ -87,11 +38,8 @@ def create_datasets(df: pd.DataFrame, test_output_path: Optional[str] = None) ->
         df_test.to_csv(test_output_path, index=False)
         print("Test artifact exported.")
 
-    # Use Validated Shared Logic from src.data_utils
-    # This prevents training/evaluation skew
-    
-    batch_size = config.batch_size
-    lookback_steps = config.lookback_steps
+    batch_size = cfg.training.batch_size
+    lookback_steps = cfg.model.lookback_steps
     
     print("Generating Training Dataset...")
     train_ds = create_windowed_dataset(
@@ -113,48 +61,55 @@ def create_datasets(df: pd.DataFrame, test_output_path: Optional[str] = None) ->
         shuffle=False
     )
     
-    # test_ds is not used for training, only the exported CSV is used for evaluation.
-    # We return None for test_ds to save resources.
-    
     return train_ds, val_ds, None
 
 # --- Training Loop ---
-def train_model(input_path: str, model_output_path: str, test_data_output_path: str = None):
+def train_model(cfg: DictConfig):
+    input_path = cfg.paths.input_path
+    model_output_path = cfg.paths.model_output_path
+    test_data_output_path = cfg.paths.test_data_output_path
+    
     print(f"Loading preprocessed data from {input_path}...")
     df = pd.read_csv(input_path)
     print(f"Data Loaded. Shape: {df.shape}")
     
     # Detect num features
-    # NOTE: 'scheduled_headway' is metadata, not a feature. Exclude from count if present.
     feature_cols = df.columns.tolist()
-    if 'scheduled_headway' in feature_cols:
-        feature_cols.remove('scheduled_headway')
-    n_features = len(feature_cols)
+    if SCHEDULED_HEADWAY_COL in feature_cols:
+        feature_cols.remove(SCHEDULED_HEADWAY_COL)
+    
+    # SAFETY: Only count numeric features to match data_utils.py logic
+    # We must filter the dataframe first to know the true column count
+    numeric_df = df.select_dtypes(include=[np.number])
+    # Also drop scheduled_headway from this numeric view if it exists
+    if SCHEDULED_HEADWAY_COL in numeric_df.columns:
+        numeric_df = numeric_df.drop(columns=[SCHEDULED_HEADWAY_COL])
+        
+    n_features = len(numeric_df.columns)
 
-    num_routes = len([c for c in df.columns if c.startswith('route_')])
+    num_routes = len([c for c in df.columns if c.startswith(ROUTE_COL_PREFIX)])
     
     print("Creating datasets...")
-    # Pass test_data_output_path to handle export during split definition
-    train_ds, val_ds, _ = create_datasets(df, test_output_path=test_data_output_path)
+    train_ds, val_ds, _ = create_datasets(df, test_output_path=test_data_output_path, cfg=cfg)
     
     print("Building model...")
     model = build_model(
-        lookback_steps=config.lookback_steps,
+        lookback_steps=cfg.model.lookback_steps,
         n_features=n_features,
-        num_routes=num_routes
+        num_routes=num_routes,
+        cfg=cfg
     )
     
     print("Compiling model...")
     optimizer = keras.optimizers.get({
-        'class_name': 'Adam', # Simple default or use config.optimizer
-        'config': {'learning_rate': config.learning_rate}
+        'class_name': 'Adam', 
+        'config': {'learning_rate': cfg.training.learning_rate}
     })
     
     # Losses
-    # Headway: Huber, Route: CategoricalCrossentropy
     losses = {
-        'headway': keras.losses.Huber(),
-        'route': keras.losses.CategoricalCrossentropy()
+        'headway': cfg.training.loss_function,
+        'route': 'categorical_crossentropy'
     }
     
     model.compile(
@@ -185,81 +140,71 @@ def train_model(input_path: str, model_output_path: str, test_data_output_path: 
             factor=0.5,
             patience=2,
             verbose=1
-        ),
-        VertexAILoggingCallback()
-    ]
-    
-    # TensorBoard & Experiment Tracking
-    # -------------------------------------------------------------------------
-    # 1. Initialize Vertex AI Experiment
-    # -------------------------------------------------------------------------
-    print(f"Initializing Vertex AI Experiment: {config.experiment_name}, Run: {config.run_name}")
-    try:
-        aiplatform.init(
-            project=config.project_id,
-            location=config.region,
-            experiment=config.experiment_name,
-            experiment_tensorboard=config.tensorboard_resource
         )
-        
-        # Start the run
-        # Logic: 
-        # 1. Try to create the run (resume=False). 
-        # 2. If it fails because it exists, then resume it (resume=True).
-        # This is SAFER than the reverse, because catching "NotFound" from resume=True is tricky 
-        # as seen in recent failures where the SDK retries and raises confusing exceptions.
-        # But wait, creating a duplicate run raises "AlreadyExists" (409), which is cleaner to catch.
-        
-        print(f"Attempting to create run: {config.run_name}")
-        try:
-             aiplatform.start_run(run=config.run_name, resume=False)
-             print(f"Successfully created run: {config.run_name}")
-        except Exception as e:
-             if "409" in str(e) or "AlreadyExists" in str(e):
-                 print(f"Run {config.run_name} already exists. Resuming...")
-                 aiplatform.start_run(run=config.run_name, resume=True)
-                 print(f"Successfully resumed run: {config.run_name}")
-             else:
-                 # It was some other error (permissions, etc)
-                 # Try resuming anyway just in case the error message was weird
-                 print(f"Failed to create run ({e}). Attempting resume...")
-                 aiplatform.start_run(run=config.run_name, resume=True)
+    ]
 
-    except Exception as e:
-        print(f"CRITICAL ERROR: Failed to initialize/start Vertex AI Experiment: {e}")
-        # We enforce tracking now. If this fails, we want to see it in logs, but maybe not crash training?
-        # User wants "working experiments". If experiment fails, is the run useful?
-        # Let's crash to alert the user immediately.
-        raise e
+    # Offline Mode Check
+    is_offline = cfg.experiment.get("offline", False)
     
-    # Log Hyperparameters
-    params_to_log = {
-        "gru_units": str(config.gru_units),
-        "dropout_rate": config.dropout_rate,
-        "lookback_steps": config.lookback_steps,
-        "epochs": config.epochs,
-        "batch_size": config.batch_size,
-        "learning_rate": config.learning_rate,
-        "optimizer": config.optimizer,
-        "train_split": config.train_split
-    }
-    try:
-        aiplatform.log_params(params_to_log)
-    except Exception:
-        pass
+    if not is_offline:
+        callbacks.append(VertexAILoggingCallback())
+
+    # TensorBoard & Experiment Tracking
+    # run_name is usually passed via env var (overridden by pipeline) or config
+    run_name = os.environ.get("RUN_NAME", cfg.experiment.run_name)
+
+    if not is_offline:
+        print(f"Initializing Vertex AI Experiment: {cfg.experiment.name}, Run: {run_name}")
+        try:
+            aiplatform.init(
+                project=cfg.experiment.project_id,
+                location=cfg.experiment.location,
+                experiment=cfg.experiment.name,
+                experiment_tensorboard=cfg.experiment.tensorboard_resource_name
+            )
+            
+            print(f"Attempting to create run: {run_name}")
+            try:
+                 aiplatform.start_run(run=run_name, resume=False)
+                 print(f"Successfully created run: {run_name}")
+            except Exception as e:
+                 if "409" in str(e) or "AlreadyExists" in str(e):
+                     print(f"Run {run_name} already exists. Resuming...")
+                     aiplatform.start_run(run=run_name, resume=True)
+                     print(f"Successfully resumed run: {run_name}")
+                 else:
+                     print(f"Failed to create run ({e}). Attempting resume...")
+                     aiplatform.start_run(run=run_name, resume=True)
+
+        except Exception as e:
+            print(f"CRITICAL ERROR: Failed to initialize/start Vertex AI Experiment: {e}")
+            raise e
+        
+        # Log Hyperparameters
+        params_to_log = OmegaConf.to_container(cfg.model, resolve=True)
+        params_to_log.update(OmegaConf.to_container(cfg.training, resolve=True))
+        params_to_log.update(OmegaConf.to_container(cfg.data, resolve=True))
+
+        try:
+            flat_params = {}
+            for k, v in params_to_log.items():
+                flat_params[k] = str(v) if isinstance(v, (list, dict)) else v
+                
+            aiplatform.log_params(flat_params)
+        except Exception:
+            pass
+    else:
+        print(f"Offline mode: Skipping Vertex AI Experiment tracking for run {run_name}")
     
-    # -------------------------------------------------------------------------
     # 2. Configure TensorBoard Callback
-    # -------------------------------------------------------------------------
-    if config.artifact_bucket:
-        # Construct GCS log path: gs://artifact_bucket/tensorboard_logs/run_name
-        tb_log_dir = f"gs://{config.artifact_bucket}/tensorboard_logs/{config.run_name}"
+    if cfg.experiment.artifact_bucket and not is_offline:
+        tb_log_dir = f"gs://{cfg.experiment.artifact_bucket}/tensorboard_logs/{run_name}"
         print(f"TensorBoard logging enabled: {tb_log_dir}")
         
         callbacks.append(
             keras.callbacks.TensorBoard(
                 log_dir=tb_log_dir,
-                histogram_freq=config.histogram_freq if config.track_histograms else 0,
+                histogram_freq=cfg.experiment.histogram_freq if cfg.experiment.track_histograms else 0,
                 write_graph=True,
                 write_images=False
             )
@@ -271,36 +216,28 @@ def train_model(input_path: str, model_output_path: str, test_data_output_path: 
     history = model.fit(
         train_ds,
         validation_data=val_ds,
-        epochs=config.epochs,
+        epochs=cfg.training.epochs,
         callbacks=callbacks
     )
     
-    # -------------------------------------------------------------------------
-    # 3. Log Final Metrics to Experiment
-    # -------------------------------------------------------------------------
-    # Get the best val loss from history (or last)
+    # 3. Log Final Metrics
     final_metrics = {}
     for metric, values in history.history.items():
-        # Log the final value (or best if we added logic for that, sticking to last/min for val_loss)
         if "val_" in metric and "loss" in metric:
-            final_metrics[metric] = float(min(values)) # Best val loss
+            final_metrics[metric] = float(min(values)) 
         else:
-            final_metrics[metric] = float(values[-1]) # Last value for others
+            final_metrics[metric] = float(values[-1]) 
             
-    # Remove callbacks object from serialization if present (rare in metrics but good safety)
-    
     print(f"Logging metrics: {final_metrics}")
-    try:
-        aiplatform.log_metrics(final_metrics)
-        aiplatform.end_run()
-    except Exception as e:
-        print(f"Warning: Failed to log metrics to Vertex AI ({e}).")
+    
+    if not is_offline:
+        try:
+            aiplatform.log_metrics(final_metrics)
+            aiplatform.end_run()
+        except Exception as e:
+            print(f"Warning: Failed to log metrics to Vertex AI ({e}).")
     
     print(f"Saving model to {model_output_path}...")
-    # KFP output path could be a file path (model.h5) or directory? 
-    # Usually Artifact maps to a full path if extension provided.
-    
-    # Ensure dir exists
     dirname = os.path.dirname(model_output_path)
     if dirname:
         os.makedirs(dirname, exist_ok=True)
@@ -308,14 +245,10 @@ def train_model(input_path: str, model_output_path: str, test_data_output_path: 
     model.save(model_output_path)
     print("Training Complete.")
 
+@hydra.main(config_path="../conf", config_name="config", version_base=None)
+def main(cfg: DictConfig):
+    train_model(cfg)
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input_path", type=str, required=True)
-    parser.add_argument("--model_output_path", type=str, required=True)
-    parser.add_argument("--test_data_output_path", type=str, required=False, default=None)
-    
-    args = parser.parse_args()
-    
-    # 1. Train and Export
-    train_model(args.input_path, args.model_output_path, args.test_data_output_path)
+    main()
 

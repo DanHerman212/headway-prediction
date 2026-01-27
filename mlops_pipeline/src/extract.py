@@ -1,28 +1,27 @@
 
-import argparse
-import os
+import hydra
+from omegaconf import DictConfig
 from google.cloud import bigquery
 import pandas as pd
-from src.config import config
+import os
 
-def extract_data(output_path: str):
+@hydra.main(config_path="../conf", config_name="config", version_base=None)
+def main(cfg: DictConfig):
     """
-    Extracts headway data from BigQuery using configuration from .env.
-    Saves the result to output_path.
+    Extracts headway data from BigQuery using configuration from Hydra.
     """
-    print(f"Initializing BigQuery client for project: {config.project_id}")
-    client = bigquery.Client(project=config.project_id)
+    # Vertex AI Pipeline passes output path via override: paths.output_path=...
+    output_path = cfg.paths.output_path
 
-    # Construct the query dynamically based on config
-    # The table name in .env is fully qualified or dataset.table?
-    # Config default is "headway_prediction.ml" (dataset.table).
-    # We need to prepend project_id if it's not in the string, or trust the string.
-    # The archive code used: FROM `{self.project_id}.headway_prediction.ml`
-    
-    table_ref = f"{config.project_id}.{config.bq_table_name}"
+    print(f"Initializing BigQuery client for project: {cfg.experiment.project_id}")
+    client = bigquery.Client(project=cfg.experiment.project_id)
+
+    table_ref = f"{cfg.experiment.project_id}.{cfg.pipeline.bq_table_name}"
     
     # Format route_ids for SQL IN clause: 'A', 'C', 'E'
-    route_ids_str = ", ".join([f"'{r}'" for r in config.route_ids])
+    # Hydra/OmegaConf lists behave like Python lists
+    route_ids = cfg.model.route_ids
+    route_ids_str = ", ".join([f"'{r}'" for r in route_ids])
     
     query = f"""
     SELECT
@@ -37,7 +36,6 @@ def extract_data(output_path: str):
     """
     
     print(f"Executing query on {table_ref}...")
-    # print(query) # Uncomment for debugging
     
     query_job = client.query(query)
     df = query_job.to_dataframe()
@@ -56,10 +54,4 @@ def extract_data(output_path: str):
     print("Extraction complete.")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    # KFP passes artifacts via command line arguments
-    parser.add_argument("--output_path", type=str, required=True, help="Path to save extracted data")
-    
-    args = parser.parse_args()
-    
-    extract_data(args.output_path)
+    main()

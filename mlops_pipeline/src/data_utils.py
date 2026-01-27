@@ -2,47 +2,12 @@
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from tensorflow import keras
 from typing import Tuple, Optional
-from src.config import config
-
-class MAESeconds(keras.metrics.Metric):
-    """
-    Mean Absolute Error in seconds (converted from log-space).
-    Moved here to be shared between Train and Eval.
-    """
-    def __init__(self, name='mae_seconds', **kwargs):
-        super().__init__(name=name, **kwargs)
-        self.total_error = self.add_weight(name='total_error', initializer='zeros')
-        self.count = self.add_weight(name='count', initializer='zeros')
-    
-    def update_state(self, y_true, y_pred, sample_weight=None):
-        # Input is log1p(minutes). Convert to seconds for metric.
-        y_true_seconds = tf.math.expm1(y_true) * 60.0
-        y_pred_seconds = tf.math.expm1(y_pred) * 60.0
-        errors = tf.abs(y_true_seconds - y_pred_seconds)
-        if sample_weight is not None:
-            errors = errors * sample_weight
-        self.total_error.assign_add(tf.reduce_sum(errors))
-        if sample_weight is not None:
-            self.count.assign_add(tf.reduce_sum(sample_weight))
-        else:
-            self.count.assign_add(tf.cast(tf.size(errors), dtype=tf.float32))
-    
-    def result(self):
-        return self.total_error / self.count
-    
-    def reset_state(self):
-        self.total_error.assign(0.0)
-        self.count.assign(0.0)
-    
-    def get_config(self):
-        config = super().get_config()
-        return config
-
-    @classmethod
-    def from_config(cls, config):
-        return cls(**config)
+from src.constants import (
+    TARGET_COL, 
+    SCHEDULED_HEADWAY_COL,
+    ROUTE_COL_PREFIX
+)
 
 def inverse_transform_headway(log_headway: np.ndarray) -> np.ndarray:
     """
@@ -63,15 +28,19 @@ def prepare_tensors(df: pd.DataFrame) -> Tuple[tf.Tensor, tf.Tensor]:
     # The order of columns in X must match what the model expects.
     # In preprocess.py we saved: log_headway, route_*, hour_*, day_*, scheduled_headway
     # We explicitly drop 'scheduled_headway' as it is only for evaluation metadata
-    feature_df = df.drop(columns=['scheduled_headway'], errors='ignore')
+    feature_df = df.drop(columns=[SCHEDULED_HEADWAY_COL], errors='ignore')
+    
+    # SAFETY: Select only numeric columns to prevent "string to float" crashes
+    feature_df = feature_df.select_dtypes(include=[np.number])
+    
     input_x = feature_df.values.astype(np.float32)
 
     # Targets
     # Headway is 'log_headway'
-    input_t = df['log_headway'].values
+    input_t = df[TARGET_COL].values
     
     # Route columns
-    route_cols = [c for c in df.columns if c.startswith('route_')]
+    route_cols = [c for c in df.columns if c.startswith(ROUTE_COL_PREFIX)]
     input_r = df[route_cols].values
     
     # Targets Combined: [headway, route_0, route_1, ...]
@@ -110,7 +79,7 @@ def create_windowed_dataset(
     n = len(df)
     
     # Identify number of route columns for splitting targets later
-    route_cols = [c for c in df.columns if c.startswith('route_')]
+    route_cols = [c for c in df.columns if c.startswith(ROUTE_COL_PREFIX)]
     num_route_cols = len(route_cols)
 
     # Max possible start index for a window

@@ -1,23 +1,32 @@
 
-import argparse
-import os
+import hydra
+from omegaconf import DictConfig, OmegaConf
 import numpy as np
 import pandas as pd
-from src.config import config
+import os
+from typing import List
 from src.gtfs_provider import GtfsProvider
+from src.constants import (
+    TARGET_COL,
+    ROUTE_COL_PREFIX,
+    SCHEDULED_HEADWAY_COL,
+    HOUR_SIN, HOUR_COS,
+    DAY_SIN, DAY_COS
+)
 
 def transform_headways(headways: np.ndarray) -> np.ndarray:
     """Apply log1p transformation to headways."""
     return np.log1p(headways)
 
-def encode_routes(route_ids: np.ndarray) -> np.ndarray:
+def encode_routes(route_ids: np.ndarray, config_route_ids: List[str]) -> np.ndarray:
     """
     One-hot encode route IDs based on config.route_ids.
     Returns array of shape (n, num_routes).
     """
     # Create mapping from config
     # Ensure mapping is deterministic by sorting
-    sorted_routes = sorted(config.route_ids)
+    # OmegaConf ListConfig behaves like list
+    sorted_routes = sorted(list(config_route_ids))
     route_mapping = {r: i for i, r in enumerate(sorted_routes)}
     num_routes = len(sorted_routes)
     
@@ -59,7 +68,12 @@ def create_temporal_features(
     
     return hour_sin, hour_cos, day_sin, day_cos
 
-def preprocess_data(input_path: str, output_path: str):
+@hydra.main(config_path="../conf", config_name="config", version_base=None)
+def main(cfg: DictConfig):
+    # Pipeline overrides
+    input_path = cfg.paths.input_path
+    output_path = cfg.paths.output_path
+
     print(f"Loading raw data from {input_path}...")
     df = pd.read_csv(input_path, parse_dates=['arrival_time'])
     
@@ -71,7 +85,7 @@ def preprocess_data(input_path: str, output_path: str):
     
     # 2. Encode Categoricals
     print("One-hot encoding routes...")
-    route_onehot = encode_routes(df['route_id'].values)
+    route_onehot = encode_routes(df['route_id'].values, cfg.model.route_ids)
     
     # 3. Create Cyclical Features
     print("Creating temporal features...")
@@ -92,11 +106,11 @@ def preprocess_data(input_path: str, output_path: str):
         start_d = ts_local.min().normalize()
         end_d = ts_local.max().normalize() + pd.Timedelta(days=1)
         
-        # Use DATA_LAKE_BUCKET from config or env
-        data_bucket = config.data_lake_bucket
+        # Use DATA_LAKE_BUCKET from config
+        data_bucket = cfg.pipeline.data_lake_bucket
         if not data_bucket:
-             print("Warning: DATA_LAKE_BUCKET not set. Using config default or skipping...")
-             # Fallback logic if needed, or error
+             print("Warning: DATA_LAKE_BUCKET not set. Using default...")
+             # fallback logic
         
         provider = GtfsProvider(gcs_bucket=data_bucket, gcs_prefix="gtfs/")
         df_sched = provider.get_scheduled_arrivals('A32S', start_d, end_d)
@@ -136,13 +150,13 @@ def preprocess_data(input_path: str, output_path: str):
     
     # 4. Assemble Final DataFrame
     # Structure: [log_headway, route_A, route_C, route_E, hour_sin, hour_cos, day_sin, day_cos, scheduled_headway]
-    # We rely on the sorted order of config.route_ids for column naming
-    sorted_routes = sorted(config.route_ids)
-    route_columns = [f"route_{r}" for r in sorted_routes]
+    # We rely on the sorted order of cfg.model.route_ids for column naming
+    sorted_routes = sorted(list(cfg.model.route_ids))
+    route_columns = [f"{ROUTE_COL_PREFIX}{r}" for r in sorted_routes]
     
     # Create dictionary for DataFrame creation
     data_dict = {
-        'log_headway': log_headway
+        TARGET_COL: log_headway
     }
     
     # Add route columns
@@ -150,13 +164,13 @@ def preprocess_data(input_path: str, output_path: str):
         data_dict[col] = route_onehot[:, i]
         
     # Add temporal columns
-    data_dict['hour_sin'] = hour_sin
-    data_dict['hour_cos'] = hour_cos
-    data_dict['day_sin'] = day_sin
-    data_dict['day_cos'] = day_cos
+    data_dict[HOUR_SIN] = hour_sin
+    data_dict[HOUR_COS] = hour_cos
+    data_dict[DAY_SIN] = day_sin
+    data_dict[DAY_COS] = day_cos
     
     # Add Baseline Metadata
-    data_dict['scheduled_headway'] = scheduled_headway
+    data_dict[SCHEDULED_HEADWAY_COL] = scheduled_headway
     
     processed_df = pd.DataFrame(data_dict)
     
@@ -170,10 +184,4 @@ def preprocess_data(input_path: str, output_path: str):
     processed_df.to_csv(output_path, index=False)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input_path", type=str, required=True, help="Path to raw csv")
-    parser.add_argument("--output_path", type=str, required=True, help="Path to save processed csv")
-    
-    args = parser.parse_args()
-    
-    preprocess_data(args.input_path, args.output_path)
+    main()

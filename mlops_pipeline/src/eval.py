@@ -1,5 +1,6 @@
 
-import argparse
+import hydra
+from omegaconf import DictConfig, OmegaConf
 import os
 import json
 import base64
@@ -11,8 +12,8 @@ import seaborn as sns
 from tensorflow import keras
 from google.cloud import aiplatform
 
-from src.config import config
-from src.data_utils import create_windowed_dataset, MAESeconds, inverse_transform_headway
+from src.metrics import MAESeconds
+from src.data_utils import create_windowed_dataset, inverse_transform_headway
 
 # --- Helper Functions ---
 def reconstruct_hour(sin_vals, cos_vals):
@@ -210,7 +211,13 @@ def generate_html_report(metrics, plot_files, html_output_path):
 
 # --- Evaluation Logic ---
 
-def evaluate_model(model_path: str, test_data_path: str, metrics_output_path: str, html_output_path: str = None):
+@hydra.main(config_path="../conf", config_name="config", version_base=None)
+def main(cfg: DictConfig):
+    # Retrieve overrides
+    model_path = cfg.paths.model_path 
+    test_data_path = cfg.paths.test_data_path
+    metrics_output_path = cfg.paths.output_metrics_path
+    html_output_path = cfg.paths.output_html_path
 
     print(f"Loading test data from {test_data_path}...")
     df_test = pd.read_csv(test_data_path)
@@ -223,8 +230,8 @@ def evaluate_model(model_path: str, test_data_path: str, metrics_output_path: st
     # Note: create_windowed_dataset yields (x, y)
     # create_windowed_dataset shuffle defaults to True, we MUST set to False for evaluation alignment
     
-    batch_size = config.batch_size
-    lookback_steps = config.lookback_steps
+    batch_size = cfg.training.batch_size
+    lookback_steps = cfg.model.lookback_steps
     
     ds = create_windowed_dataset(
         df_test,
@@ -351,23 +358,25 @@ def evaluate_model(model_path: str, test_data_path: str, metrics_output_path: st
     plot_files = generate_plots(y_true_seconds, y_pred_seconds, hour_sin, hour_cos, y_sched=baseline_sched_sec_eval)
     
     # --- Save Metrics JSON ---
-    os.makedirs(os.path.dirname(metrics_output_path), exist_ok=True)
-    with open(metrics_output_path, 'w') as f:
-        json.dump(metrics, f)
+    if metrics_output_path:
+        os.makedirs(os.path.dirname(metrics_output_path), exist_ok=True)
+        with open(metrics_output_path, 'w') as f:
+            json.dump(metrics, f)
 
     # --- Generate HTML Report ---
     if html_output_path:
         generate_html_report(metrics, plot_files, html_output_path)
         
     # --- Log to Vertex Experiments ---
-        
-    # --- Log to Vertex Experiments ---
     print("Logging evaluation metrics to Vertex AI Experiment...")
+    
+    run_name = os.environ.get("RUN_NAME", cfg.experiment.run_name)
+    
     try:
         aiplatform.init(
-            project=config.project_id,
-            location=config.region,
-            experiment=config.experiment_name
+            project=cfg.experiment.project_id,
+            location=cfg.experiment.location,
+            experiment=cfg.experiment.name
         )
         # Log to the active run
         # Evaluation ALWAYS follows Training, so the run MUST exist.
@@ -375,18 +384,13 @@ def evaluate_model(model_path: str, test_data_path: str, metrics_output_path: st
         # preferring "Resume" first since it's 99% likely to exist.
         # IF resume=True fails with 404, we create.
         
-        # NOTE: We use the reversed logic here compared to Train, or we can align them.
-        # Let's align them to "Try Create -> Catch 409 -> Resume".
-        # Why? Because 409 AlreadyExists is a standard, fast check.
-        # 404 on Resume triggers retries in the SDK which wastes time and floods logs.
-        
         try:
-             aiplatform.start_run(run=config.run_name, resume=False)
-             print(f"Run {config.run_name} did not exist (unexpected for Eval). Created.")
+             aiplatform.start_run(run=run_name, resume=False)
+             print(f"Run {run_name} did not exist (unexpected for Eval). Created.")
         except Exception as e:
              # Assume it exists, so we resume
-             print(f"Run {config.run_name} likely exists (Error: {e}). Resuming...")
-             aiplatform.start_run(run=config.run_name, resume=True)
+             print(f"Run {run_name} likely exists (Error: {e}). Resuming...")
+             aiplatform.start_run(run=run_name, resume=True)
 
         # Log metrics to the active run context
         aiplatform.log_metrics(metrics)
@@ -398,9 +402,6 @@ def evaluate_model(model_path: str, test_data_path: str, metrics_output_path: st
                 img_id = os.path.splitext(plot_file)[0]
                 print(f"Logging image {plot_file} as {img_id}...")
                 
-                # Check for available artifact logging support or skip gracefully
-                pass
-                
         # End the run for this component
         aiplatform.end_run()
         
@@ -408,12 +409,4 @@ def evaluate_model(model_path: str, test_data_path: str, metrics_output_path: st
         print(f"WARNING: Could not log to Vertex AI Experiments: {e}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model_path", type=str, required=True)
-    parser.add_argument("--test_data_path", type=str, required=True)
-    parser.add_argument("--output_metrics_path", type=str, required=True)
-    parser.add_argument("--output_html_path", type=str, required=False, default=None)
-    
-    args = parser.parse_args()
-    
-    evaluate_model(args.model_path, args.test_data_path, args.output_metrics_path, args.output_html_path)
+    main()

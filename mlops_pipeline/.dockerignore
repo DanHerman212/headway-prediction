@@ -12,6 +12,8 @@ __pycache__
 # local testing
 data/
 tests/
+local_artifacts/
+.pytest_cache/
 
 # Exclude virtual environments
 venv/
