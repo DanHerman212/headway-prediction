@@ -13,6 +13,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy configuration
 COPY conf/ conf/
 
+# Copy orchestration scripts
+COPY manage.py .
+COPY pipeline.py .
+
 # Copy source code
 COPY src/ src/
 
