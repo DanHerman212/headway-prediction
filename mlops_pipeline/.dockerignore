@@ -33,6 +33,6 @@ outputs/
 test_metrics.json
 
 # Exclude the pipeline definition and build scripts (only needed locally)
-pipeline.py
+# pipeline.py <-- COMMENTED OUT needed for validation
 build_run_pipeline.sh
 README.md
