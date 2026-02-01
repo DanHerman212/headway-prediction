@@ -243,10 +243,11 @@ class CalculateUpstreamTravelTimeFn(beam.DoFn):
     TRIP_ARRIVALS = ReadModifyWriteStateSpec('trip_arrivals', PickleCoder())
     PENDING_TARGET = ReadModifyWriteStateSpec('pending_target', PickleCoder())
 
-    STATION_34TH = '128S'
-    STATION_23RD = '130S'
-    STATION_14TH = '132S'
-    TARGET_STATION = 'A32S'
+    # Correct Station IDs for 8th Ave Line (A/C/E)
+    STATION_34TH = 'A28S' # 34 St - Penn Station
+    STATION_23RD = 'A30S' # 23 St
+    STATION_14TH = 'A31S' # 14 St
+    TARGET_STATION = 'A32S' # W 4 St Washington Sq
 
     RELEVANT_STATIONS = {STATION_34TH, STATION_23RD, STATION_14TH, TARGET_STATION}
 
