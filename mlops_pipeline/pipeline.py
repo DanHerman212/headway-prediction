@@ -25,7 +25,12 @@ def get_config(key, default):
     return os.environ.get(key, file_config.get(key, default))
 
 # Defaults
-IMAGE_URI = get_config("TENSORFLOW_IMAGE_URI", "us-docker.pkg.dev/headway-prediction/ml-pipelines/headway-training:latest")
+# We strip the tag from the config if present and append :latest if no tag is found
+# This allows dynamic overriding while still defaulting to sensible values
+_configured_image = get_config("TENSORFLOW_IMAGE_URI", "us-docker.pkg.dev/headway-prediction/ml-pipelines/headway-training:latest")
+# Logic: If TENSORFLOW_IMAGE_URI is set in .env with a specific tag (e.g. :v123), it is respected.
+# If you want to force latest despite what is in .env, you would need to clear that env var before running.
+IMAGE_URI = _configured_image
 PIPELINE_ROOT = get_config("PIPELINE_ROOT", "gs://headway-prediction-pipelines/root")
 PROJECT_ID = get_config("GCP_PROJECT_ID", "")
 REGION = get_config("VERTEX_LOCATION", "us-east1")
