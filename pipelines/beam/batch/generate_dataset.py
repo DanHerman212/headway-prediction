@@ -1,6 +1,6 @@
 import argparse 
 import logging
-from datetime import datetime
+from datetime import datetime, date
 import pyarrow as pa
 import apache_beam as beam
 from apache_beam.options.pipeline_options import (PipelineOptions,               
@@ -74,6 +74,13 @@ def sort_events(item):
     key, records = item
     sorted_records = sorted(records, key=lambda x: x['timestamp'])
     return [(key, r) for r in sorted_records]
+
+def sanitize_record(record):
+    # Ensure no datetime objects reach Parquet writer to prevent ArrowTypeError
+    for k, v in record.items():
+        if isinstance(v, (datetime, date)):
+            record[k] = v.isoformat()
+    return record
 
 
 def run(argv=None):
@@ -172,8 +179,9 @@ def run(argv=None):
         )
         write_to_parque = (
             with_empirical
+            | 'SanitizeTypes' >> beam.Map(sanitize_record)
             | 'WriteToParquet' >> beam.io.WriteToParquet(
-                file_path_prefix=f"{known_args.temp_location}/training_data",
+                file_path_prefix=f"{known_args.temp_location.rstrip('/')}/training_data",
                 schema=output_schema,
                 file_name_suffix='.parquet',
                 num_shards=1 # keep as 1 files for 75k rows since its small
