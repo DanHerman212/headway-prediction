@@ -233,70 +233,77 @@ class EnrichWithEmpiricalFn(beam.DoFn):
 
 class CalculateUpstreamTravelTimeFn(beam.DoFn):
     """
-    Stateful DoFn to calculate travel times from upstream stations
+    Stateful DoFn to calculate travel times from upstream stations.
+    Robust to out-of-order arrival of events using Buffering ("Park and Wait").
     partition key: trip_uid
-    state: dict of {station_id: timestamp}
+    state: 
+      - trip_arrivals: dict of {station_id: timestamp}
+      - pending_target: dict (the target row waiting for upstream)
     """
-    # store a dictionary of upstream arrivals {'128S':123456.7, '130S: ...}
     TRIP_ARRIVALS = ReadModifyWriteStateSpec('trip_arrivals', PickleCoder())
+    PENDING_TARGET = ReadModifyWriteStateSpec('pending_target', PickleCoder())
 
-    # station constants
     STATION_34TH = '128S'
     STATION_23RD = '130S'
     STATION_14TH = '132S'
     TARGET_STATION = 'A32S'
 
-    # set all relevant stations to track
     RELEVANT_STATIONS = {STATION_34TH, STATION_23RD, STATION_14TH, TARGET_STATION}
 
-    def process(self, element, arrivals_state=beam.DoFn.StateParam(TRIP_ARRIVALS)):
-        trip_id, record = element
+    def _has_sufficient_upstream(self, arrivals):
+        # Relaxed rule: Emit if we have ANY upstream station
+        return (self.STATION_34TH in arrivals or 
+                self.STATION_23RD in arrivals or 
+                self.STATION_14TH in arrivals)
 
+    def _enrich_and_yield(self, record, arrivals):
+        current_ts = record.get('timestamp')
+        
+        ts_34th = arrivals.get(self.STATION_34TH)
+        record['travel_time_34th'] = (current_ts - ts_34th) / 60.0 if ts_34th else None
+        
+        ts_23rd = arrivals.get(self.STATION_23RD)
+        record['travel_time_23rd'] = (current_ts - ts_23rd) / 60.0 if ts_23rd else None
+
+        ts_14th = arrivals.get(self.STATION_14TH)
+        record['travel_time_14th'] = (current_ts - ts_14th) / 60.0 if ts_14th else None
+
+        yield record
+
+    def process(self, element, 
+                arrivals_state=beam.DoFn.StateParam(TRIP_ARRIVALS),
+                pending_state=beam.DoFn.StateParam(PENDING_TARGET)):
+        
+        trip_id, record = element
         stop_id = record.get('stop_id')
 
         # optimize: ignore stations we don't care about at all
         if stop_id not in self.RELEVANT_STATIONS:
-            # Drop irrelevant stations immediately
             return
 
         current_ts = record.get('timestamp')
         if current_ts is None:
-            # We can't use this for state without a timestamp, drop it.
             return
         
-        # 1 - load current station
+        # Load current state
         arrivals = arrivals_state.read() or {}
+        pending = pending_state.read()
 
-        # 2 -  update state with current station arrival
+        # Update knowledge base
         arrivals[stop_id] = current_ts
         arrivals_state.write(arrivals)
 
-        # 3 - if target station, calc features and emit
+        # LOGIC BRANCH 1: We just received the Target (W4th)
         if stop_id == self.TARGET_STATION:
-            # calc travel time from 34th (if exists)
-            ts_34th = arrivals.get(self.STATION_34TH)
-            if ts_34th:
-                record['travel_time_34th'] = (current_ts - ts_34th) / 60.0
+            if self._has_sufficient_upstream(arrivals):
+                yield from self._enrich_and_yield(record, arrivals)
             else:
-                record['travel_time_34th'] = None # explicit None or -1
-            
-            # calc travel time from 23rd
-            ts_23rd = arrivals.get(self.STATION_23RD)
-            if ts_23rd:
-                record['travel_time_23rd'] = (current_ts - ts_23rd) / 60.0
-            else:
-                record['travel_time_23rd'] = None
+                pending_state.write(record)
 
-            # calc travel time from 14th
-            ts_14th = arrivals.get(self.STATION_14TH)
-            if ts_14th:
-                record['travel_time_14th'] = (current_ts - ts_14th) / 60.0
-            else:
-                record['travel_time_14th'] = None
-            
-            # emitting the enriched target row
-            # clear state to free memory
-            arrivals_state.clear()
-
-            yield record
+        # LOGIC BRANCH 2: We just received Upstream (34th/23rd/14th)
+        else:
+            if pending is not None:
+                if self._has_sufficient_upstream(arrivals):
+                    yield from self._enrich_and_yield(pending, arrivals)
+                    pending_state.clear()
 

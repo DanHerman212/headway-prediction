@@ -70,6 +70,11 @@ def compute_median(item):
     (key, headways) = item
     return (key, statistics.median(headways))
 
+def sort_events(item):
+    key, records = item
+    sorted_records = sorted(records, key=lambda x: x['timestamp'])
+    return [(key, r) for r in sorted_records]
+
 
 def run(argv=None):
     # 1. Parse arguments for GCP configuration
@@ -129,6 +134,8 @@ def run(argv=None):
         with_target = (
             target_rows
             | 'KeyByGroup' >> beam.Map(lambda x: (x['group_id'], x))
+            | 'GroupHeadway' >> beam.GroupByKey()
+            | 'SortHeadway' >> beam.FlatMap(sort_events)
             | 'CalcServiceHeadway' >> beam.ParDo(CalculateServiceHeadwayFn())
             | 'UnKeyService' >> beam.Map(lambda x: x) # strip the key back to just value
         )
@@ -137,6 +144,8 @@ def run(argv=None):
         with_track_gap = (
             with_target
             | 'KeyByTrack' >> beam.Map(lambda x: (x['track_id'], x)) # key by track
+            | 'GroupTrack' >> beam.GroupByKey()
+            | 'SortTrack' >> beam.FlatMap(sort_events)
             | 'CalcTrackGap' >> beam.ParDo(CalculateTrackGapFn())
             | 'UnkeyTrack' >> beam.Map(lambda x: x)
         )
