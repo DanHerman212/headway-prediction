@@ -108,6 +108,14 @@ class EnrichRecordFn(beam.DoFn):
             # we must convert it back or ensure the original string is preserved.
             if isinstance(dt, datetime):
                 new_element['arrival_time'] = dt.isoformat()
+            elif dt is not None and not isinstance(element.get('arrival_time'), str):
+                new_element['arrival_time'] = str(dt)
+
+        # Check other string fields for objects (like datetime.date for trip_date)
+        for field in ['trip_date', 'trip_uid', 'route_id', 'direction', 'stop_id', 'track']:
+             val = new_element.get(field)
+             if val is not None and not isinstance(val, str):
+                 new_element[field] = str(val)
 
         yield new_element
 
