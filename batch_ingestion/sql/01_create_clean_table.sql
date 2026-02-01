@@ -38,6 +38,13 @@ SELECT
     
     -- Extracted: direction (first character after ..)
     SUBSTR(SPLIT(r.trip_uid, '..')[SAFE_OFFSET(1)], 1, 1) AS direction,
+
+    -- Extracted: train_id (date_timestamp + route_id + direction)
+    CONCAT(
+        SPLIT(r.trip_uid, '_')[SAFE_OFFSET(0)],
+        SUBSTR(SPLIT(r.trip_uid, '_')[SAFE_OFFSET(1)], 1, 1),
+        SUBSTR(SPLIT(r.trip_uid, '..')[SAFE_OFFSET(1)], 1, 1)
+    ) AS train_id,
     
     -- Converted timestamps (UTC)
     TIMESTAMP_SECONDS(r.arrival_time) AS arrival_time,
