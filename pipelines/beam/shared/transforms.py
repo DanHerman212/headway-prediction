@@ -1,6 +1,6 @@
 import apache_beam as beam
 from apache_beam.transforms.userstate import ReadModifyWriteStateSpec
-from apache_beam.coders import FloatCoder
+from apache_beam.coders import FloatCoder, PickleCoder
 from datetime import datetime
 import math
 
@@ -102,6 +102,12 @@ class EnrichRecordFn(beam.DoFn):
             new_element['hour_cos'] = math.cos(rads)
             new_element['day_of_week'] = day_of_week
             new_element['timestamp'] = timestamp
+            
+            # ensure arrival_time is string for parquet export
+            # usually bigquery source gives a string, but if we parsed it to object
+            # we must convert it back or ensure the original string is preserved.
+            if isinstance(dt, datetime):
+                new_element['arrival_time'] = dt.isoformat()
 
         yield new_element
 
@@ -117,16 +123,18 @@ class CalculateServiceHeadwayFn(beam.DoFn):
     TARGET_STATION ="A32S"
 
     def process(self, element, last_arrival=beam.DoFn.StateParam(LAST_ARRIVAL)):
+        key, record = element
+
         # 1 filter: only calculate target for the specific station
         # if upstream events pass through here, we ignore them for target generation
-        if element.get('stop_id') != self.TARGET_STATION:
-            yield element
+        if record.get('stop_id') != self.TARGET_STATION:
+            yield record
             return
     
         # 2 get timestamp (feature already prepared)
-        current_ts = element.get('timestamp')
+        current_ts = record.get('timestamp')
         if current_ts is None:
-            yield element
+            yield record
             return
         
         # 3 read and calculate
@@ -135,12 +143,12 @@ class CalculateServiceHeadwayFn(beam.DoFn):
         if previous_ts is not None:
             # difference in minutes
             headway_min = (current_ts - previous_ts) / 60.0
-            element['service_headway'] = headway_min
+            record['service_headway'] = headway_min
         
         # 4 update state
         last_arrival.write(current_ts)
 
-        yield element
+        yield record
 
 class CalculateTrackGapFn(beam.DoFn):
     """
@@ -152,16 +160,19 @@ class CalculateTrackGapFn(beam.DoFn):
     LAST_ARR_TRACK = ReadModifyWriteStateSpec('last_arr_track', FloatCoder())
 
     # target station ID (still fildered because we only predict at W4th for now)
+    TARGET_STATION = "A32S"
 
     def process(self, element, last_arrival=beam.DoFn.StateParam(LAST_ARR_TRACK)):
+        key, record = element
+
         # 1. Filter: Only output features for target station rows
-        if element.get('stop_id') != self.TARGET_STATION:
-            yield element
+        if record.get('stop_id') != self.TARGET_STATION:
+            yield record
             return
         
-        current_ts = element.get('timestamp')
+        current_ts = record.get('timestamp')
         if current_ts is None:
-            yield element
+            yield record
             return
         
         # 2 read state
@@ -170,12 +181,12 @@ class CalculateTrackGapFn(beam.DoFn):
         # 3 calculate gap
         if previous_ts is not None:
             gap_min = (current_ts - previous_ts) / 60.0
-            element['preceding_train_gap'] = gap_min
+            record['preceding_train_gap'] = gap_min
 
         # 4 update state
         last_arrival.write(current_ts)
 
-        yield element
+        yield record
 
 
 class EnrichWithEmpiricalFn(beam.DoFn):
@@ -211,3 +222,73 @@ class EnrichWithEmpiricalFn(beam.DoFn):
         
         element['empirical_median'] = float(median)
         yield element
+
+class CalculateUpstreamTravelTimeFn(beam.DoFn):
+    """
+    Stateful DoFn to calculate travel times from upstream stations
+    partition key: trip_uid
+    state: dict of {station_id: timestamp}
+    """
+    # store a dictionary of upstream arrivals {'128S':123456.7, '130S: ...}
+    TRIP_ARRIVALS = ReadModifyWriteStateSpec('trip_arrivals', PickleCoder())
+
+    # station constants
+    STATION_34TH = '128S'
+    STATION_23RD = '130S'
+    STATION_14TH = '132S'
+    TARGET_STATION = 'A32S'
+
+    # set all relevant stations to track
+    RELEVANT_STATIONS = {STATION_34TH, STATION_23RD, STATION_14TH, TARGET_STATION}
+
+    def process(self, element, arrivals_state=beam.DoFn.StateParam(TRIP_ARRIVALS)):
+        trip_id, record = element
+
+        stop_id = record.get('stop_id')
+
+        # optimize: ignore stations we don't care about at all
+        if stop_id not in self.RELEVANT_STATIONS:
+            # Drop irrelevant stations immediately
+            return
+
+        current_ts = record.get('timestamp')
+        if current_ts is None:
+            # We can't use this for state without a timestamp, drop it.
+            return
+        
+        # 1 - load current station
+        arrivals = arrivals_state.read() or {}
+
+        # 2 -  update state with current station arrival
+        arrivals[stop_id] = current_ts
+        arrivals_state.write(arrivals)
+
+        # 3 - if target station, calc features and emit
+        if stop_id == self.TARGET_STATION:
+            # calc travel time from 34th (if exists)
+            ts_34th = arrivals.get(self.STATION_34TH)
+            if ts_34th:
+                record['travel_time_34th'] = (current_ts - ts_34th) / 60.0
+            else:
+                record['travel_time_34th'] = None # explicit None or -1
+            
+            # calc travel time from 23rd
+            ts_23rd = arrivals.get(self.STATION_23RD)
+            if ts_23rd:
+                record['travel_time_23rd'] = (current_ts - ts_23rd) / 60.0
+            else:
+                record['travel_time_23rd'] = None
+
+            # calc travel time from 14th
+            ts_14th = arrivals.get(self.STATION_14TH)
+            if ts_14th:
+                record['travel_time_14th'] = (current_ts - ts_14th) / 60.0
+            else:
+                record['travel_time_14th'] = None
+            
+            # emitting the enriched target row
+            # clear state to free memory
+            arrivals_state.clear()
+
+            yield record
+

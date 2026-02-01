@@ -1,6 +1,7 @@
 import argparse 
 import logging
-from datetime      import datetime
+from datetime import datetime
+import pyarrow as pa
 import apache_beam as beam
 from apache_beam.options.pipeline_options import (PipelineOptions,               
                                                  GoogleCloudOptions, 
@@ -9,9 +10,43 @@ from apache_beam.options.pipeline_options import (PipelineOptions,
 from pipelines.beam.shared.transforms import (EnrichRecordFn, 
                                                CalculateServiceHeadwayFn, 
                                                CalculateTrackGapFn, 
-                                               EnrichWithEmpiricalFn)
+                                               EnrichWithEmpiricalFn,
+                                               CalculateUpstreamTravelTimeFn)
 
-# -- helper functions --
+# --- define schema for parque export ---
+output_schema = pa.schema([
+    # metadata
+    ('trip_uid',pa.string()),
+    ('trip_date',pa.string()), # or date32 if you parse it
+    ('arrival_time',pa.string()), # Input was datetime object, needs to be handled
+    ('timestamp',pa.float64()),
+
+    # keys
+    ('group_id',pa.string()),
+    ('route_id',pa.string()),
+    ('direction',pa.string()),
+    ('stop_id',pa.string()),
+
+    # features
+    ('time_idx',pa.int64()),
+    ('day_of_week',pa.int64()),
+    ('hour_sin',pa.float64()),
+    ('hour_cos',pa.float64()),
+    ('regime_id',pa.string()),
+    ('track_id',pa.string()),
+
+    # calculated features
+    ('service_headway',pa.float64()), # target
+    ('preceding_train_gap',pa.float64()),
+    ('empirical_median',pa.float64()),
+
+    # upstream lags (nullable)
+    ('travel_time_14th',pa.float64()),
+    ('travel_time_23rd',pa.float64()),
+    ('travel_time_34th',pa.float64()),
+])
+
+# --- helper functions ---
 def extract_schedule_key(element):
     """
     Used to key the data for aggregation: ((route, daytype, hour), headway)
@@ -45,7 +80,7 @@ def run(argv=None):
 
     # 2. configure beam pipelines
     pipeline_options = PipelineOptions(pipeline_args)
-    pipeline_options.veiw_as(SetupOptions).save_main_session = True
+    pipeline_options.view_as(SetupOptions).save_main_session = True
 
     google_cloud_options = pipeline_options.view_as(GoogleCloudOptions)
     google_cloud_options.project = known_args.project_id
@@ -81,11 +116,19 @@ def run(argv=None):
             | 'EnrichRecords' >> beam.ParDo(EnrichRecordFn())
         )
 
+        #1B travel time from upstream stations
+        target_rows = (
+            processed_rows
+            | 'KeyByTrip' >> beam.Map(lambda x: (x['trip_uid'], x))
+            | 'CalcTravelTime' >> beam.ParDo(CalculateUpstreamTravelTimeFn())
+            | 'UnKeyTrip' >> beam.Map(lambda x: x)
+        )
+
         #2 stateful feature: service headway target
         # key: group_id | value: row
         with_target = (
-            processed_rows
-            | 'KeyByGroup' >> beam.map(lambda x: (x['group_id'], x))
+            target_rows
+            | 'KeyByGroup' >> beam.Map(lambda x: (x['group_id'], x))
             | 'CalcServiceHeadway' >> beam.ParDo(CalculateServiceHeadwayFn())
             | 'UnKeyService' >> beam.Map(lambda x: x) # strip the key back to just value
         )
@@ -113,9 +156,18 @@ def run(argv=None):
         # apply to all data
         with_empirical = (
             with_track_gap
-            | 'EnrichEmprirical' >> beam.ParDo(
+            | 'EnrichEmpirical' >> beam.ParDo(
                 EnrichWithEmpiricalFn(),
                 empirical_map=beam.pvalue.AsDict(schedule_map)
+            )
+        )
+        write_to_parque = (
+            with_empirical
+            | 'WriteToParquet' >> beam.io.WriteToParquet(
+                file_path_prefix=f"{known_args.temp_location}/training_data",
+                schema=output_schema,
+                file_name_suffix='.parquet',
+                num_shards=1 # keep as 1 files for 75k rows since its small
             )
         )
 
