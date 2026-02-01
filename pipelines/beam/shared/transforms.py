@@ -149,9 +149,13 @@ class CalculateServiceHeadwayFn(beam.DoFn):
         previous_ts = last_arrival.read()
 
         if previous_ts is not None:
-            # difference in minutes
-            headway_min = (current_ts - previous_ts) / 60.0
-            record['service_headway'] = headway_min
+            # Session Timeout: if gap > 90 mins, treat as new session (headway=None)
+            if (current_ts - previous_ts) > (90 * 60):
+                previous_ts = None
+            else:
+                # difference in minutes
+                headway_min = (current_ts - previous_ts) / 60.0
+                record['service_headway'] = headway_min
         
         # 4 update state
         last_arrival.write(current_ts)

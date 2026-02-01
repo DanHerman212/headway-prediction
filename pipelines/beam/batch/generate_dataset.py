@@ -132,6 +132,8 @@ def run(argv=None):
         target_rows = (
             processed_rows
             | 'KeyByTrip' >> beam.Map(lambda x: (x['trip_uid'], x))
+            | 'GroupForSort' >> beam.GroupByKey()
+            | 'SortByTime' >> beam.FlatMap(sort_events)
             | 'CalcTravelTime' >> beam.ParDo(CalculateUpstreamTravelTimeFn())
             | 'UnKeyTrip' >> beam.Map(lambda x: x)
         )
@@ -145,6 +147,7 @@ def run(argv=None):
             | 'SortHeadway' >> beam.FlatMap(sort_events)
             | 'CalcServiceHeadway' >> beam.ParDo(CalculateServiceHeadwayFn())
             | 'UnKeyService' >> beam.Map(lambda x: x) # strip the key back to just value
+            | 'FilterInvalidHeadways' >> beam.Filter(lambda x: x.get('service_headway') is None or (x.get('service_headway') > 0.5 and x.get('service_headway') < 120))
         )
 
         # 3 calculate train gap on track
