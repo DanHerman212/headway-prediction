@@ -1,6 +1,0 @@
-Metadata-Version: 2.4
-Name: headway-prediction-pipeline
-Version: 0.1.0
-Requires-Dist: apache-beam[gcp]
-Requires-Dist: pyarrow
-Dynamic: requires-dist
