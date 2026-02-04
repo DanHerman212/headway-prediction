@@ -1,6 +1,6 @@
 import apache_beam as beam
 from apache_beam.transforms.userstate import ReadModifyWriteStateSpec
-from apache_beam.coders import FloatCoder, PickleCoder
+from apache_beam.coders import FloatCoder, PickleCoder, StrUtf8Coder
 from datetime import datetime
 import math
 
@@ -164,17 +164,22 @@ class CalculateServiceHeadwayFn(beam.DoFn):
 
 class CalculateTrackGapFn(beam.DoFn):
     """
-    Stateful DoFn calculate 'preceding_train_gap' (cross-line interaction).
+     Stateful DoFn calculate 'preceding_train_gap' (cross-line interaction).
     Partition key: track_id (e.g. A1, A3 (local, express))
-    state: last arrival time on this track (timestamp float)
+    state: 
+      - last arrival time on this track (timestamp float)
+      - last route id on this track (string)
     """
 
     LAST_ARR_TRACK = ReadModifyWriteStateSpec('last_arr_track', FloatCoder())
+    LAST_ROUTE_ID = ReadModifyWriteStateSpec('last_route_id', StrUtf8Coder())
 
     # target station ID (still fildered because we only predict at W4th for now)
     TARGET_STATION = "A32S"
 
-    def process(self, element, last_arrival=beam.DoFn.StateParam(LAST_ARR_TRACK)):
+    def process(self, element, 
+                last_arrival=beam.DoFn.StateParam(LAST_ARR_TRACK),
+                last_route=beam.DoFn.StateParam(LAST_ROUTE_ID)):
         key, record = element
 
         # 1. Filter: Only output features for target station rows
@@ -189,14 +194,22 @@ class CalculateTrackGapFn(beam.DoFn):
         
         # 2 read state
         previous_ts = last_arrival.read()
+        previous_route = last_route.read()
 
         # 3 calculate gap
         if previous_ts is not None:
             gap_min = (current_ts - previous_ts) / 60.0
             record['preceding_train_gap'] = gap_min
+        
+        if previous_route is not None:
+            record['preceding_route_id'] = previous_route
 
         # 4 update state
         last_arrival.write(current_ts)
+
+        current_route = record.get('route_id')
+        if current_route:
+            last_route.write(current_route)
 
         yield record
 
@@ -261,17 +274,31 @@ class CalculateUpstreamTravelTimeFn(beam.DoFn):
                 self.STATION_23RD in arrivals or 
                 self.STATION_14TH in arrivals)
 
+    def _get_upstream_metrics(self, arrivals, station_id):
+        data = arrivals.get(station_id)
+        if data is None:
+            return None, None
+        
+        # backward compatibility if state was just a float timestamp
+        if isinstance(data, float):
+            return data, None 
+            
+        return data.get('ts'), data.get('hw')
+
     def _enrich_and_yield(self, record, arrivals):
         current_ts = record.get('timestamp')
         
-        ts_34th = arrivals.get(self.STATION_34TH)
+        ts_34th, hw_34th = self._get_upstream_metrics(arrivals, self.STATION_34TH)
         record['travel_time_34th'] = (current_ts - ts_34th) / 60.0 if ts_34th else None
         
-        ts_23rd = arrivals.get(self.STATION_23RD)
+        ts_23rd, hw_23rd = self._get_upstream_metrics(arrivals, self.STATION_23RD)
         record['travel_time_23rd'] = (current_ts - ts_23rd) / 60.0 if ts_23rd else None
 
-        ts_14th = arrivals.get(self.STATION_14TH)
+        ts_14th, hw_14th = self._get_upstream_metrics(arrivals, self.STATION_14TH)
         record['travel_time_14th'] = (current_ts - ts_14th) / 60.0 if ts_14th else None
+
+        if hw_14th is not None:
+            record['upstream_headway_14th'] = hw_14th
 
         yield record
 
@@ -295,7 +322,11 @@ class CalculateUpstreamTravelTimeFn(beam.DoFn):
         pending = pending_state.read()
 
         # Update knowledge base
-        arrivals[stop_id] = current_ts
+        current_payload = {'ts': current_ts}
+        if 'upstream_headway_14th' in record:
+             current_payload['hw'] = record['upstream_headway_14th']
+
+        arrivals[stop_id] = current_payload
         arrivals_state.write(arrivals)
 
         # LOGIC BRANCH 1: We just received the Target (W4th)
@@ -312,3 +343,110 @@ class CalculateUpstreamTravelTimeFn(beam.DoFn):
                     yield from self._enrich_and_yield(pending, arrivals)
                     pending_state.clear()
 
+class CalculateUpstreamHeadwayFn(beam.DoFn):
+    """
+    Stateful DoFn to calculate headways at Upstream stations (14th)
+    we want to know: Was this strain already bunched at 14th?
+    Partition Key: group_id
+    State: Last arrival time at 14th
+    """
+    LAST_ARRIVAL_14TH = ReadModifyWriteStateSpec('last_arrival_14th', FloatCoder())
+
+    # 14 st - 1 Av (A/C/E)
+    UPSTREAM_STATION_14TH = 'A31S'
+
+    def process(self, element, last_arrival=beam.DoFn.StateParam(LAST_ARRIVAL_14TH)):
+        key, record = element
+
+        # we only calculate this metric when we see event at 14th st
+        # we attach it to the record so it travels with the trip_id grouping downstrea.
+        if record.get('stop_id')==self.UPSTREAM_STATION_14TH:
+            current_ts = record.get('timestamp')
+
+            if current_ts is not None:
+                previous_ts = last_arrival.read()
+
+                if previous_ts is not None:
+                # timeout logic: if gap > 90 mins, reset
+                    if (current_ts - previous_ts) < (90 * 60):
+                        headway_min = (current_ts - previous_ts) / 60.0
+                        record['upstream_headway_14th'] = headway_min
+                
+                last_arrival.write(current_ts)
+        
+        yield record
+
+
+class CalculateTravelTimeDeviationFn(beam.DoFn):
+    """
+    Calculates how much the upstream travel time deviates from the historical median.
+    
+    Input: Record with 'travel_time_34th', 'travel_time_14th' etc.
+    Side Input (median_tt_map): 
+        Key: (route_id, day_type, hour, origin_station_id)
+        Val: median_travel_time_minutes (float)
+    """
+    
+    # Map friendly names to station IDs for lookup
+    SEGMENTS = [
+        ('travel_time_34th', 'A28S'), # 34 St
+        ('travel_time_23rd', 'A30S'), # 23 St
+        ('travel_time_14th', 'A31S')  # 14 St
+    ]
+
+    def process(self, element, median_tt_map):
+        # 1. Setup Keys (Copy logic from EnrichWithEmpiricalFn)
+        route = element.get('route_id', 'OTHER')
+        
+        # Day Type
+        day_of_week = element.get('day_of_week')
+        day_type = 'Weekend' if day_of_week and day_of_week >= 5 else 'Weekday'
+
+        # Hour
+        ts = element.get('timestamp')
+        hour = 0
+        if ts: 
+            hour = datetime.fromtimestamp(ts).hour
+        
+        # 2. Iterate over known upstream segments
+        for feature_name, origin_station_id in self.SEGMENTS:
+            actual_tt = element.get(feature_name)
+            
+            # If we don't have an actual travel time (e.g. came from local track, missed 34th), skip
+            if actual_tt is None:
+                continue
+
+            # 3. Lookup Expected
+            # Key must match how you built the map in generate_dataset.py
+            key = (route, day_type, hour, origin_station_id)
+            expected_tt = median_tt_map.get(key)
+
+            if expected_tt is not None:
+                # DEVIATION: Positive = Slower than usual, Negative = Faster than usual
+                deviation = actual_tt - expected_tt
+                
+                # Suffix feature name (e.g. "travel_time_34th_deviation")
+                element[f'{feature_name}_deviation'] = deviation
+            else:
+                # If no history exists (rare), assume 0.0 (Normal) to keep data continuous
+                element[f'{feature_name}_deviation'] = 0.0
+
+        yield element
+
+
+class ReindexTimeInGroupsFn(beam.DoFn):
+    """
+    Re-generates 'time_idx' to be strictly sequential (0, 1, 2...) 
+    after filtering has created gaps.
+    Input: (key, List[records]) where records are sorted by time.
+    """
+    def process(self, element):
+        key, records = element
+        
+        # Sort just in case
+        sorted_records = sorted(records, key=lambda x: x['timestamp'])
+        
+        for i, record in enumerate(sorted_records):
+            # Overwrite the global time_idx with the sequential series index
+            record['time_idx'] = i 
+            yield record
