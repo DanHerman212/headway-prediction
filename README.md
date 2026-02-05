@@ -10,6 +10,10 @@ I'm very happy to report, we've reached state of the art performance, training a
     <img src="validation_mae.png" alt="Tensorboar metrics">
 </p>
 
+<p align="center">  
+    <img src="metrics.png" alt="Model performance metrics">
+</p>
+
 Over the next few weeks, I will create a production ML infrastructure to train the model and deploy a real time inference endpoint, to make predictions.  I will also create a real time data ingestion pipeline to process an event stream and call on the prediciton endpoint to make real time headway predictions and store them in a nosql database.  The final layer will be a mobile application that will serve the predictions from the nosql database to passengers, helping them manage uncertainty with their commute.
 
 I expect the total effort to be complete towards the end of February 2026.
