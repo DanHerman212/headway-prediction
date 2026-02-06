@@ -1,0 +1,132 @@
+import numpy as np
+import pandas as pd
+from omegaconf import DictConfig
+from pytorch_forecasting import TimeSeriesDataSet
+from pytorch_forecasting.data import GroupNormalizer
+
+import numpy as np
+import pandas as pd
+from omegaconf import DictConfig
+from pytorch_forecasting import TimeSeriesDataSet
+from pytorch_forecasting.data import GroupNormalizer
+
+def clean_dataset(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply physics-based cleaning, imputation, and time indexing.
+    """
+    df = data.copy()
+
+    # 1. Ensure Categoricals are Strings
+    cat_cols = ['group_id', 'route_id', 'direction', 'regime_id', 'track_id', 'preceding_route_id']
+    for col in cat_cols:
+        if col in df.columns:
+            df[col] = df[col].fillna("None").astype(str)
+
+    # 2. Parse Dates
+    if 'arrival_time' in df.columns:
+        df['arrival_time_dt'] = pd.to_datetime(df['arrival_time'])
+
+    # 3. Imputation Logic
+    # Fill gaps/upstream with median
+    for col in ['preceding_train_gap', 'upstream_headway_14th', 'travel_time_14th', 'travel_time_34th']:
+        if col in df.columns:
+            df[col] = df[col].fillna(df[col].median())
+
+    # Fill deviations with 0.0 (assume on-time if unknown)
+    dev_cols = [c for c in df.columns if 'deviation' in c]
+    for col in dev_cols:
+        df[col] = df[col].fillna(0.0)
+
+    # 4. Handle 23rd St Express/Local Logic
+    # Express trains (no stop) have null travel times. We mark them and fill with a neutral mean.
+    if 'travel_time_23rd' in df.columns:
+        # Create binary flag
+        df['stops_at_23rd'] = np.where((df['travel_time_23rd'].notna()) & (df['travel_time_23rd'] > 0), 1.0, 0.0)
+        
+        # Calculate mean of VALID stops only for filling
+        valid_mean_23rd = df.loc[df['stops_at_23rd'] == 1.0, 'travel_time_23rd'].mean()
+        if pd.isna(valid_mean_23rd): 
+            valid_mean_23rd = 0.0
+            
+        # Fill missing with mean
+        df.loc[df['stops_at_23rd'] == 0.0, 'travel_time_23rd'] = valid_mean_23rd
+        df['travel_time_23rd'] = df['travel_time_23rd'].fillna(valid_mean_23rd)
+
+    # 5. Correct Time Index (Physical Time)
+    # Calculate absolute minutes elapsed since the global minimum time
+    min_time = df['arrival_time_dt'].min()
+    df['time_idx'] = ((df['arrival_time_dt'] - min_time).dt.total_seconds() / 60).astype(int)
+
+    # Sort final dataframe
+    df = df.sort_values(['group_id', 'time_idx'])
+    
+    return df
+
+def get_slice_with_lookback(full_df: pd.DataFrame, start_date, end_date, lookback: int):
+    """
+    Extracts a time slice from the dataframe but prepends 'lookback' steps
+    from the history so the first prediction has context.
+    """
+    # Core slice
+    mask = (full_df['arrival_time_dt'] >= start_date) & (full_df['arrival_time_dt'] < end_date)
+    core_df = full_df[mask]
+
+    # Context slice (history)
+    prior_df = full_df[full_df['arrival_time_dt'] < start_date]
+    pre_data = []
+
+    for g_id, group in prior_df.groupby('group_id'):
+        pre_data.append(group.tail(lookback))
+
+    if pre_data:
+        lookback_df = pd.concat(pre_data)
+        return pd.concat([lookback_df, core_df]).sort_values(['group_id', 'time_idx'])
+    
+    return core_df
+
+def create_datasets(data: pd.DataFrame, config: DictConfig):
+    """
+    Splits the data and initializes TimeSeriesDataSet objects based on the configuration.
+    """
+    # Parse cutoffs (handle timestamps safely)
+    is_tz_aware = data['arrival_time_dt'].dt.tz is not None
+    tz = "UTC" if is_tz_aware else None
+    
+    train_end = pd.Timestamp(config.train_end_date, tz=tz)
+    val_end = pd.Timestamp(config.val_end_date, tz=tz)
+    test_end = pd.Timestamp(config.test_end_date, tz=tz)
+
+    # Create Physical Splits
+    train_df = data[data['arrival_time_dt'] < train_end]
+    val_df_input = get_slice_with_lookback(data, train_end, val_end, lookback=config.max_encoder_length)
+    test_df_input = get_slice_with_lookback(data, val_end, test_end, lookback=config.max_encoder_length)
+
+    # 1. Training Dataset
+    training = TimeSeriesDataSet(
+        train_df,
+        time_idx=config.time_idx,
+        target=config.target,
+        group_ids=list(config.group_ids),
+        min_encoder_length=config.min_encoder_length,
+        max_encoder_length=config.max_encoder_length,
+        min_prediction_length=config.min_prediction_length,
+        max_prediction_length=config.max_prediction_length,
+        static_categoricals=list(config.static_categoricals),
+        time_varying_known_categoricals=list(config.time_varying_known_categoricals),
+        time_varying_known_reals=list(config.time_varying_known_reals),
+        time_varying_unknown_categoricals=list(config.time_varying_unknown_categoricals),
+        time_varying_unknown_reals=list(config.time_varying_unknown_reals),
+        target_normalizer=GroupNormalizer(
+            groups=list(config.group_ids), transformation=config.target_normalizer
+        ),
+        add_relative_time_idx=config.add_relative_time_idx,
+        add_target_scales=config.add_target_scales,
+        add_encoder_length=config.add_encoder_length,
+        allow_missing_timesteps=True  # HARDCODED: Physical time index requires this
+    )
+
+    # 2. Validation & Test (from_dataset ensures consistent encoders)
+    validation = TimeSeriesDataSet.from_dataset(training, val_df_input, predict=False, stop_randomization=True)
+    test = TimeSeriesDataSet.from_dataset(training, test_df_input, predict=False, stop_randomization=True)
+
+    return training, validation, test

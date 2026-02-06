@@ -1,0 +1,11 @@
+zenml[mlflow,gcp]
+pytorch-forecasting
+lightning
+torch
+pandas<3.0.0
+numpy
+hydra-core
+google-cloud-storage
+gcsfs
+matplotlib
+seaborn

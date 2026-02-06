@@ -1,0 +1,10 @@
+# entrypoint for hydra defaults
+defaults:
+- _self_
+- model: tft
+- processing: default
+- training: default
+
+project_name: "realtime-headway-prediction"
+experiment_name: "production_training"
+seed: 42

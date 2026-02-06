@@ -1,0 +1,18 @@
+# Temporal Fusion Transformer Architecture
+hidden_size: 128
+lstm_layers: 1                # Default used in notebook
+dropout: 0.1
+attention_head_size: 4
+hidden_continuous_size: 64    # Optimized value from notebook
+learning_rate: 0.001          # Correct notebook value
+
+# Optimization Parameters
+optimizer: "Ranger"           # Exposed for future tuning (e.g. switch to AdamW)
+reduce_on_plateau_patience: 4
+reduce_on_plateau_min_lr: 1e-5
+
+# Loss / Output Configuration
+output_size: 3
+quantiles: [0.1, 0.5, 0.9]
+reduce_on_plateau_patience: 4
+log_interval: 10

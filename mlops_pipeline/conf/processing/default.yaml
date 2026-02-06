@@ -1,0 +1,54 @@
+# Data transformation parameters
+max_prediction_length: 1
+min_prediction_length: 1
+max_encoder_length: 20
+training_cutoff_delta: 0
+min_encoder_length: 10
+
+# Data Splits
+train_end_date: "2025-11-18"
+val_end_date: "2025-12-18"
+test_end_date: "2026-01-18"
+
+# TimeSeriesDataSet Options
+add_relative_time_idx: true
+add_target_scales: true
+add_encoder_length: true
+target_normalizer: "softplus"
+
+# Column Definitions
+time_idx: "time_idx"
+target: "service_headway"
+group_ids: 
+  - "group_id"
+
+static_categoricals:
+  - "route_id"
+
+time_varying_known_categoricals:
+  - "regime_id"
+  - "track_id"
+
+time_varying_known_reals:
+  - "time_idx"
+  - "hour_sin"
+  - "hour_cos"
+  - "empirical_median"
+
+time_varying_unknown_categoricals:
+  - "preceding_route_id"
+
+time_varying_unknown_reals:
+  - "service_headway"
+  - "preceding_train_gap"
+  - "upstream_headway_14th"
+  - "travel_time_14th"
+  - "travel_time_14th_deviation"
+  - "travel_time_23rd"
+  - "travel_time_23rd_deviation"
+  - "travel_time_34th"
+  - "travel_time_34th_deviation"
+  - "stops_at_23rd"
+
+
+  
