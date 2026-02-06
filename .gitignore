@@ -19,6 +19,23 @@ __pycache__/
 .venv/
 .DS_Store
 
+# ZenML
+.zen/
+.zen
+
+# MLflow
+mlruns/
+.trash/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local Artifacts
+local_artifacts/
+mlops_pipeline/local_artifacts/
+mlops_pipeline/mlruns/
+tensorboard_logs/
+
 # Artifacts
 local_artifacts/
 examples/
