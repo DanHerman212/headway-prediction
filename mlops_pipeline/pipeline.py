@@ -1,34 +1,33 @@
+from typing import List, Optional
+
 from zenml import pipeline
-from zenml.config import DockerSettings
+from zenml.config import DockerSettings, ResourceSettings
 from zenml.integrations.gcp.flavors.vertex_orchestrator_flavor import VertexOrchestratorSettings
+from zenml.integrations.gcp.vertex_custom_job_parameters import VertexCustomJobParameters
 
-from mlops_pipeline.src.steps.config_loader import load_config_step
-from mlops_pipeline.src.steps.ingest_data import ingest_data_step
-from mlops_pipeline.src.steps.process_data import process_data_step
-from mlops_pipeline.src.steps.train_model import train_model_step
-from mlops_pipeline.src.steps.evaluate_model import evaluate_model
+from .src.steps.config_loader import load_config_step
+from .src.steps.ingest_data import ingest_data_step
+from .src.steps.process_data import process_data_step
+from .src.steps.train_model import train_model_step
+from .src.steps.evaluate_model import evaluate_model
 
-# Define Vertex AI Settings (A100 GPU)
-# Correct way to specify machine_type and accelerator via ResourceSettings or StepOperator
-vertex_settings = VertexOrchestratorSettings(
-    pod_settings={ 
-        "node_pool": {
-            "machine_type": "a2-highgpu-1g",
-            "accelerator_type": "NVIDIA_TESLA_A100",
-            "accelerator_count": 1,
-        }
-    }
-)
-
-# Define Docker Settings (Ensure dependencies are installed)
+# Docker Settings
 docker_settings = DockerSettings(
     requirements="mlops_pipeline/requirements.txt",
     replicate_local_python_environment=False
 )
 
-from typing import List, Optional
+# GPU settings for the training step
+gpu_vertex_settings = VertexOrchestratorSettings(
+    custom_job_parameters=VertexCustomJobParameters(
+        machine_type="a2-highgpu-1g",
+        accelerator_type="NVIDIA_TESLA_A100",
+        accelerator_count=1,
+    )
+)
 
 @pipeline(
+    enable_cache=False,
     settings={
         "docker": docker_settings
     }
@@ -52,14 +51,12 @@ def headway_training_pipeline(
         config=config
     )
 
-    # 4. Train Model (Apply GPU Settings Here)
-    # Using ResourceSettings for generic resource requests or specialized Orchestrator settings
+    # 4. Train Model — GPU enabled via custom_job_parameters + ResourceSettings
     model = train_model_step.with_options(
         settings={
-            "orchestrator.vertex": {
-                "node_selector_constraint": ("cloud.google.com/gke-accelerator", "NVIDIA_TESLA_A100")
-            }
-        }
+            "orchestrator.vertex": gpu_vertex_settings,
+            "resources": ResourceSettings(gpu_count=1),
+        },
     )(
         training_dataset=train_ds,
         validation_dataset=val_ds,

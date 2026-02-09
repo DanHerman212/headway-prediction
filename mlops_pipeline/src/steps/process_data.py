@@ -5,7 +5,7 @@ from typing import Tuple
 from pytorch_forecasting import TimeSeriesDataSet
 from omegaconf import DictConfig
 
-from mlops_pipeline.src.data_processing import clean_dataset, create_datasets
+from ..data_processing import clean_dataset, create_datasets
 
 @step
 def process_data_step(

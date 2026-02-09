@@ -5,7 +5,7 @@ from omegaconf import DictConfig
 from pytorch_forecasting import TimeSeriesDataSet, TemporalFusionTransformer
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor
 
-from mlops_pipeline.src.model_definitions import create_model
+from ..model_definitions import create_model
 
 @step(enable_cache=False)
 def train_model_step(
