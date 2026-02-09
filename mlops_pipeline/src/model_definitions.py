@@ -5,11 +5,15 @@ from pytorch_forecasting.data import TimeSeriesDataSet
 
 class TFTDisablePlotting(TemporalFusionTransformer):
     """
-    Subclass of TFT that disables the log_prediction hook.
-    This prevents Matplotlib crashes when using BFloat16 precision on A100s.
+    Subclass of TFT that disables all figure-logging hooks.
+    This prevents crashes when a TensorBoard-compatible logger is not available
+    (e.g., CSVLogger's ExperimentWriter has no add_figure method) and avoids
+    Matplotlib issues with BFloat16 precision on A100s.
     """
     def log_prediction(self, x, out, batch_idx, **kwargs):
-        # SKIP plotting during training to avoid BFloat16 Matplotlib crash or overhead
+        pass
+
+    def log_interpretation(self, outputs):
         pass
 
 def create_model(training_dataset: TimeSeriesDataSet, config: DictConfig) -> TemporalFusionTransformer:
