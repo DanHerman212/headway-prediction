@@ -16,6 +16,7 @@ archive/
 # Python
 __pycache__/
 *.pyc
+*.egg-info/
 .venv/
 .DS_Store
 
@@ -34,9 +35,10 @@ mlruns/
 local_artifacts/
 mlops_pipeline/local_artifacts/
 mlops_pipeline/mlruns/
+
+# Logs
 tensorboard_logs/
+lightning_logs/
 
 # Artifacts
-local_artifacts/
 examples/
-tensorboard_logs/headway-prediction-experiments

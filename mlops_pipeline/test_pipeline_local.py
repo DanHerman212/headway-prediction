@@ -11,6 +11,9 @@ import os
 import time
 import torch
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 # Ensure project root is on path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -280,9 +283,13 @@ def test_group_encoder(tft):
         # Test inverse transform
         if hasattr(group_encoder, "classes_"):
             print(f"  Encoder classes: {group_encoder.classes_}")
-            # Verify we can decode index 0
-            decoded = group_encoder.classes_[0]
-            print(f"  Index 0 → '{decoded}'")
+            classes = group_encoder.classes_
+            if isinstance(classes, dict):
+                inv_map = {v: k for k, v in classes.items()}
+                decoded = inv_map[0]
+            else:
+                decoded = classes[0]
+            print(f"  Index 0 -> '{decoded}'")
         elif hasattr(group_encoder, "inverse_transform"):
             import numpy as np
             decoded = group_encoder.inverse_transform(np.array([0]))

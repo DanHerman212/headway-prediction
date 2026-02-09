@@ -53,18 +53,20 @@ class RushHourVisualizer:
         # Repeat group_ids for every timestep in the sequence
         group_ids = batch_groups.repeat_interleave(seq_len).numpy()
         
-        # Decode Group IDs to Strings (e.g., "0" -> "A", "1" -> "C")
+        # Decode Group IDs to Strings (e.g., 0 -> "A_South", 1 -> "C_South")
         try:
-            # Check if group_encoder has inverse_transform (LabelEncoder-like)
             if hasattr(self.group_encoder, "inverse_transform"):
                 decoded_groups = self.group_encoder.inverse_transform(group_ids)
             elif hasattr(self.group_encoder, "classes_"):
-                 # Manual mapping for some scikit-learn encoders if inverse_transform acts up with tensors
-                 unique_ids = np.unique(group_ids)
-                 mapping = {uid: self.group_encoder.classes_[uid] for uid in unique_ids}
-                 decoded_groups = np.array([mapping[g] for g in group_ids])
+                 # NaNLabelEncoder stores classes_ as {name: int_id}
+                 # We need the reverse: {int_id: name}
+                 classes = self.group_encoder.classes_
+                 if isinstance(classes, dict):
+                     inv_map = {v: k for k, v in classes.items()}
+                 else:
+                     inv_map = {i: c for i, c in enumerate(classes)}
+                 decoded_groups = np.array([inv_map.get(g, str(g)) for g in group_ids])
             else:
-                 # Fallback
                  decoded_groups = group_ids.astype(str)
         except Exception as e:
             logger.warning(f"Could not decode groups: {e}")
@@ -98,16 +100,20 @@ class RushHourVisualizer:
         """
         df = self._reconstruct_dataframe()
         
-        # Filter for A, C, E specifically
-        target_groups = ['A', 'C', 'E']
+        # Filter for A, C, E lines (group names may be "A", "A_South", etc.)
+        target_lines = ['A', 'C', 'E']
         available_groups = df['group'].unique()
         
-        # Normalize to handle potential variations like "Line A" vs "A"
-        plot_groups = [g for g in target_groups if g in available_groups]
+        # Match groups that start with the target line letter
+        plot_groups = []
+        for g in available_groups:
+            line_letter = str(g).split('_')[0]  # "A_South" -> "A"
+            if line_letter in target_lines:
+                plot_groups.append(g)
         
-        # If none found (e.g. maybe encoded as numbers), fallback to top 3 busiest
+        # Fallback to top 3 busiest if none found
         if not plot_groups:
-            logger.warning(f"Target groups {target_groups} not found in {available_groups}. Using Top 3.")
+            logger.warning(f"Target lines {target_lines} not found in {available_groups}. Using Top 3.")
             plot_groups = list(df['group'].value_counts().index[:3])
             
         fig, axes = plt.subplots(len(plot_groups), 1, figsize=(15, 5 * len(plot_groups)), sharex=False)
@@ -145,7 +151,8 @@ class RushHourVisualizer:
             ax.plot(plot_df['time_idx'], plot_df['pred_p50'], linestyle='-', label='Predicted', linewidth=2, color='#0039A6') 
             ax.fill_between(plot_df['time_idx'], plot_df['pred_p10'], plot_df['pred_p90'], color='#0039A6', alpha=0.15, label='90% CI')
             
-            ax.set_title(f"Subway Line {group}: Rush Hour Trace", fontsize=14, fontweight='bold')
+            line_letter = str(group).split('_')[0]  # "A_South" -> "A"
+            ax.set_title(f"Subway Line {line_letter}: Rush Hour Trace", fontsize=14, fontweight='bold')
             ax.set_ylabel("Headway (min)")
             ax.legend(loc="upper right")
             ax.grid(True, alpha=0.3)
