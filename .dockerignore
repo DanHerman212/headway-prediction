@@ -1,0 +1,34 @@
+# Core Python artifacts
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ZenML
+.zen/
+local_artifacts/
+
+# Data
+data/
+archive/
+
+# Logs
+tensorboard_logs/
+mlruns/
+wandb/
+
+# Git
+.git/
+.gitignore
+
+# OS
+.DS_Store
+
+# Large folders (add if needed)
+staging_area/
+batch_ingestion/

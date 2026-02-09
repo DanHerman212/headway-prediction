@@ -1,5 +1,10 @@
 import os
+import sys
 import argparse
+
+# Ensure the project root is always on the Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from mlops_pipeline.pipeline import headway_training_pipeline
 
 def main():
@@ -7,7 +12,7 @@ def main():
     parser.add_argument(
         "--data_path", 
         type=str, 
-        default="local_artifacts/processed_data/training_data.parquet",
+        default="gs://mlops-artifacts-realtime-headway-prediction/data/training_data.parquet",
         help="Path to the training data parquet file"
     )
     args = parser.parse_args()
@@ -18,11 +23,17 @@ def main():
     else:
         data_path = os.path.abspath(args.data_path)
 
-    # Run the pipeline
+    # Capture any extra arguments as Hydra overrides
+    # e.g., "training.max_epochs=50" "model.hidden_size=64"
+    _, hydra_overrides = parser.parse_known_args()
+
     print(f"Launching pipeline with data from: {data_path}")
+    if hydra_overrides:
+        print(f"Applying Hydra overrides: {hydra_overrides}")
     
     headway_training_pipeline(
-        data_path=data_path
+        data_path=data_path,
+        hydra_overrides=hydra_overrides
     )
 
 if __name__ == "__main__":

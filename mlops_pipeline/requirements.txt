@@ -1,12 +1,18 @@
 zenml[mlflow,gcp]
-pytorch-forecasting
-lightning
-torch
-pandas<3.0.0
-numpy
+# Core ML
+pytorch-forecasting==1.0.0
+lightning==2.1.2
+torch==2.1.2
+# Data
+pandas<2.2.0
+numpy<2.0.0
+# Protobuf/gRPC — kfp 2.15+ needs protobuf 6.x
+protobuf>=6.31.1
+grpcio>=1.78.0
+grpcio-status>=1.78.0
+# Libs
 hydra-core
 google-cloud-storage
 gcsfs
 matplotlib
-# Force cache invalidation 1
 seaborn

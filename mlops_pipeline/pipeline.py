@@ -9,10 +9,15 @@ from mlops_pipeline.src.steps.train_model import train_model_step
 from mlops_pipeline.src.steps.evaluate_model import evaluate_model
 
 # Define Vertex AI Settings (A100 GPU)
+# Correct way to specify machine_type and accelerator via ResourceSettings or StepOperator
 vertex_settings = VertexOrchestratorSettings(
-    machine_type="a2-highgpu-1g",  # Contains 1x A100 GPU
-    accelerator_type="NVIDIA_TESLA_A100",
-    accelerator_count=1,
+    pod_settings={ 
+        "node_pool": {
+            "machine_type": "a2-highgpu-1g",
+            "accelerator_type": "NVIDIA_TESLA_A100",
+            "accelerator_count": 1,
+        }
+    }
 )
 
 # Define Docker Settings (Ensure dependencies are installed)
@@ -21,19 +26,22 @@ docker_settings = DockerSettings(
     replicate_local_python_environment=False
 )
 
+from typing import List, Optional
+
 @pipeline(
     settings={
         "docker": docker_settings
     }
 )
 def headway_training_pipeline(
-    data_path: str
+    data_path: str,
+    hydra_overrides: Optional[List[str]] = None
 ):
     """
     End-to-end training pipeline for Headway Prediction.
     """
-    # 1. Load Configuration
-    config = load_config_step()
+    # 1. Load Configuration (defaults from YAML, overrides from CLI)
+    config = load_config_step(overrides=hydra_overrides)
 
     # 2. Ingest Data
     raw_df = ingest_data_step(file_path=data_path)
@@ -45,8 +53,13 @@ def headway_training_pipeline(
     )
 
     # 4. Train Model (Apply GPU Settings Here)
+    # Using ResourceSettings for generic resource requests or specialized Orchestrator settings
     model = train_model_step.with_options(
-        settings={"orchestrator.vertex": vertex_settings}
+        settings={
+            "orchestrator.vertex": {
+                "node_selector_constraint": ("cloud.google.com/gke-accelerator", "NVIDIA_TESLA_A100")
+            }
+        }
     )(
         training_dataset=train_ds,
         validation_dataset=val_ds,

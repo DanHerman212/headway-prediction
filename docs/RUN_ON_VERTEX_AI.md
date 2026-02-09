@@ -45,7 +45,14 @@ zenml experiment-tracker register mlflow_tracker \
     --tracking_password=admin
 ```
 
-### C. Register the Vertex AI Orchestrator
+### C. Register the Cloud Image Builder (Cloud Build)
+This delegates the Docker build process to Google Cloud Build, saving local disk space and bandwidth.
+
+```bash
+zenml image-builder register gcp_image_builder --flavor=gcp
+```
+
+### D. Register the Vertex AI Orchestrator
 This component is responsible for submitting your code as jobs to Vertex AI.
 
 ```bash
@@ -63,7 +70,8 @@ zenml stack register gcp_vertex_stack \
     -o vertex_orchestrator \
     -a gcs_store \
     -e mlflow_tracker \
-    -c artifact_registry
+    -c artifact_registry \
+    -i gcp_image_builder
 ```
 
 ## 3. Switching Stacks
