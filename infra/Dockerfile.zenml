@@ -1,0 +1,41 @@
+# =============================================================================
+# Dockerfile.zenml
+#
+# Custom ZenML Server image with:
+#   - zenml[server,templates] extras for the FastAPI-based server
+#   - pymysql driver for Cloud SQL MySQL connectivity (via Unix socket)
+#   - uvicorn as the ASGI server
+#
+# NOTE: ZenML internally rewrites mysql:// → mysql+pymysql://, so the
+# pymysql driver MUST be installed. mysqlclient will NOT be used even if
+# present. This matches the working MLflow setup exactly.
+# =============================================================================
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# System deps (git sometimes needed by ZenML internals)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install ZenML with server extras + MySQL driver
+# NOTE: Pin zenml version here to match your LOCAL client version.
+#       Version mismatch between client and server causes API errors.
+#       Check your local version with: zenml version
+RUN pip install --no-cache-dir \
+    "zenml[server,templates]" \
+    pymysql \
+    cryptography \
+    uvicorn
+
+# Tell ZenML it's running inside a container
+ENV ZENML_CONTAINER=true
+
+# Copy the entrypoint script
+COPY start_zenml.sh /app/start_zenml.sh
+RUN chmod +x /app/start_zenml.sh
+
+EXPOSE 8080
+
+CMD ["/app/start_zenml.sh"]

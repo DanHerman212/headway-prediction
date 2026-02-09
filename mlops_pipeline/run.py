@@ -13,7 +13,10 @@ def main():
     args = parser.parse_args()
 
     # Ensure absolute path for data
-    data_path = os.path.abspath(args.data_path)
+    if args.data_path.startswith("gs://"):
+        data_path = args.data_path
+    else:
+        data_path = os.path.abspath(args.data_path)
 
     # Run the pipeline
     print(f"Launching pipeline with data from: {data_path}")
