@@ -7,7 +7,7 @@ from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor
 
 from ..model_definitions import create_model
 
-@step(enable_cache=False)
+@step(enable_cache=False, experiment_tracker="mlflow_tracker")
 def train_model_step(
     training_dataset: TimeSeriesDataSet,
     validation_dataset: TimeSeriesDataSet,

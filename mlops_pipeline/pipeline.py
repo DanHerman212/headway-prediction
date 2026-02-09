@@ -11,10 +11,12 @@ from .src.steps.process_data import process_data_step
 from .src.steps.train_model import train_model_step
 from .src.steps.evaluate_model import evaluate_model
 
-# Docker Settings
+# Docker Settings — use CUDA-enabled parent image for GPU support
 docker_settings = DockerSettings(
+    parent_image="pytorch/pytorch:2.1.2-cuda12.1-cudnn8-runtime",
     requirements="mlops_pipeline/requirements.txt",
-    replicate_local_python_environment=False
+    replicate_local_python_environment=False,
+    python_package_installer="pip",
 )
 
 # GPU settings for the training step

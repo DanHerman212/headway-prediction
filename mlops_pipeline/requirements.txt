@@ -1,3 +1,4 @@
+--extra-index-url https://download.pytorch.org/whl/cu121
 zenml[mlflow,gcp]
 # Core ML
 pytorch-forecasting==1.0.0

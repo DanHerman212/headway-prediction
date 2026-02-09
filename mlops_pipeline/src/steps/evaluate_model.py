@@ -161,7 +161,7 @@ class RushHourVisualizer:
         plt.tight_layout()
         return fig
 
-@step(enable_cache=False)
+@step(enable_cache=False, experiment_tracker="mlflow_tracker")
 def evaluate_model(
     model: TemporalFusionTransformer,
     test_dataset: TimeSeriesDataSet,
