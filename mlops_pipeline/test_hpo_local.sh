@@ -11,13 +11,14 @@ IMAGE_NAME="hpo-trial-local:test"
 
 echo "=== 1. Building Docker Image ==="
 echo "Building ${IMAGE_NAME}..."
-docker build -f mlops_pipeline/Dockerfile.hpo -t "$IMAGE_NAME" .
+# Use --platform linux/amd64 to match the PyTorch base image and Vertex AI target
+docker build --platform linux/amd64 -f mlops_pipeline/Dockerfile.hpo -t "$IMAGE_NAME" .
 
 echo ""
 echo "=== 2. Verifying Imports & Environment ==="
 # We run a simple one-liner that attempts to import the entrypoint module.
 # If dependencies (ZenML, Hydra, PyTorch Forecasting) are missing/broken, this will fail.
-docker run --rm "$IMAGE_NAME" python -c "
+docker run --platform linux/amd64 --rm "$IMAGE_NAME" python -c "
 import sys
 import logging
 print('Python version:', sys.version)

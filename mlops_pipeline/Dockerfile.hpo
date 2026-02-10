@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY mlops_pipeline/ mlops_pipeline/
 
 # 4. Set Python path so 'mlops_pipeline' is importable
-ENV PYTHONPATH="${PYTHONPATH}:/app"
+ENV PYTHONPATH="/app:${PYTHONPATH}"
 
 # 5. Default command (can be overridden by Vertex AI args)
 # Just a placeholder; Vizier will invoke with specific args
