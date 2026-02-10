@@ -8,6 +8,36 @@ from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor
 
 from ..model_definitions import create_model
 
+
+class SafeMLFlowLogger(MLFlowLogger):
+    """
+    MLFlowLogger subclass that silently ignores TensorBoard-specific methods
+    (add_embedding, add_histogram, add_figure, add_image, etc.) that
+    pytorch-forecasting's BaseModel calls on logger.experiment.
+
+    MLFlowLogger.experiment returns an MlflowClient, which lacks these methods.
+    This wrapper intercepts the experiment property and returns a proxy that
+    delegates known methods to MlflowClient and no-ops everything else.
+    """
+
+    class _ExperimentProxy:
+        """Proxy that wraps MlflowClient and silently swallows unknown method calls."""
+
+        def __init__(self, client):
+            self._client = client
+
+        def __getattr__(self, name):
+            # If MlflowClient has the method, delegate to it
+            if hasattr(self._client, name):
+                return getattr(self._client, name)
+            # Otherwise return a no-op callable (swallows any args/kwargs)
+            return lambda *args, **kwargs: None
+
+    @property
+    def experiment(self):
+        client = super().experiment
+        return self._ExperimentProxy(client)
+
 @step(enable_cache=False, experiment_tracker="mlflow_tracker")
 def train_model_step(
     training_dataset: TimeSeriesDataSet,
@@ -21,7 +51,7 @@ def train_model_step(
     # 1. Get the active MLflow run (created by ZenML's experiment_tracker)
     active_run = mlflow.active_run()
     if active_run:
-        mlflow_logger = MLFlowLogger(
+        mlflow_logger = SafeMLFlowLogger(
             experiment_name=active_run.info.experiment_id,
             run_id=active_run.info.run_id,
             tracking_uri=mlflow.get_tracking_uri(),
