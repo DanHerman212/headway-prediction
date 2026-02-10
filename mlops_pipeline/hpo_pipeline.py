@@ -48,36 +48,31 @@ def headway_hpo_pipeline(
     # Force the HPO training profile (fast trials)
     # This override is applied on top of whatever user passed
     overrides = ["training=hpo"]
+    
+    # Also inject the search space into the main config tree dynamically
+    # This removes the need for a second load_config_step
+    overrides.append("+hpo_search_space=vizier_v1")
+
     if hydra_overrides:
         overrides.extend(hydra_overrides)
 
-    # 1. Load Config (Config for execution + Config for Search Space)
-    #    We load the main config first
-    execution_config = load_config_step(overrides=overrides)
-    
-    #    We also need to load the Search Space config
-    #    We recycle the load_config_step but point it to the search space file
-    #    Note: config_name="vizier_v1" looks for conf/hpo_search_space/vizier_v1.yaml
-    search_space_config = load_config_step(
-        config_name="hpo_search_space/vizier_v1", 
-        overrides=[]
-    )
+    # 1. Load Config (Execution + Search Space Combined)
+    config = load_config_step(overrides=overrides)
 
     # 2. Ingest Data
     raw_df = ingest_data_step(file_path=data_path)
 
     # 3. Process Data
-    #    Note: We use execution_config for processing parameters (lookback window etc.)
     train_ds, val_ds, _ = process_data_step(
         raw_data=raw_df, 
-        config=execution_config
+        config=config
     )
 
     # 4. Run Vizier
     best_params = run_vizier_study_step(
         training_dataset=train_ds,
         validation_dataset=val_ds,
-        search_space_config=search_space_config
+        config=config
     )
     
     return best_params

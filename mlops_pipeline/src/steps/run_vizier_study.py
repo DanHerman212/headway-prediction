@@ -91,7 +91,7 @@ def _parse_parameter_spec(search_space_conf: DictConfig) -> Dict[str, Any]:
 def run_vizier_study_step(
     training_dataset: TimeSeriesDataSet,
     validation_dataset: TimeSeriesDataSet,
-    search_space_config: DictConfig,
+    config: DictConfig,
 ) -> Dict[str, Any]:
     """
     Launches a Vertex AI Vizier Study.
@@ -102,14 +102,20 @@ def run_vizier_study_step(
         The processed training data.
     validation_dataset : TimeSeriesDataSet
         The processed validation data.
-    search_space_config : DictConfig
-        The 'hpo_search_space' configuration loaded from YAML.
+    config : DictConfig
+         The full Hydra configuration, containing 'hpo_search_space'.
 
     Returns
     -------
     best_params : Dict
         The hyperparameters of the best performing trial.
     """
+    # Extract search space config
+    if "hpo_search_space" not in config:
+        raise ValueError("Config is missing 'hpo_search_space'. Ensure you are loading the correct config or overrides.")
+    
+    search_space_config = config.hpo_search_space
+
     # 1. Initialize Vertex AI
     aiplatform.init(project=PROJECT_ID, location=LOCATION, staging_bucket=ARTIFACT_BUCKET)
 
