@@ -4,6 +4,7 @@ defaults:
 - model: tft
 - processing: default
 - training: default
+- infra: default
 
 project_name: "realtime-headway-prediction"
 experiment_name: "production_training"

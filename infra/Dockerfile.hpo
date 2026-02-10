@@ -22,6 +22,9 @@ COPY mlops_pipeline/ mlops_pipeline/
 # 4. Set Python path so 'mlops_pipeline' is importable
 ENV PYTHONPATH="/app"
 
-# 5. Default command (can be overridden by Vertex AI args)
-# Just a placeholder; Vizier will invoke with specific args
-CMD ["python", "-m", "mlops_pipeline.src.hpo_entrypoint", "--help"]
+# 5. Copy the Hydra config directory (needed at runtime)
+# Already included via COPY mlops_pipeline/ above
+
+# 6. ENTRYPOINT — Vertex AI container_spec.args are APPENDED to this.
+#    Do NOT put dataset paths here; they come from the orchestrator.
+ENTRYPOINT ["python", "-m", "mlops_pipeline.src.hpo_entrypoint"]

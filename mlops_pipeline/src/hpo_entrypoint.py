@@ -1,136 +1,124 @@
 """
 hpo_entrypoint.py
 -----------------
-The execution script for a single HPO trial.
-Runs inside a Vertex AI custom container.
+Execution script for a single Vertex AI HPO trial.
 
-Responsibilities:
-1. Accept generic command-line arguments (arbitrary key=value pairs).
-2. Load the cached TimeSeriesDataSets from GCS.
-3. Compose the Hydra configuration, applying the CLI arguments as overrides.
-4. Execute the training using `src.training_core`.
-5. Report the result (val_loss) to Vizier via `cloudml-hypertune`.
+This is the ENTRYPOINT of the Docker container.  Vizier launches it
+once per trial, appending hyperparameter flags (``--key=value``) to
+the command line.
+
+Flow:
+    1. Parse CLI args  →  dataset paths + Hydra overrides
+    2. Load cached TimeSeriesDataSets from GCS
+    3. Compose Hydra config with the overrides
+    4. Train via training_core.train_tft()
+    5. Report val_loss to Vizier via cloudml-hypertune
 """
 
 import argparse
 import logging
 import os
 import sys
-from typing import List, Tuple
-
-import hydra
-import hypertune
-import torch
-from hydra.core.global_hydra import GlobalHydra
-from omegaconf import DictConfig, OmegaConf
-from pytorch_forecasting import TimeSeriesDataSet
-
-# Add project root to path so we can import src.training_core
-# We assume this script runs as a module: python -m mlops_pipeline.src.hpo_entrypoint
-# But if run directly, we might need this path hack.
-PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, PROJ_ROOT)
-
-from mlops_pipeline.src.training_core import train_tft
+from typing import List, Optional, Tuple
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def parse_args() -> Tuple[argparse.Namespace, List[str]]:
+# ---------------------------------------------------------------------------
+# Argument parsing  (stdlib only — no heavy deps, safe to import in tests)
+# ---------------------------------------------------------------------------
+
+def vizier_args_to_hydra_overrides(unknown_args: List[str]) -> List[str]:
     """
-    Parses known args (dataset paths) and treats the rest as Hydra overrides.
-    Example:
-      --train_path gs://... --lr=0.01 --batch_size=64
-    Becomes:
-      args.train_path, overrides=["lr=0.01", "batch_size=64"]
+    Convert Vizier CLI flags into Hydra override strings.
+
+    Vizier passes hyperparameters as ``--key=value``.  Stripping the
+    ``--`` prefix yields a valid Hydra override directly.
     """
+    overrides: List[str] = []
+    for token in unknown_args:
+        if token.startswith("--") and "=" in token:
+            overrides.append(token[2:])          # --key=value → key=value
+        elif token.startswith("--"):
+            overrides.append(f"{token[2:]}=true") # bare flag fallback
+    return overrides
+
+
+def parse_and_convert_args(
+    args_list: Optional[List[str]] = None,
+) -> Tuple[argparse.Namespace, List[str]]:
+    """Parse known args (dataset paths) and convert the rest to Hydra overrides."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--train_dataset_path", type=str, required=True)
     parser.add_argument("--val_dataset_path", type=str, required=True)
-    
-    known_args, unknown_args = parser.parse_known_args()
-    
-    # Convert unknown args (like --learning_rate 0.01) into Hydra overrides (learning_rate=0.01)
-    # Vizier passes args as flags: --param_name value
-    hydra_overrides = []
-    i = 0
-    while i < len(unknown_args):
-        arg = unknown_args[i]
-        if arg.startswith("--"):
-            key = arg[2:]  # remove --
-            if i + 1 < len(unknown_args) and not unknown_args[i + 1].startswith("--"):
-                value = unknown_args[i + 1]
-                i += 1
-            else:
-                value = "true"  # flag assumption
-            
-            # Map bare param names to Hydra keys if necessary
-            # For simplicity, we assume the Vizier parameter names match Hydra keys exactly
-            # e.g. "model.learning_rate" -> model.learning_rate=0.01
-            hydra_overrides.append(f"{key}={value}")
-        i += 1
-        
-    return known_args, hydra_overrides
+
+    known, unknown = parser.parse_known_args(args_list)
+    return known, vizier_args_to_hydra_overrides(unknown)
 
 
-def load_dataset(gcs_path: str) -> TimeSeriesDataSet:
-    """Loads a serialized TimeSeriesDataSet from GCS."""
-    import gcsfs  # Implicit dependency for torch.load on gs:// paths
-    logger.info(f"Loading dataset from {gcs_path}...")
-    
-    # We use GCSFileSystem directly to be robust
+# ---------------------------------------------------------------------------
+# Main  (heavy imports are scoped here so the module stays lightweight)
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    import hydra
+    import hypertune
+    import torch
+    from hydra.core.global_hydra import GlobalHydra
+    from omegaconf import OmegaConf
+
+    # Ensure mlops_pipeline is importable
+    proj_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, proj_root)
+
+    from mlops_pipeline.src.training_core import train_tft
+
+    # Conf dir: mlops_pipeline/conf (sibling of src/)
+    conf_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "conf"))
+
+    # 1. Parse CLI
+    args, hydra_overrides = parse_and_convert_args()
+    logger.info("Dataset paths — train: %s  val: %s",
+                args.train_dataset_path, args.val_dataset_path)
+    logger.info("Hydra overrides from Vizier: %s", hydra_overrides)
+
+    # 2. Load data
+    import gcsfs
     fs = gcsfs.GCSFileSystem()
-    with fs.open(gcs_path, "rb") as f:
-        ds = torch.load(f, weights_only=False)
-    
-    logger.info(f"Loaded dataset. Length: {len(ds)}")
-    return ds
 
+    logger.info("Loading training dataset …")
+    with fs.open(args.train_dataset_path, "rb") as f:
+        train_ds = torch.load(f, weights_only=False)
 
-def main():
-    args, overrides = parse_args()
-    
-    logger.info(f"Received overrides from Vizier: {overrides}")
+    logger.info("Loading validation dataset …")
+    with fs.open(args.val_dataset_path, "rb") as f:
+        val_ds = torch.load(f, weights_only=False)
 
-    # 1. Load Data
-    train_ds = load_dataset(args.train_dataset_path)
-    val_ds = load_dataset(args.val_dataset_path)
-
-    # 2. Build Config
-    # We enforce 'training=hpo' to ensure we use the fast trial profile
-    base_overrides = ["training=hpo"] + overrides
-    
-    # Initialize Hydra relative to this file's location
-    # Conf is at ../../conf relative to mlops_pipeline/src/hpo_entrypoint.py
-    config_path = "../../conf" 
-    
+    # 3. Compose config
     GlobalHydra.instance().clear()
-    with hydra.initialize(version_base=None, config_path=config_path):
-        config = hydra.compose(config_name="config", overrides=base_overrides)
+    with hydra.initialize_config_dir(config_dir=conf_dir, version_base=None):
+        config = hydra.compose(config_name="config",
+                               overrides=["training=hpo"] + hydra_overrides)
+    logger.info("Effective config:\n%s", OmegaConf.to_yaml(config))
 
-    logger.info(f"Effective Config:\n{OmegaConf.to_yaml(config)}")
-
-    # 3. Train
-    # We pass None for logger -> defaults to CSVLogger (safe for container)
+    # 4. Train
     result = train_tft(
         training_dataset=train_ds,
         validation_dataset=val_ds,
         config=config,
-        lightning_logger=None, 
+        lightning_logger=None,
     )
 
-    # 4. Report to Vizier
+    # 5. Report to Vizier
     val_loss = result.best_val_loss
-    logger.info(f"Reporting metric val_loss={val_loss} to Vizier...")
-    
-    hpt = hypertune.HyperTune()
-    hpt.report_hyperparameter_tuning_metric(
+    logger.info("Reporting val_loss=%f to Vizier", val_loss)
+    reporter = hypertune.HyperTune()
+    reporter.report_hyperparameter_tuning_metric(
         hyperparameter_metric_tag="val_loss",
         metric_value=val_loss,
-        global_step=config.training.max_epochs
+        global_step=config.training.max_epochs,
     )
-    
     logger.info("Trial complete.")
 
 

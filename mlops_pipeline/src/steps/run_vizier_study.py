@@ -1,17 +1,19 @@
 """
 run_vizier_study.py
 -------------------
-ZenML step that orchestrates the HPO process on Vertex AI.
+ZenML step that orchestrates Vertex AI Hyperparameter Tuning.
 
-1. Serializes input datasets to GCS.
-2. Loads the search space from YAML configuration.
-3. Submits a Vertex AI HyperparameterTuningJob.
-4. Waits for completion and returns the winning parameters.
+Flow:
+    1. Serialize train/val datasets to GCS  (trials run in isolated containers)
+    2. Build Vertex AI ParameterSpec from the YAML search space
+    3. Submit a HyperparameterTuningJob and block until completion
+    4. Return the best trial's parameters as a plain dict
+
+All GCP project / region / image constants come from the Hydra ``infra``
+config group — nothing is hardcoded here.
 """
 
 import logging
-import json
-import yaml
 from typing import Any, Dict
 
 import torch
@@ -21,71 +23,67 @@ from omegaconf import DictConfig, OmegaConf
 from pytorch_forecasting import TimeSeriesDataSet
 from zenml import step
 
-# Constants
-# Ideally these would come from the stack, but for now we centralize them here
-# or read from the generic config if available.
-PROJECT_ID = "realtime-headway-prediction"
-LOCATION = "us-east1"
-ARTIFACT_BUCKET = "gs://mlops-artifacts-realtime-headway-prediction"
-HPO_CACHE_DIR = f"{ARTIFACT_BUCKET}/hpo_cache"
-STUDY_DISPLAY_NAME_PREFIX = "headway-tft-hpo"
-
-# The header for the worker container image
-# This assumes the image is already built and pushed.
-# TODO: In a mature setup, we might build this image dynamically or pull from config.
-TRIAL_IMAGE_URI = f"us-east1-docker.pkg.dev/{PROJECT_ID}/mlops-images/hpo-trial:latest"
-
 logger = logging.getLogger(__name__)
 
 
-def _cache_dataset(dataset: TimeSeriesDataSet, filename: str) -> str:
-    """Serializes dataset to GCS and returns the path."""
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _cache_dataset(dataset: TimeSeriesDataSet, filename: str, cache_dir: str) -> str:
+    """Serialize a dataset to GCS and return the gs:// path."""
     import gcsfs
-    path = f"{HPO_CACHE_DIR}/{filename}"
+
+    path = f"{cache_dir}/{filename}"
     fs = gcsfs.GCSFileSystem()
     with fs.open(path, "wb") as f:
         torch.save(dataset, f)
-    logger.info(f"Cached dataset to {path}")
+    logger.info("Cached dataset → %s", path)
     return path
 
 
-def _parse_parameter_spec(search_space_conf: DictConfig) -> Dict[str, Any]:
-    """
-    Converts our YAML search space definition into Vertex AI ParameterSpec.
-    """
-    params = {}
-    raw_conf = OmegaConf.to_container(search_space_conf, resolve=True)
-    
-    for param_name, spec in raw_conf["parameters"].items():
-        p_type = spec["type"].upper()
-        scale = spec.get("scale", None) # 'log', 'linear', or None
-        
-        if p_type == "DOUBLE":
-            params[param_name] = hpt.DoubleParameterSpec(
-                min=spec["min"], 
-                max=spec["max"], 
-                scale=scale
-            )
-        elif p_type == "INTEGER":
-            params[param_name] = hpt.IntegerParameterSpec(
-                min=spec["min"], 
-                max=spec["max"], 
-                scale=scale
-            )
-        elif p_type == "DISCRETE":
-            params[param_name] = hpt.DiscreteParameterSpec(
-                values=spec["values"], 
-                scale=scale
-            )
-        elif p_type == "CATEGORICAL":
-            params[param_name] = hpt.CategoricalParameterSpec(
-                values=spec["values"]
-            )
+def _build_parameter_spec(search_space: DictConfig) -> Dict[str, Any]:
+    """Convert our YAML search-space definition into Vertex AI ParameterSpec objects."""
+    params: Dict[str, Any] = {}
+    raw = OmegaConf.to_container(search_space, resolve=True)
+
+    for name, spec in raw["parameters"].items():
+        kind = spec["type"].upper()
+        scale = spec.get("scale", None)
+
+        if kind == "DOUBLE":
+            params[name] = hpt.DoubleParameterSpec(min=spec["min"], max=spec["max"], scale=scale)
+        elif kind == "INTEGER":
+            params[name] = hpt.IntegerParameterSpec(min=spec["min"], max=spec["max"], scale=scale)
+        elif kind == "DISCRETE":
+            params[name] = hpt.DiscreteParameterSpec(values=spec["values"], scale=scale)
+        elif kind == "CATEGORICAL":
+            params[name] = hpt.CategoricalParameterSpec(values=spec["values"])
         else:
-            logger.warning(f"Unknown parameter type {p_type} for {param_name}. Skipping.")
+            logger.warning("Unknown parameter type %s for %s — skipping", kind, name)
 
     return params
 
+
+def _cast_best_params(best_params: Dict[str, Any], search_space: DictConfig) -> Dict[str, Any]:
+    """Cast Vizier result values to the correct Python types based on the search-space spec."""
+    raw = OmegaConf.to_container(search_space, resolve=True)
+    for key, value in best_params.items():
+        spec = raw["parameters"].get(key)
+        if spec is None:
+            continue
+        if spec["type"].upper() == "INTEGER":
+            best_params[key] = int(value)
+        elif spec["type"].upper() == "DISCRETE":
+            values = spec.get("values", [])
+            if values and isinstance(values[0], int):
+                best_params[key] = int(value)
+    return best_params
+
+
+# ---------------------------------------------------------------------------
+# ZenML Step
+# ---------------------------------------------------------------------------
 
 @step(enable_cache=False)
 def run_vizier_study_step(
@@ -94,124 +92,110 @@ def run_vizier_study_step(
     config: DictConfig,
 ) -> Dict[str, Any]:
     """
-    Launches a Vertex AI Vizier Study.
+    Launch a Vertex AI Vizier study and return the best hyperparameters.
 
     Parameters
     ----------
-    training_dataset : TimeSeriesDataSet
-        The processed training data.
-    validation_dataset : TimeSeriesDataSet
-        The processed validation data.
+    training_dataset, validation_dataset : TimeSeriesDataSet
+        Processed data splits.
     config : DictConfig
-         The full Hydra configuration, containing 'hpo_search_space'.
+        Full Hydra config.  Must contain ``hpo_search_space`` and ``infra``.
 
     Returns
     -------
-    best_params : Dict
-        The hyperparameters of the best performing trial.
+    dict  — best hyperparameters from the winning trial.
     """
-    # Extract search space config
+    # ---- Validate required config sections ----------------------------------
     if "hpo_search_space" not in config:
-        raise ValueError("Config is missing 'hpo_search_space'. Ensure you are loading the correct config or overrides.")
-    
-    search_space_config = config.hpo_search_space
+        raise ValueError("Config missing 'hpo_search_space'.  "
+                         "Did you forget the override '+hpo_search_space=vizier_v1'?")
+    if "infra" not in config:
+        raise ValueError("Config missing 'infra'.  Add 'infra: default' to conf/config.yaml defaults.")
 
-    # 1. Initialize Vertex AI
-    aiplatform.init(project=PROJECT_ID, location=LOCATION, staging_bucket=ARTIFACT_BUCKET)
+    infra = config.infra
+    search_space = config.hpo_search_space
 
-    # 2. Serialize Data to GCS
-    #    The trials run in isolated containers, so they need to download the data.
-    train_path = _cache_dataset(training_dataset, "train.pt")
-    val_path = _cache_dataset(validation_dataset, "val.pt")
+    # ---- 1. Init Vertex AI --------------------------------------------------
+    aiplatform.init(
+        project=infra.project_id,
+        location=infra.location,
+        staging_bucket=infra.artifact_bucket,
+    )
 
-    # 3. Define the Trial Specification (CustomJob)
-    #    This tells Vertex what command to run for each trial.
-    #    The arguments match what src/hpo_entrypoint.py expects.
-    worker_pool_specs = [{
-        "machine_spec": {
-            "machine_type": "a2-highgpu-1g",  # A100 for speed
-            "accelerator_type": "NVIDIA_TESLA_A100",
-            "accelerator_count": 1,
-        },
-        "replica_count": 1,
-        "container_spec": {
-            "image_uri": TRIAL_IMAGE_URI,
-            "args": [
-                # Entrypoint script path inside the container
-                # We use python -m to ensure imports work
-                "python", "-m", "mlops_pipeline.src.hpo_entrypoint",
-                "--train_dataset_path", train_path,
-                "--val_dataset_path", val_path,
-                # Vizier will append --param_name=value flags automatically
-            ],
-        },
-    }]
+    # ---- 2. Cache datasets to GCS ------------------------------------------
+    train_path = _cache_dataset(training_dataset, "train.pt", infra.hpo_cache_dir)
+    val_path = _cache_dataset(validation_dataset, "val.pt", infra.hpo_cache_dir)
+
+    # ---- 3. Define trial worker spec ----------------------------------------
+    #
+    #   The Dockerfile sets:
+    #       ENTRYPOINT ["python", "-m", "mlops_pipeline.src.hpo_entrypoint"]
+    #
+    #   So `container_spec.args` should contain ONLY the arguments
+    #   passed to that entrypoint.  Vizier will append --param=value
+    #   flags after these.
+    #
+    worker_pool_specs = [
+        {
+            "machine_spec": {
+                "machine_type": infra.machine_type,
+                "accelerator_type": infra.accelerator_type,
+                "accelerator_count": infra.accelerator_count,
+            },
+            "replica_count": 1,
+            "container_spec": {
+                "image_uri": infra.trial_image_uri,
+                "args": [
+                    "--train_dataset_path", train_path,
+                    "--val_dataset_path", val_path,
+                    # Vizier will append --<param>=<value> after these
+                ],
+            },
+        }
+    ]
 
     custom_job = aiplatform.CustomJob(
-        display_name=f"{STUDY_DISPLAY_NAME_PREFIX}-trial-job",
+        display_name=f"{infra.study_display_name}-trial-job",
         worker_pool_specs=worker_pool_specs,
     )
 
-    # 4. Create the HyperparameterTuningJob
-    #    Map the YAML config to the SDK objects
-    parameter_spec = _parse_parameter_spec(search_space_config)
-    
-    # Extract metric info
-    metric_id = search_space_config.metric.id
-    metric_goal = search_space_config.metric.goal # 'minimize' or 'maximize'
-    metric_spec = {metric_id: metric_goal}
+    # ---- 4. Submit HPO job --------------------------------------------------
+    parameter_spec = _build_parameter_spec(search_space)
+    metric_spec = {search_space.metric.id: search_space.metric.goal}
 
     hpo_job = aiplatform.HyperparameterTuningJob(
-        display_name=STUDY_DISPLAY_NAME_PREFIX,
+        display_name=infra.study_display_name,
         custom_job=custom_job,
         metric_spec=metric_spec,
         parameter_spec=parameter_spec,
-        max_trial_count=20,  # Cap cost
-        parallel_trial_count=4,
-        search_algorithm=None, # Vizier default (Bayesian Optimization)
+        max_trial_count=infra.max_trial_count,
+        parallel_trial_count=infra.parallel_trial_count,
+        search_algorithm=None,  # Vizier default (Bayesian)
     )
 
-    logger.info("Submitting Vizier Study...")
-    hpo_job.run(sync=True) # Block until done
+    logger.info("Submitting Vizier study …")
+    hpo_job.run(sync=True)
 
-    # 5. Extract Results
-    logger.info("Study completed. Fetching best trial...")
-    best_trial = hpo_job.trials[0] # Just initialization
-    
-    # Sort trials by metric to find the 'best' one
-    # Note: Vertex SDK doesn't always strictly order them in .trials
-    trials = hpo_job.trials
-    # Filter out failed/cancelled
-    valid_trials = [t for t in trials if t.state.name == "SUCCEEDED"]
-    
+    # ---- 5. Extract best trial ----------------------------------------------
+    logger.info("Study completed.  Extracting best trial …")
+    valid_trials = [t for t in hpo_job.trials if t.state.name == "SUCCEEDED"]
     if not valid_trials:
-        raise RuntimeError("No trials succeeded!")
+        raise RuntimeError("All trials failed — no successful results.")
 
+    metric_goal = search_space.metric.goal
     sorted_trials = sorted(
         valid_trials,
         key=lambda t: t.final_measurement.metrics[0].value,
-        reverse=(metric_goal == "maximize")
+        reverse=(metric_goal == "maximize"),
     )
-    best_trial = sorted_trials[0]
+    best = sorted_trials[0]
 
-    logger.info(f"Best Trial ID: {best_trial.id}")
-    logger.info(f"Best Metric ({metric_id}): {best_trial.final_measurement.metrics[0].value}")
+    logger.info("Best trial %s — %s = %f",
+                best.id, search_space.metric.id,
+                best.final_measurement.metrics[0].value)
 
-    # Convert parameter objects to a clean dict
-    best_params = {p.parameter_id: p.value for p in best_trial.parameters}
-    
-    # Type correction: everything comes back as float/string, need to cast ints
-    # We can infer from the search space config
-    raw_conf = OmegaConf.to_container(search_space_config, resolve=True)
-    for k, v in best_params.items():
-        spec = raw_conf["parameters"].get(k)
-        if spec and spec["type"] in ["INTEGER", "DISCRETE"]:
-             # Heuristic: if defined values are ints, cast result to int
-             values = spec.get("values", [])
-             if values and isinstance(values[0], int):
-                 best_params[k] = int(v)
-             elif spec["type"] == "INTEGER":
-                 best_params[k] = int(v)
+    best_params = {p.parameter_id: p.value for p in best.parameters}
+    best_params = _cast_best_params(best_params, search_space)
 
-    logger.info(f"Best Parameters: {best_params}")
+    logger.info("Best parameters: %s", best_params)
     return best_params

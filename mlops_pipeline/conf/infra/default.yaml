@@ -1,0 +1,20 @@
+# GCP infrastructure settings for the HPO pipeline.
+# Override these per-environment without touching code.
+
+project_id: "realtime-headway-prediction"
+location: "us-east1"
+artifact_bucket: "gs://mlops-artifacts-realtime-headway-prediction"
+hpo_cache_dir: "${infra.artifact_bucket}/hpo_cache"
+
+# Artifact Registry image for HPO trial containers
+trial_image_uri: "${infra.location}-docker.pkg.dev/${infra.project_id}/mlops-images/hpo-trial:latest"
+
+# Vizier study settings
+study_display_name: "headway-tft-hpo"
+max_trial_count: 20
+parallel_trial_count: 5
+
+# Machine spec for each trial worker
+machine_type: "g2-standard-4"
+accelerator_type: "NVIDIA_L4"
+accelerator_count: 1
