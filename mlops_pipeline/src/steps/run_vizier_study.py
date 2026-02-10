@@ -167,7 +167,7 @@ def run_vizier_study_step(
         metric_spec=metric_spec,
         parameter_spec=parameter_spec,
         max_trial_count=20,  # Cap cost
-        parallel_trial_count=5,
+        parallel_trial_count=4,
         search_algorithm=None, # Vizier default (Bayesian Optimization)
     )
 
