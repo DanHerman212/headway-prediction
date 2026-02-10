@@ -148,7 +148,7 @@ def run_vizier_study_step(
 
     # 4. Create the HyperparameterTuningJob
     #    Map the YAML config to the SDK objects
-    parameter_spec = _parse_parameter_spec(search_space_conf)
+    parameter_spec = _parse_parameter_spec(search_space_config)
     
     # Extract metric info
     metric_id = search_space_config.metric.id
