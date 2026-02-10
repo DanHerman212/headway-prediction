@@ -1,5 +1,6 @@
 import mlflow
 import lightning.pytorch as pl
+from lightning.pytorch.loggers import MLFlowLogger
 from zenml import step
 from omegaconf import DictConfig
 from pytorch_forecasting import TimeSeriesDataSet, TemporalFusionTransformer
@@ -15,12 +16,35 @@ def train_model_step(
 ) -> TemporalFusionTransformer:
     """
     Configures the Trainer and executes the training loop.
-    Autologs metrics to MLflow.
+    Logs metrics to MLflow via Lightning's MLFlowLogger.
     """
-    # 1. Enable MLflow Autologging
-    mlflow.pytorch.autolog()
+    # 1. Get the active MLflow run (created by ZenML's experiment_tracker)
+    active_run = mlflow.active_run()
+    if active_run:
+        mlflow_logger = MLFlowLogger(
+            experiment_name=active_run.info.experiment_id,
+            run_id=active_run.info.run_id,
+            tracking_uri=mlflow.get_tracking_uri(),
+        )
+    else:
+        mlflow_logger = None
 
-    # 2. Create DataLoaders
+    # 2. Log training hyperparameters
+    mlflow.log_params({
+        "batch_size": config.training.batch_size,
+        "max_epochs": config.training.max_epochs,
+        "learning_rate": config.model.learning_rate,
+        "gradient_clip_val": config.training.gradient_clip_val,
+        "precision": config.training.precision,
+        "accelerator": config.training.accelerator,
+        "early_stopping_patience": config.training.early_stopping_patience,
+        "hidden_size": config.model.hidden_size,
+        "attention_head_size": config.model.attention_head_size,
+        "dropout": config.model.dropout,
+        "hidden_continuous_size": config.model.hidden_continuous_size,
+    })
+
+    # 3. Create DataLoaders
     train_dataloader = training_dataset.to_dataloader(
         train=True, 
         batch_size=config.training.batch_size, 
@@ -46,7 +70,7 @@ def train_model_step(
     )
     lr_logger = LearningRateMonitor()
 
-    # 5. Initialize Trainer
+    # 6. Initialize Trainer
     trainer = pl.Trainer(
         max_epochs=config.training.max_epochs,
         accelerator=config.training.accelerator,
@@ -56,6 +80,7 @@ def train_model_step(
         limit_train_batches=config.training.limit_train_batches,
         precision=config.training.precision,
         callbacks=[lr_logger, early_stop_callback],
+        logger=mlflow_logger,
     )
 
     # 6. Fit
