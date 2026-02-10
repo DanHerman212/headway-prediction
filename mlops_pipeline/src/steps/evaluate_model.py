@@ -3,6 +3,7 @@ evaluate_model.py
 -----------------
 Evaluation step for the Headway Prediction Pipeline.
 Calculates global metrics (MAE, SMAPE) and generates 'Rush Hour' specific plots for A, C, E lines.
+Logs results to TensorBoard.
 """
 
 import pandas as pd
@@ -13,7 +14,7 @@ import seaborn as sns
 import logging
 from typing import Tuple, Dict, Any
 
-import mlflow
+from torch.utils.tensorboard import SummaryWriter
 from zenml import step
 from omegaconf import DictConfig
 from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
@@ -161,7 +162,7 @@ class RushHourVisualizer:
         plt.tight_layout()
         return fig
 
-@step(enable_cache=False, experiment_tracker="mlflow_tracker")
+@step(enable_cache=False)
 def evaluate_model(
     model: TemporalFusionTransformer,
     test_dataset: TimeSeriesDataSet,
@@ -222,21 +223,17 @@ def evaluate_model(
     # Generate the Rush Hour plot
     fig = viz.plot_rush_hour(window_size=180) # 3 hour window
     
-    # 5. Log to MLflow
-    # Check if run is active (it should be in ZenML pipeline if properly integrated, or manual)
+    # 5. Log to TensorBoard
+    tb_log_dir = config.training.tensorboard_log_dir
     try:
-        # Check if an active run exists; if not, ZenML's MLflow integration usually handles it,
-        # but explicit logging is safer within the step context if integration is enabled.
-        if mlflow.active_run():
-            mlflow.log_metric("test_mae", mae)
-            mlflow.log_metric("test_smape", smape)
-            mlflow.log_figure(fig, "rush_hour_performance.png")
-            logger.info("Evaluation metrics and plots logged to MLflow.")
-        else:
-            logger.warning("No active MLflow run detected. Skipping log_figure.")
+        writer = SummaryWriter(log_dir=f"{tb_log_dir}/evaluation")
+        writer.add_scalar("eval/test_mae", mae, global_step=0)
+        writer.add_scalar("eval/test_smape", smape, global_step=0)
+        writer.add_figure("eval/rush_hour_performance", fig, global_step=0)
+        writer.close()
+        logger.info("Evaluation metrics and plot logged to TensorBoard at %s", tb_log_dir)
     except Exception as e:
-        logger.warning(f"Could not log to MLflow: {e}")
-        # Save locally for debugging
+        logger.warning("Could not log to TensorBoard: %s", e)
         fig.savefig("rush_hour_performance_debug.png")
         logger.info("Saved rush_hour_performance_debug.png locally")
         

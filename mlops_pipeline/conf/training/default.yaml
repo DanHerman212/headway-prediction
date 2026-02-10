@@ -16,3 +16,14 @@ enable_model_summary: true
 # Early Stopping Configuration
 early_stopping_patience: 15
 early_stopping_min_delta: 1e-4
+
+# TensorBoard
+tensorboard_log_dir: "gs://mlops-artifacts-realtime-headway-prediction/tensorboard_logs"
+
+# Profiler — set to "pytorch" to capture GPU kernel traces in TensorBoard
+profiler: null
+profiler_schedule:
+  wait: 1
+  warmup: 1
+  active: 3
+  repeat: 2

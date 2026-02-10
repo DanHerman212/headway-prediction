@@ -1,6 +1,7 @@
 --extra-index-url https://download.pytorch.org/whl/cu121
 setuptools>=70,<78
-zenml[mlflow,gcp]
+zenml[gcp]
+tensorboard
 # Core ML
 pytorch-forecasting==1.0.0
 lightning==2.1.2

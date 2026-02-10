@@ -19,7 +19,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends git && \
     rm -rf /var/lib/apt/lists/*
 
-# Install ZenML with server extras + MySQL driver
+# Install ZenML with server extras + MySQL driver + GCP integration
 # NOTE: Pin zenml version here to match your LOCAL client version.
 #       Version mismatch between client and server causes API errors.
 #       Check your local version with: zenml version
@@ -27,7 +27,10 @@ RUN pip install --no-cache-dir \
     "zenml[server,templates]" \
     pymysql \
     cryptography \
-    uvicorn
+    uvicorn \
+    gcsfs \
+    google-cloud-storage \
+    google-cloud-logging
 
 # Tell ZenML it's running inside a container
 ENV ZENML_CONTAINER=true

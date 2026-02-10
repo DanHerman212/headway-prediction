@@ -1,87 +1,58 @@
-import mlflow
-from lightning.pytorch.loggers import MLFlowLogger
+"""train_model.py — ZenML training step using TensorBoard for experiment tracking."""
+
+import logging
+
+from lightning.pytorch.loggers import TensorBoardLogger
 from zenml import step
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from pytorch_forecasting import TimeSeriesDataSet, TemporalFusionTransformer
 
 from ..training_core import train_tft
 
-
-class SafeMLFlowLogger(MLFlowLogger):
-    """
-    MLFlowLogger subclass that silently ignores TensorBoard-specific methods
-    (add_embedding, add_histogram, add_figure, add_image, etc.) that
-    pytorch-forecasting's BaseModel calls on logger.experiment.
-
-    MLFlowLogger.experiment returns an MlflowClient, which lacks these methods.
-    This wrapper intercepts the experiment property and returns a proxy that
-    delegates known methods to MlflowClient and no-ops everything else.
-    """
-
-    class _ExperimentProxy:
-        """Proxy that wraps MlflowClient and silently swallows unknown method calls."""
-
-        def __init__(self, client):
-            self._client = client
-
-        def __getattr__(self, name):
-            # If MlflowClient has the method, delegate to it
-            if hasattr(self._client, name):
-                return getattr(self._client, name)
-            # Otherwise return a no-op callable (swallows any args/kwargs)
-            return lambda *args, **kwargs: None
-
-    @property
-    def experiment(self):
-        client = super().experiment
-        return self._ExperimentProxy(client)
+logger = logging.getLogger(__name__)
 
 
-@step(enable_cache=False, experiment_tracker="mlflow_tracker")
+@step(enable_cache=False)
 def train_model_step(
     training_dataset: TimeSeriesDataSet,
     validation_dataset: TimeSeriesDataSet,
     config: DictConfig,
 ) -> TemporalFusionTransformer:
     """
-    Configures the Trainer and executes the training loop.
-    Logs metrics to MLflow via Lightning's MLFlowLogger.
+    Train the TFT model with TensorBoard logging.
 
-    Refactored to delegate core logic to src.training_core.train_tft
+    Logs training scalars, gradient histograms, and hyperparameters
+    to the GCS-backed TensorBoard log directory defined in config.
     """
-    # 1. Get the active MLflow run (created by ZenML's experiment_tracker)
-    active_run = mlflow.active_run()
-    if active_run:
-        mlflow_logger = SafeMLFlowLogger(
-            experiment_name=active_run.info.experiment_id,
-            run_id=active_run.info.run_id,
-            tracking_uri=mlflow.get_tracking_uri(),
-        )
-    else:
-        mlflow_logger = None
+    # 1. Set up TensorBoard logger → writes to GCS
+    tb_log_dir = config.training.tensorboard_log_dir
+    tb_logger = TensorBoardLogger(
+        save_dir=tb_log_dir,
+        name=config.get("experiment_name", "headway_tft"),
+        default_hp_metric=False,
+    )
+    logger.info("TensorBoard logging to: %s", tb_log_dir)
 
-    # 2. Log training hyperparameters
-    #    (This remains in the step because it's specific to MLflow experiment tracking)
-    mlflow.log_params({
+    # 2. Log hyperparameters to TensorBoard HParams tab
+    hparams = {
         "batch_size": config.training.batch_size,
         "max_epochs": config.training.max_epochs,
         "learning_rate": config.model.learning_rate,
         "gradient_clip_val": config.training.gradient_clip_val,
         "precision": config.training.precision,
-        "accelerator": config.training.accelerator,
-        "early_stopping_patience": config.training.early_stopping_patience,
         "hidden_size": config.model.hidden_size,
         "attention_head_size": config.model.attention_head_size,
         "dropout": config.model.dropout,
         "hidden_continuous_size": config.model.hidden_continuous_size,
-    })
+    }
+    tb_logger.log_hyperparams(hparams)
 
     # 3. Execute Training
     result = train_tft(
         training_dataset=training_dataset,
         validation_dataset=validation_dataset,
         config=config,
-        lightning_logger=mlflow_logger,
+        lightning_logger=tb_logger,
     )
 
     # 4. Return the trained model

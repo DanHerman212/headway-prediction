@@ -16,7 +16,7 @@ from typing import Optional
 import lightning.pytorch as pl
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor
 from lightning.pytorch.loggers import CSVLogger, Logger
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
 
 from .model_definitions import create_model
@@ -90,6 +90,28 @@ def train_tft(
         lightning_logger = CSVLogger(save_dir=".", name="training_logs")
 
     # 5. Initialize Trainer
+    #    Optional PyTorch profiler for GPU kernel traces in TensorBoard
+    profiler = None
+    profiler_name = OmegaConf.select(config, "training.profiler", default=None)
+    if profiler_name == "pytorch":
+        from torch.profiler import ProfilerActivity, schedule, tensorboard_trace_handler
+        sched_cfg = OmegaConf.select(config, "training.profiler_schedule", default={})
+        profiler = pl.profilers.PyTorchProfiler(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            schedule=schedule(
+                wait=sched_cfg.get("wait", 1),
+                warmup=sched_cfg.get("warmup", 1),
+                active=sched_cfg.get("active", 3),
+                repeat=sched_cfg.get("repeat", 2),
+            ),
+            on_trace_ready=tensorboard_trace_handler(
+                str(lightning_logger.log_dir) if hasattr(lightning_logger, "log_dir") else "./profiler_logs"
+            ),
+            record_shapes=True,
+            with_stack=False,
+        )
+        logger.info("PyTorch profiler enabled — traces will appear in TensorBoard Profile tab")
+
     trainer = pl.Trainer(
         max_epochs=config.training.max_epochs,
         accelerator=config.training.accelerator,
@@ -100,6 +122,7 @@ def train_tft(
         precision=config.training.precision,
         callbacks=[lr_monitor, early_stop_callback],
         logger=lightning_logger,
+        profiler=profiler,
     )
 
     # 6. Fit the model
