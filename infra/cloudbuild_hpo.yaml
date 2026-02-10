@@ -1,0 +1,21 @@
+steps:
+  # Build the HPO trial image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: 
+      - 'build'
+      - '-f'
+      - 'infra/Dockerfile.hpo'
+      - '-t'
+      - '$_IMAGE_URI'
+      - '.'
+  
+  # Push the image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '$_IMAGE_URI']
+
+images:
+  - '$_IMAGE_URI'
+
+tags: ['hpo-trial', 'mlops']
+options:
+  logging: CLOUD_LOGGING_ONLY

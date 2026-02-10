@@ -12,7 +12,7 @@ IMAGE_NAME="hpo-trial-local:test"
 echo "=== 1. Building Docker Image ==="
 echo "Building ${IMAGE_NAME}..."
 # Use --platform linux/amd64 to match the PyTorch base image and Vertex AI target
-docker build --platform linux/amd64 -f mlops_pipeline/Dockerfile.hpo -t "$IMAGE_NAME" .
+docker build --platform linux/amd64 -f infra/Dockerfile.hpo -t "$IMAGE_NAME" .
 
 echo ""
 echo "=== 2. Verifying Imports & Environment ==="

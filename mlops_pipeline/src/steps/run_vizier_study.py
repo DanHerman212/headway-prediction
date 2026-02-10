@@ -33,7 +33,7 @@ STUDY_DISPLAY_NAME_PREFIX = "headway-tft-hpo"
 # The header for the worker container image
 # This assumes the image is already built and pushed.
 # TODO: In a mature setup, we might build this image dynamically or pull from config.
-TRIAL_IMAGE_URI = f"us-east1-docker.pkg.dev/{PROJECT_ID}/mlops/hpo-trial:latest"
+TRIAL_IMAGE_URI = f"us-east1-docker.pkg.dev/{PROJECT_ID}/mlops-images/hpo-trial:latest"
 
 logger = logging.getLogger(__name__)
 
