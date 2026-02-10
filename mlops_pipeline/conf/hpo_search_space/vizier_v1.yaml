@@ -1,0 +1,41 @@
+# Vizier Search Space Definition
+# Maps model config keys to Vizier parameter specifications.
+#
+# Supported types:
+#   DOUBLE: continuous range [min, max] with optional scaling (log, linear, reverse_log)
+#   INTEGER: discrete integer range [min, max] with optional scaling
+#   DISCRETE: specific ordered set of values (treated as numbers)
+#   CATEGORICAL: unordered set of strings
+
+parameters:
+  model.learning_rate:
+    type: DOUBLE
+    min: 1.0e-4
+    max: 1.0e-2
+    scale: log
+
+  model.hidden_size:
+    type: DISCRETE
+    values: [64, 128, 256]
+
+  model.dropout:
+    type: DOUBLE
+    min: 0.05
+    max: 0.3
+    scale: linear
+
+  model.attention_head_size:
+    type: DISCRETE
+    values: [1, 2, 4, 8]
+
+  model.hidden_continuous_size:
+    type: DISCRETE
+    values: [32, 64, 128]
+
+  training.batch_size:
+    type: DISCRETE
+    values: [128, 256, 512]
+
+metric:
+  id: val_loss
+  goal: minimize
