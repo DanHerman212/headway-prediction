@@ -15,7 +15,7 @@ from typing import Optional
 
 import lightning.pytorch as pl
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor
-from lightning.pytorch.loggers import CSVLogger, Logger
+from lightning.pytorch.loggers import TensorBoardLogger, Logger
 from omegaconf import DictConfig, OmegaConf
 from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
 
@@ -86,8 +86,10 @@ def train_tft(
 
     # 4. Handle Logger
     if lightning_logger is None:
-        # Fallback for local testing or bare HPO runs
-        lightning_logger = CSVLogger(save_dir=".", name="training_logs")
+        # Fallback — TensorBoardLogger handles add_embedding/add_histogram
+        # that pytorch-forecasting calls on logger.experiment.
+        # CSVLogger does NOT support these and will crash.
+        lightning_logger = TensorBoardLogger(save_dir=".", name="training_logs")
 
     # 5. Initialize Trainer
     #    Optional PyTorch profiler for GPU kernel traces in TensorBoard

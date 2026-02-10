@@ -102,12 +102,20 @@ def main() -> None:
                                overrides=["training=hpo"] + hydra_overrides)
     logger.info("Effective config:\n%s", OmegaConf.to_yaml(config))
 
-    # 4. Train
+    # 4. Train — use TensorBoardLogger so pytorch-forecasting's
+    #    add_embedding/add_histogram calls don't crash
+    from lightning.pytorch.loggers import TensorBoardLogger
+    tb_logger = TensorBoardLogger(
+        save_dir=config.training.tensorboard_log_dir,
+        name="hpo_trials",
+        default_hp_metric=False,
+    )
+
     result = train_tft(
         training_dataset=train_ds,
         validation_dataset=val_ds,
         config=config,
-        lightning_logger=None,
+        lightning_logger=tb_logger,
     )
 
     # 5. Report to Vizier
