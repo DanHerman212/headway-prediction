@@ -15,17 +15,13 @@ def main():
         default="gs://mlops-artifacts-realtime-headway-prediction/data/training_data.parquet",
         help="Path to the training data parquet file"
     )
-    args = parser.parse_args()
+    args, hydra_overrides = parser.parse_known_args()
 
     # Ensure absolute path for data
     if args.data_path.startswith("gs://"):
         data_path = args.data_path
     else:
         data_path = os.path.abspath(args.data_path)
-
-    # Capture any extra arguments as Hydra overrides
-    # e.g., "training.max_epochs=50" "model.hidden_size=64"
-    _, hydra_overrides = parser.parse_known_args()
 
     print(f"Launching pipeline with data from: {data_path}")
     if hydra_overrides:
