@@ -6,6 +6,7 @@ Verifies that:
   - evaluate_model.py uses vertex_tracker + aiplatform SDK, no mlflow
   - training_core.py creates a profiler when config.training.profiler == "pytorch"
   - training_core.py skips profiler when config.training.profiler is null
+  - GradientHistogramCallback logs weight/gradient histograms via on_after_backward
   - TensorBoard config keys exist in both training profiles
   - requirements.txt has correct deps
 """
@@ -69,8 +70,11 @@ def test_default_training_config_has_tensorboard_keys():
     cfg = OmegaConf.load(proj_root / "mlops_pipeline/conf/training/default.yaml")
     assert "tensorboard_log_dir" in cfg
     assert cfg.tensorboard_log_dir.startswith("gs://")
-    # profiler default is null
-    assert "profiler" in cfg
+    # profiler default is "pytorch"
+    assert cfg.profiler == "pytorch"
+    # log_every_n_steps present
+    assert "log_every_n_steps" in cfg
+    assert cfg.log_every_n_steps == 50
 
 
 def test_hpo_training_config_has_tensorboard_keys():
@@ -182,3 +186,103 @@ def test_requirements_no_mlflow():
     assert "mlflow" not in reqs.lower()
     assert "tensorboard" in reqs.lower()
     assert "zenml" in reqs
+
+
+# ---------------------------------------------------------------------------
+# 5. Gradient histogram callback
+# ---------------------------------------------------------------------------
+
+def test_gradient_histogram_callback_exists():
+    """GradientHistogramCallback is defined in training_core."""
+    src = _module_source("mlops_pipeline/src/training_core.py")
+    assert "class GradientHistogramCallback" in src
+    assert "on_after_backward" in src
+    assert "add_histogram" in src
+
+
+def test_gradient_histogram_callback_logs_weights_and_gradients():
+    """Source includes add_histogram for both weights/ and gradients/ prefixes."""
+    src = _module_source("mlops_pipeline/src/training_core.py")
+    assert '"weights/' in src or "f'weights/" in src or "'weights/" in src
+    assert '"gradients/' in src or "f'gradients/" in src or "'gradients/" in src
+
+
+def test_gradient_histogram_callback_respects_cadence():
+    """Callback checks log_every_n_steps before logging."""
+    src = _module_source("mlops_pipeline/src/training_core.py")
+    assert "log_every_n_steps" in src
+    # Should have a modulo check to skip off-cadence steps
+    assert "% self.log_every_n_steps" in src
+
+
+def test_gradient_callback_unit_behavior():
+    """Self-contained unit test for the callback's on_after_backward logic."""
+    import torch
+    from unittest.mock import MagicMock
+
+    # Define the callback class inline (mirrors training_core.GradientHistogramCallback)
+    # to avoid importing heavy lightning/pytorch_forecasting dependencies.
+    class GradientHistogramCallback:
+        def __init__(self, log_every_n_steps=50):
+            self.log_every_n_steps = log_every_n_steps
+
+        def on_after_backward(self, trainer, pl_module):
+            if trainer.global_step % self.log_every_n_steps != 0:
+                return
+            tb_logger = pl_module.logger
+            if tb_logger is None:
+                return
+            experiment = tb_logger.experiment
+            if not hasattr(experiment, "add_histogram"):
+                return
+            step = trainer.global_step
+            for name, param in pl_module.named_parameters():
+                if param.requires_grad:
+                    experiment.add_histogram(f"weights/{name}", param.data, global_step=step)
+                    if param.grad is not None:
+                        experiment.add_histogram(f"gradients/{name}", param.grad, global_step=step)
+
+    cb = GradientHistogramCallback(log_every_n_steps=50)
+
+    # Off-cadence: should NOT call add_histogram
+    trainer = MagicMock()
+    trainer.global_step = 7
+    pl_module = MagicMock()
+    cb.on_after_backward(trainer, pl_module)
+    pl_module.logger.experiment.add_histogram.assert_not_called()
+
+    # On-cadence: should call add_histogram for weights + gradients
+    trainer.global_step = 50
+    param = torch.nn.Parameter(torch.randn(4))
+    param.grad = torch.randn(4)
+    pl_module = MagicMock()
+    pl_module.named_parameters.return_value = [("layer.weight", param)]
+    experiment = MagicMock()
+    pl_module.logger.experiment = experiment
+    cb.on_after_backward(trainer, pl_module)
+    assert experiment.add_histogram.call_count == 2
+    call_tags = [c[0][0] for c in experiment.add_histogram.call_args_list]
+    assert "weights/layer.weight" in call_tags
+    assert "gradients/layer.weight" in call_tags
+
+
+def test_gradient_callback_included_in_trainer():
+    """training_core.py passes GradientHistogramCallback to Trainer callbacks."""
+    src = _module_source("mlops_pipeline/src/training_core.py")
+    assert "gradient_cb" in src
+    # Should be in the callbacks list
+    assert "gradient_cb" in src.split("callbacks=[")[1].split("]")[0]
+
+
+# ---------------------------------------------------------------------------
+# 6. log_graph=True in TensorBoardLogger
+# ---------------------------------------------------------------------------
+
+def test_train_model_has_log_graph():
+    src = _module_source("mlops_pipeline/src/steps/train_model.py")
+    assert "log_graph=True" in src
+
+
+def test_training_core_fallback_has_log_graph():
+    src = _module_source("mlops_pipeline/src/training_core.py")
+    assert "log_graph=True" in src

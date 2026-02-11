@@ -35,6 +35,7 @@ def train_model_step(
         save_dir=tb_log_dir,
         name=config.get("experiment_name", "headway_tft"),
         default_hp_metric=False,
+        log_graph=True,
     )
     logger.info("TensorBoard logging to: %s", tb_log_dir)
 
