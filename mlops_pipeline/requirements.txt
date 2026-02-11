@@ -5,6 +5,7 @@ zenml[gcp,tensorboard]
 pytorch-forecasting==1.0.0
 lightning==2.1.2
 torch==2.1.2
+tensorboard
 # Data
 pandas<2.2.0
 numpy<2.0.0
