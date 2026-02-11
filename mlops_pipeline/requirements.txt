@@ -8,6 +8,7 @@ torch==2.1.2
 # Data
 pandas<2.2.0
 numpy<2.0.0
+pyarrow                            # Required for pd.read_parquet
 # Protobuf/gRPC — kfp 2.15+ needs protobuf 6.x
 protobuf>=6.31.1
 grpcio>=1.78.0
@@ -20,3 +21,5 @@ cloudml-hypertune                # Trial metric reporting to Vizier
 gcsfs
 matplotlib
 seaborn
+plotly>=5.18.0
+kaleido>=0.2.1                     # For static image export from Plotly

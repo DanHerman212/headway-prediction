@@ -55,9 +55,7 @@ def headway_training_pipeline(
     vizier_params = None
     if use_vizier_params:
         vizier_params = fetch_best_vizier_params(
-            project_id=config.infra.project_id,
-            location=config.infra.location,
-            study_display_name=config.infra.study_display_name,
+            config=config,
         )
 
     # 2. Ingest Data

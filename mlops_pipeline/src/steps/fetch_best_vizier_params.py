@@ -1,81 +1,79 @@
 from zenml import step
-from google.cloud import aiplatform_v1
+from google.cloud import aiplatform
+from omegaconf import DictConfig
 from typing import Dict, Any, Union
+import math
 import logging
 
 logger = logging.getLogger(__name__)
 
-
 def _cast_vizier_value(value: Union[float, str]) -> Union[int, float, bool, str]:
     """
-    Heuristic to cast Vizier output (often generic floats/strings)
-    back to strict Python types for Hydra/Pydantic compatibility.
+    Casts Vizier output to strict Python types for Hydra compatibility.
     """
-    # 1. Handle Booleans (Vizier treats them as Categorical Strings)
     if isinstance(value, str):
-        if value.lower() == "true":
-            return True
-        if value.lower() == "false":
-            return False
+        if value.lower() == "true": return True
+        if value.lower() == "false": return False
         return value
-
-    # 2. Handle Integers (Vizier returns Integers as Floats, e.g., 64.0)
-    if isinstance(value, float):
-        if value.is_integer():
-            return int(value)
-        return value
-
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
     return value
 
-
 @step
-def fetch_best_vizier_params(
-    project_id: str,
-    location: str,
-    study_display_name: str,
-) -> Dict[str, Any]:
+def fetch_best_vizier_params(config: DictConfig) -> Dict[str, Any]:
     """
-    Robustly queries Vertex AI Vizier for the best trial and formats
-    parameters for direct injection into Hydra via OmegaConf.update.
+    Queries Vertex AI for the best trial to MINIMIZE validation loss.
     """
-    api_endpoint = f"{location}-aiplatform.googleapis.com"
-    client = aiplatform_v1.VizierServiceClient(
-        client_options={"api_endpoint": api_endpoint}
+    project_id = config.infra.project_id
+    location = config.infra.location
+    study_display_name = config.infra.study_display_name
+
+    aiplatform.init(project=project_id, location=location)
+
+    # 1. Efficiency: Filter on server side
+    try:
+        # Note: 'limit' is not supported by the Python SDK's list() method, 
+        # so we fetch all successful jobs matching the name and pick the latest one below.
+        jobs = aiplatform.HyperparameterTuningJob.list(
+            filter=f'display_name="{study_display_name}" AND state="JOB_STATE_SUCCEEDED"',
+            order_by="create_time desc",
+        )
+    except Exception as e:
+        logger.error(f"Failed to list HyperparameterTuningJobs: {e}")
+        raise
+
+    if not jobs:
+        raise ValueError(f"No successful HPO job found for '{study_display_name}'")
+    
+    target_job = jobs[0]
+    
+    # 2. Filter for successful trials only
+    valid_trials = [t for t in target_job.trials if t.state.name == "SUCCEEDED"]
+    if not valid_trials:
+        raise RuntimeError(f"Job '{target_job.display_name}' has no successful trials.")
+
+    # 3. SELECT BEST TRIAL (Minimization Logic)
+    # Python's default sort is Ascending (Smallest -> Largest).
+    # Since we want MINIMUM loss, we take the first element [0].
+    
+    def get_metric(t):
+        val = t.final_measurement.metrics[0].value
+        # Safety: Treat NaN/Inf as infinity so they go to the end of the list
+        if math.isnan(val) or math.isinf(val):
+            return float('inf')
+        return val
+
+    best_trial = sorted(valid_trials, key=get_metric)[0]
+
+    logger.info(
+        f"Selected Best Trial {best_trial.id} with Validation Loss: "
+        f"{best_trial.final_measurement.metrics[0].value}"
     )
 
-    # Locate the study
-    parent = f"projects/{project_id}/locations/{location}"
-    studies = client.list_studies(parent=parent)
-    target_study = next(
-        (s for s in studies if s.display_name == study_display_name), None
-    )
-
-    if not target_study:
-        raise ValueError(f"Vizier Study '{study_display_name}' not found.")
-
-    # Get the best trial
-    optimal_trials = client.list_optimal_trials(parent=target_study.name)
-    if not optimal_trials:
-        raise RuntimeError(f"Study '{study_display_name}' has no completed optimal trials.")
-
-    best_trial = optimal_trials[0]
-
-    # Extract and Cast Parameters
+    # 4. Extract Params
     best_params = {}
-    print(f"--- Loading Best Params from Trial {best_trial.name} ---")
-
     for param in best_trial.parameters:
-        raw_val = param.value
-        clean_val = _cast_vizier_value(raw_val)
-
-        if type(raw_val) != type(clean_val):
-            logger.debug(
-                "Casting %s: %s (%s) -> %s (%s)",
-                param.parameter_id, raw_val, type(raw_val).__name__,
-                clean_val, type(clean_val).__name__,
-            )
-
-        best_params[param.parameter_id] = clean_val
-        print(f"  • {param.parameter_id}: {clean_val}")
+        best_params[param.parameter_id] = _cast_vizier_value(param.value)
+        print(f"  • {param.parameter_id}: {best_params[param.parameter_id]}")
 
     return best_params

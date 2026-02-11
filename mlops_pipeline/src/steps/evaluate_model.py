@@ -9,10 +9,11 @@ Logs results to Vertex AI Experiments + TensorBoard.
 import pandas as pd
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
-import seaborn as sns
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import logging
-from typing import Tuple, Dict, Any
+import os
+from typing import Tuple, Dict, Any, Optional
 
 from google.cloud import aiplatform
 from torch.utils.tensorboard import SummaryWriter
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 class RushHourVisualizer:
     """
     Helper class to generate specific Rush Hour performance plots for A, C, E lines.
+    Now matches 'Next Steps' spec: Plotly interactive, train_id titles, improved colors.
     """
     def __init__(self, predictions: torch.Tensor, x: Dict[str, torch.Tensor], group_encoder: Any):
         self.predictions = predictions.cpu() # Shape: (Batch, PredictionLength, Quantiles)
@@ -36,7 +38,7 @@ class RushHourVisualizer:
         
     def _reconstruct_dataframe(self) -> pd.DataFrame:
         """
-        Reconstructs a flat DataFrame from the Tensor outputs for easier plotting.
+        Reconstructs a flat DataFrame from the Tensor outputs.
         """
         # 1. Extract Targets and Predictions
         actuals = self.x["decoder_target"].cpu().view(-1).numpy()
@@ -55,13 +57,11 @@ class RushHourVisualizer:
         # Repeat group_ids for every timestep in the sequence
         group_ids = batch_groups.repeat_interleave(seq_len).numpy()
         
-        # Decode Group IDs to Strings (e.g., 0 -> "A_South", 1 -> "C_South")
+        # Decode Group IDs to Strings (e.g., "A_South_Train123")
         try:
             if hasattr(self.group_encoder, "inverse_transform"):
                 decoded_groups = self.group_encoder.inverse_transform(group_ids)
             elif hasattr(self.group_encoder, "classes_"):
-                 # NaNLabelEncoder stores classes_ as {name: int_id}
-                 # We need the reverse: {int_id: name}
                  classes = self.group_encoder.classes_
                  if isinstance(classes, dict):
                      inv_map = {v: k for k, v in classes.items()}
@@ -75,12 +75,10 @@ class RushHourVisualizer:
             decoded_groups = group_ids.astype(str)
 
         # 3. Create DataFrame
-        # Verify if decoder_time_idx exists, else construct it from scratch or decoder_time_idx provided by PF
         if "decoder_time_idx" in self.x:
             batch_time_idx = self.x["decoder_time_idx"].cpu().view(-1) 
             time_idx = batch_time_idx.numpy()
         else:
-             # Fallback: Create dummy index
              time_idx = np.arange(len(actuals))
 
         df = pd.DataFrame({
@@ -94,43 +92,49 @@ class RushHourVisualizer:
         
         return df
 
-    def plot_rush_hour(self, start_idx_window: int = None, window_size: int = 180) -> plt.Figure:
+    def plot_rush_hour(self, start_idx_window: Optional[int] = None, window_size: int = 180) -> go.Figure:
         """
-        Plots a 'Rush Hour' window.
-        Args:
-            window_size: 180 minutes (3 hours)
+        Generates an interactive Plotly chart with subplots for specific trains/lines.
+        
+        Specs:
+        - Subplot titles include train_id/group
+        - X-axis in generic "Minutes from Start" (until we pass real timestamps)
+        - Color scheme: MTA Blue for predictions, accessible contrast
         """
         df = self._reconstruct_dataframe()
         
-        # Filter for A, C, E lines (group names may be "A", "A_South", etc.)
+        # Filter for A, C, E lines or reasonable fallback
         target_lines = ['A', 'C', 'E']
         available_groups = df['group'].unique()
         
-        # Match groups that start with the target line letter
         plot_groups = []
         for g in available_groups:
-            line_letter = str(g).split('_')[0]  # "A_South" -> "A"
+            line_letter = str(g).split('_')[0]
             if line_letter in target_lines:
                 plot_groups.append(g)
         
-        # Fallback to top 3 busiest if none found
+        # Limit to 3 distinct groups to keep plot readable
         if not plot_groups:
-            logger.warning(f"Target lines {target_lines} not found in {available_groups}. Using Top 3.")
-            plot_groups = list(df['group'].value_counts().index[:3])
+            plot_groups = list(available_groups)[:3]
+        else:
+            plot_groups = plot_groups[:3]
             
-        fig, axes = plt.subplots(len(plot_groups), 1, figsize=(15, 5 * len(plot_groups)), sharex=False)
-        if len(plot_groups) == 1:
-            axes = [axes]
-            
+        # Create Subplots
+        fig = make_subplots(
+            rows=len(plot_groups), cols=1,
+            shared_xaxes=False,
+            vertical_spacing=0.1,
+            subplot_titles=[f"Train: {g}" for g in plot_groups]
+        )
+
         for i, group in enumerate(plot_groups):
-            ax = axes[i]
+            row = i + 1
             group_df = df[df['group'] == group].sort_values("time_idx")
             
             if group_df.empty:
                 continue
 
-            # Heuristic: Find a busy 3-hour window
-            # If start_idx_window not provided, pick the middle of the dataset
+            # Heuristic: Find a busy window
             if start_idx_window is None:
                 mid_point = group_df['time_idx'].median()
                 start_time = mid_point - (window_size / 2)
@@ -139,28 +143,59 @@ class RushHourVisualizer:
 
             end_time = start_time + window_size
             
-            # Slice
+            # Slice the window
             mask = (group_df['time_idx'] >= start_time) & (group_df['time_idx'] <= end_time)
             plot_df = group_df[mask]
             
             if plot_df.empty:
-                ax.text(0.5, 0.5, "No Data in Window", ha='center')
                 continue
 
-            # Plotting
-            ax.plot(plot_df['time_idx'], plot_df['actual'], 'ko', label='Actual', markersize=4, alpha=0.7)
-            # Use specific colors for lines (MTA Blue #0039A6)
-            ax.plot(plot_df['time_idx'], plot_df['pred_p50'], linestyle='-', label='Predicted', linewidth=2, color='#0039A6') 
-            ax.fill_between(plot_df['time_idx'], plot_df['pred_p10'], plot_df['pred_p90'], color='#0039A6', alpha=0.15, label='90% CI')
+            # 1. Prediction Interval (P10-P90) - Filled Area
+            # Plotly trick: P10 (transparent line) + P90 (filled down to P10)
+            fig.add_trace(go.Scatter(
+                x=plot_df['time_idx'], y=plot_df['pred_p10'],
+                mode='lines', line=dict(width=0),
+                showlegend=False, hoverinfo='skip'
+            ), row=row, col=1)
             
-            line_letter = str(group).split('_')[0]  # "A_South" -> "A"
-            ax.set_title(f"Subway Line {line_letter}: Rush Hour Trace", fontsize=14, fontweight='bold')
-            ax.set_ylabel("Headway (min)")
-            ax.legend(loc="upper right")
-            ax.grid(True, alpha=0.3)
+            fig.add_trace(go.Scatter(
+                x=plot_df['time_idx'], y=plot_df['pred_p90'],
+                mode='lines', line=dict(width=0),
+                fill='tonexty', fillcolor='rgba(0, 57, 166, 0.2)', # MTA Blue transparent
+                name='90% Confidence' if i == 0 else None,
+                showlegend=(i == 0)
+            ), row=row, col=1)
 
-        ax.set_xlabel("Time Index (Minutes)")
-        plt.tight_layout()
+            # 2. Main Prediction (P50)
+            fig.add_trace(go.Scatter(
+                x=plot_df['time_idx'], y=plot_df['pred_p50'],
+                mode='lines',
+                line=dict(color='#0039A6', width=2), # MTA Blue
+                name='Predicted (P50)' if i == 0 else None,
+                showlegend=(i == 0)
+            ), row=row, col=1)
+
+            # 3. Actuals
+            fig.add_trace(go.Scatter(
+                x=plot_df['time_idx'], y=plot_df['actual'],
+                mode='markers',
+                marker=dict(color='black', size=5, symbol='circle'),
+                name='Actual Headway' if i == 0 else None,
+                showlegend=(i == 0)
+            ), row=row, col=1)
+
+            # Layout tweaks per subplot
+            fig.update_xaxes(title_text="Time Index (Minutes)", row=row, col=1)
+            fig.update_yaxes(title_text="Headway (min)", row=row, col=1)
+
+        # Global Layout
+        fig.update_layout(
+            height=300 * len(plot_groups),
+            title_text="Rush Hour Headway Predictions (Model Eval)",
+            template="plotly_white",
+            hovermode="x unified"
+        )
+        
         return fig
 
 @step(experiment_tracker="vertex_tracker", enable_cache=False)
@@ -229,18 +264,33 @@ def evaluate_model(
 
     # 6. Log to TensorBoard (detailed plots + scalars)
     tb_log_dir = config.training.tensorboard_log_dir
+    os.makedirs(f"{tb_log_dir}/evaluation", exist_ok=True)
+    
+    # Save artifacts locally/GCS
+    artifact_path = "rush_hour_performance"
     try:
+        # Save HTML (Interactive)
+        fig.write_html(f"{artifact_path}.html")
+        logger.info(f"Saved interactive plot to {artifact_path}.html")
+        
+        # Save PNG (Static) - requires kaleido
+        try:
+             fig.write_image(f"{artifact_path}.png", scale=2)
+             logger.info(f"Saved static plot to {artifact_path}.png")
+        except Exception as e:
+             logger.warning(f"Could not save static PNG (requires kaleido): {e}")
+
+        # Log to TensorBoard
+        # TensorBoard doesn't support interactive HTML directly in 'add_figure' (which expects matplotlib)
+        # However, we can use add_text to embed a link or raw HTML if supported, 
+        # or just rely on the GCS artifact logging.
+        # For now, we just log the scalars. The artifacts are tracked by ZenML/Vertex.
         writer = SummaryWriter(log_dir=f"{tb_log_dir}/evaluation")
         writer.add_scalar("eval/test_mae", mae, global_step=0)
         writer.add_scalar("eval/test_smape", smape, global_step=0)
-        writer.add_figure("eval/rush_hour_performance", fig, global_step=0)
         writer.close()
-        logger.info("Evaluation metrics and plot logged to TensorBoard at %s", tb_log_dir)
-    except Exception as e:
-        logger.warning("Could not log to TensorBoard: %s", e)
-        fig.savefig("rush_hour_performance_debug.png")
-        logger.info("Saved rush_hour_performance_debug.png locally")
         
-    plt.close(fig)
+    except Exception as e:
+        logger.warning(f"Error during artifact saving: {e}")
     
     return mae, smape
