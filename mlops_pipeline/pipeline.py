@@ -10,6 +10,7 @@ from .src.steps.ingest_data import ingest_data_step
 from .src.steps.process_data import process_data_step
 from .src.steps.train_model import train_model_step
 from .src.steps.evaluate_model import evaluate_model
+from .src.steps.fetch_best_vizier_params import fetch_best_vizier_params
 
 # Docker Settings — use CUDA-enabled parent image for GPU support
 docker_settings = DockerSettings(
@@ -36,13 +37,28 @@ gpu_vertex_settings = VertexOrchestratorSettings(
 )
 def headway_training_pipeline(
     data_path: str,
-    hydra_overrides: Optional[List[str]] = None
+    hydra_overrides: Optional[List[str]] = None,
+    use_vizier_params: bool = False,
 ):
     """
     End-to-end training pipeline for Headway Prediction.
+
+    When ``use_vizier_params=True``, the best hyperparameters from the
+    latest Vizier study are fetched and applied to the config inside
+    the training step via OmegaConf.update.  Hydra defaults load first,
+    then Vizier params override the model/training keys.
     """
     # 1. Load Configuration (defaults from YAML, overrides from CLI)
     config = load_config_step(overrides=hydra_overrides)
+
+    # 1b. Optionally fetch best params from Vizier
+    vizier_params = None
+    if use_vizier_params:
+        vizier_params = fetch_best_vizier_params(
+            project_id=config.infra.project_id,
+            location=config.infra.location,
+            study_display_name=config.infra.study_display_name,
+        )
 
     # 2. Ingest Data
     raw_df = ingest_data_step(file_path=data_path)
@@ -54,6 +70,7 @@ def headway_training_pipeline(
     )
 
     # 4. Train Model — GPU enabled via custom_job_parameters + ResourceSettings
+    #    Vizier params (if any) get applied to config inside the step
     model = train_model_step.with_options(
         settings={
             "orchestrator.vertex": gpu_vertex_settings,
@@ -62,7 +79,8 @@ def headway_training_pipeline(
     )(
         training_dataset=train_ds,
         validation_dataset=val_ds,
-        config=config
+        config=config,
+        vizier_params=vizier_params,
     )
 
     # 5. Evaluate Model

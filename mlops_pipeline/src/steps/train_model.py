@@ -1,11 +1,12 @@
 """train_model.py — ZenML training step with Vertex AI experiment tracking + TensorBoard."""
 
 import logging
+from typing import Any, Dict, Optional
 
 from google.cloud import aiplatform
 from lightning.pytorch.loggers import TensorBoardLogger
 from zenml import step
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from pytorch_forecasting import TimeSeriesDataSet, TemporalFusionTransformer
 
 from ..training_core import train_tft
@@ -18,6 +19,7 @@ def train_model_step(
     training_dataset: TimeSeriesDataSet,
     validation_dataset: TimeSeriesDataSet,
     config: DictConfig,
+    vizier_params: Optional[Dict[str, Any]] = None,
 ) -> TemporalFusionTransformer:
     """
     Train the TFT model.
@@ -29,6 +31,16 @@ def train_model_step(
     TensorBoardLogger provides:
       - Detailed per-step training curves, gradient histograms, embeddings
     """
+    # 0. Apply Vizier overrides (if provided) directly onto the loaded config
+    if vizier_params:
+        logger.info("Applying Vizier best params to config: %s", vizier_params)
+        for key, value in vizier_params.items():
+            try:
+                OmegaConf.update(config, key, value)
+            except Exception as e:
+                logger.warning("Could not apply Vizier param %s=%s: %s", key, value, e)
+        logger.info("Final config after Vizier overrides:\n%s", OmegaConf.to_yaml(config))
+
     # 1. TensorBoard logger for detailed training curves → GCS
     tb_log_dir = config.training.tensorboard_log_dir
     tb_logger = TensorBoardLogger(
