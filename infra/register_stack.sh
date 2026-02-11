@@ -5,7 +5,7 @@
 # Runs on your LOCAL machine after both servers are deployed.
 # Connects the ZenML client to the remote server and registers:
 #   - GCS artifact store
-#   - Remote MLflow experiment tracker
+#   - Vertex AI experiment tracker (writes to Vertex AI TensorBoard)
 #   - Combined production stack
 #
 # Usage: ./infra/register_stack.sh
@@ -19,13 +19,15 @@ ARTIFACT_BUCKET="mlops-artifacts-${PROJECT_ID}"
 AR_REPO_NAME="mlops-images"
 AR_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO_NAME}"
 
+# Vertex AI TensorBoard instance ID created via:
+#   gcloud ai tensorboards create --display-name="headway-training" ...
+TENSORBOARD_ID="8313539359009669120"
+
 # Get deployed service URLs
 echo "--- Retrieving Cloud Run service URLs ---"
 ZENML_URL=$(gcloud run services describe zenml-server --region "${REGION}" --format="value(status.url)")
-MLFLOW_URL=$(gcloud run services describe mlflow-server --region "${REGION}" --format="value(status.url)")
 
 echo "  ZenML Server:  ${ZENML_URL}"
-echo "  MLflow Server: ${MLFLOW_URL}"
 echo ""
 
 # -------------------------------------------------
@@ -51,16 +53,19 @@ fi
 echo ""
 
 # -------------------------------------------------
-# Step 3: Register MLflow experiment tracker
+# Step 3: Register Vertex AI experiment tracker
 # -------------------------------------------------
-echo "--- Step 3: Registering MLflow experiment tracker ---"
-if zenml experiment-tracker describe mlflow_tracker &>/dev/null; then
-  echo "  ✓ mlflow_tracker already registered"
+echo "--- Step 3: Registering Vertex AI experiment tracker ---"
+if zenml experiment-tracker describe vertex_tracker &>/dev/null; then
+  echo "  ✓ vertex_tracker already registered"
 else
-  zenml experiment-tracker register mlflow_tracker \
-    --flavor=mlflow \
-    --tracking_uri="${MLFLOW_URL}"
-  echo "  ✓ mlflow_tracker registered"
+  zenml experiment-tracker register vertex_tracker \
+    --flavor=vertex \
+    --project="${PROJECT_ID}" \
+    --location="${REGION}" \
+    --experiment_tensorboard="${TENSORBOARD_ID}" \
+    --staging_bucket="gs://${ARTIFACT_BUCKET}"
+  echo "  ✓ vertex_tracker registered"
 fi
 echo ""
 
@@ -116,7 +121,7 @@ else
   zenml stack register gcp_production_stack \
     -o vertex_orchestrator \
     -a gcs_store \
-    -e mlflow_tracker \
+    -e vertex_tracker \
     -c gcp_registry \
     -i gcp_image_builder
   echo "  ✓ gcp_production_stack registered"
@@ -132,5 +137,5 @@ echo ""
 zenml stack describe
 echo ""
 echo " Next: Install requirements:"
-echo "       zenml integration install gcp mlflow"
+echo "       zenml integration install gcp"
 echo ""

@@ -1,10 +1,11 @@
-"""train_model.py — ZenML training step using TensorBoard for experiment tracking."""
+"""train_model.py — ZenML training step with Vertex AI experiment tracking + TensorBoard."""
 
 import logging
 
+from google.cloud import aiplatform
 from lightning.pytorch.loggers import TensorBoardLogger
 from zenml import step
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from pytorch_forecasting import TimeSeriesDataSet, TemporalFusionTransformer
 
 from ..training_core import train_tft
@@ -12,19 +13,23 @@ from ..training_core import train_tft
 logger = logging.getLogger(__name__)
 
 
-@step(enable_cache=False)
+@step(experiment_tracker="vertex_tracker", enable_cache=False)
 def train_model_step(
     training_dataset: TimeSeriesDataSet,
     validation_dataset: TimeSeriesDataSet,
     config: DictConfig,
 ) -> TemporalFusionTransformer:
     """
-    Train the TFT model with TensorBoard logging.
+    Train the TFT model.
 
-    Logs training scalars, gradient histograms, and hyperparameters
-    to the GCS-backed TensorBoard log directory defined in config.
+    Vertex AI experiment tracker (managed by ZenML) provides:
+      - Params/metrics visible in ZenML dashboard + Vertex AI console
+      - TensorBoard integration via Vertex AI TensorBoard instance
+
+    TensorBoardLogger provides:
+      - Detailed per-step training curves, gradient histograms, embeddings
     """
-    # 1. Set up TensorBoard logger → writes to GCS
+    # 1. TensorBoard logger for detailed training curves → GCS
     tb_log_dir = config.training.tensorboard_log_dir
     tb_logger = TensorBoardLogger(
         save_dir=tb_log_dir,
@@ -33,7 +38,7 @@ def train_model_step(
     )
     logger.info("TensorBoard logging to: %s", tb_log_dir)
 
-    # 2. Log hyperparameters to TensorBoard HParams tab
+    # 2. Log hyperparameters to Vertex AI Experiments (shows in ZenML + GCP)
     hparams = {
         "batch_size": config.training.batch_size,
         "max_epochs": config.training.max_epochs,
@@ -45,9 +50,10 @@ def train_model_step(
         "dropout": config.model.dropout,
         "hidden_continuous_size": config.model.hidden_continuous_size,
     }
+    aiplatform.log_params(hparams)
     tb_logger.log_hyperparams(hparams)
 
-    # 3. Execute Training
+    # 3. Train
     result = train_tft(
         training_dataset=training_dataset,
         validation_dataset=validation_dataset,
@@ -55,5 +61,7 @@ def train_model_step(
         lightning_logger=tb_logger,
     )
 
-    # 4. Return the trained model
+    # 4. Log final metric to Vertex AI Experiments
+    aiplatform.log_metrics({"best_val_loss": result.best_val_loss})
+
     return result.model

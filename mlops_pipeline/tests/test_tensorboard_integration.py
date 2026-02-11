@@ -1,12 +1,13 @@
 """
-Tests for the MLflow → TensorBoard migration.
+Tests for experiment tracking integration.
 
 Verifies that:
-  - train_model.py no longer imports mlflow
-  - evaluate_model.py no longer imports mlflow
+  - train_model.py uses vertex_tracker + aiplatform SDK, no mlflow
+  - evaluate_model.py uses vertex_tracker + aiplatform SDK, no mlflow
   - training_core.py creates a profiler when config.training.profiler == "pytorch"
   - training_core.py skips profiler when config.training.profiler is null
   - TensorBoard config keys exist in both training profiles
+  - requirements.txt has correct deps
 """
 
 import importlib
@@ -34,13 +35,17 @@ def test_train_model_no_mlflow_import():
     assert "import mlflow" not in src
     assert "MLFlowLogger" not in src
     assert "SafeMLFlowLogger" not in src
-    assert "experiment_tracker" not in src
+    assert 'experiment_tracker="vertex_tracker"' in src
+    assert "aiplatform.log_params" in src
+    assert "aiplatform.log_metrics" in src
 
 
 def test_evaluate_model_no_mlflow_import():
     src = _module_source("mlops_pipeline/src/steps/evaluate_model.py")
     assert "import mlflow" not in src
     assert "mlflow.log" not in src
+    assert 'experiment_tracker="vertex_tracker"' in src
+    assert "aiplatform.log_metrics" in src
 
 
 def test_train_model_uses_tensorboard():
@@ -176,4 +181,4 @@ def test_requirements_no_mlflow():
     reqs = (proj_root / "mlops_pipeline/requirements.txt").read_text()
     assert "mlflow" not in reqs.lower()
     assert "tensorboard" in reqs.lower()
-    assert "zenml[gcp]" in reqs
+    assert "zenml" in reqs

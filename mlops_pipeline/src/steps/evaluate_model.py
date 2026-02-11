@@ -1,9 +1,9 @@
-"""
-evaluate_model.py
------------------
-Evaluation step for the Headway Prediction Pipeline.
-Calculates global metrics (MAE, SMAPE) and generates 'Rush Hour' specific plots for A, C, E lines.
-Logs results to TensorBoard.
+"""                                                                              
+evaluate_model.py                                                                 
+-----------------                                                                 
+Evaluation step for the Headway Prediction Pipeline.                               
+Calculates global metrics (MAE, SMAPE) and generates 'Rush Hour' specific plots.   
+Logs results to Vertex AI Experiments + TensorBoard.                               
 """
 
 import pandas as pd
@@ -14,6 +14,7 @@ import seaborn as sns
 import logging
 from typing import Tuple, Dict, Any
 
+from google.cloud import aiplatform
 from torch.utils.tensorboard import SummaryWriter
 from zenml import step
 from omegaconf import DictConfig
@@ -162,7 +163,7 @@ class RushHourVisualizer:
         plt.tight_layout()
         return fig
 
-@step(enable_cache=False)
+@step(experiment_tracker="vertex_tracker", enable_cache=False)
 def evaluate_model(
     model: TemporalFusionTransformer,
     test_dataset: TimeSeriesDataSet,
@@ -223,7 +224,10 @@ def evaluate_model(
     # Generate the Rush Hour plot
     fig = viz.plot_rush_hour(window_size=180) # 3 hour window
     
-    # 5. Log to TensorBoard
+    # 5. Log to Vertex AI Experiments (visible in ZenML dashboard + GCP console)
+    aiplatform.log_metrics({"test_mae": mae, "test_smape": smape})
+
+    # 6. Log to TensorBoard (detailed plots + scalars)
     tb_log_dir = config.training.tensorboard_log_dir
     try:
         writer = SummaryWriter(log_dir=f"{tb_log_dir}/evaluation")
