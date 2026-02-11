@@ -103,13 +103,28 @@ def main() -> None:
     logger.info("Effective config:\n%s", OmegaConf.to_yaml(config))
 
     # 4. Train — use TensorBoardLogger so pytorch-forecasting's
-    #    add_embedding/add_histogram calls don't crash
+    #    add_embedding/add_histogram calls don't crash.
+    #    Each trial gets its own subdirectory via CLOUD_ML_TRIAL_ID so
+    #    TensorBoard's HParams dashboard can compare them side by side.
     from lightning.pytorch.loggers import TensorBoardLogger
+    trial_id = os.environ.get("CLOUD_ML_TRIAL_ID", "local")
     tb_logger = TensorBoardLogger(
         save_dir=config.training.tensorboard_log_dir,
         name="hpo_trials",
+        version=f"trial_{trial_id}",
         default_hp_metric=False,
     )
+
+    # Log hyperparams so TensorBoard HParams plugin can display them
+    hparams = {
+        "learning_rate": config.model.learning_rate,
+        "hidden_size": config.model.hidden_size,
+        "attention_head_size": config.model.attention_head_size,
+        "dropout": config.model.dropout,
+        "hidden_continuous_size": config.model.hidden_continuous_size,
+        "batch_size": config.training.batch_size,
+    }
+    tb_logger.log_hyperparams(hparams)
 
     result = train_tft(
         training_dataset=train_ds,
@@ -118,8 +133,11 @@ def main() -> None:
         lightning_logger=tb_logger,
     )
 
-    # 5. Report to Vizier
+    # 5. Log final metric to TensorBoard HParams + report to Vizier
     val_loss = result.best_val_loss
+    tb_logger.log_metrics({"hp/val_loss": val_loss})
+    tb_logger.finalize("success")
+
     logger.info("Reporting val_loss=%f to Vizier", val_loss)
     reporter = hypertune.HyperTune()
     reporter.report_hyperparameter_tuning_metric(
