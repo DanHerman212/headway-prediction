@@ -11,10 +11,10 @@ pure PyTorch Lightning + PyTorch Forecasting.
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional
 
 import lightning.pytorch as pl
-from lightning.pytorch.callbacks import Callback, EarlyStopping, LearningRateMonitor
+from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor
 from lightning.pytorch.loggers import TensorBoardLogger, Logger
 from omegaconf import DictConfig, OmegaConf
 from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
@@ -22,30 +22,6 @@ from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
 from .model_definitions import create_model
 
 logger = logging.getLogger(__name__)
-
-
-class GradientHistogramCallback(Callback):
-    """Logs weight and gradient histograms to TensorBoard every N steps."""
-
-    def __init__(self, log_every_n_steps: int = 50):
-        super().__init__()
-        self.log_every_n_steps = log_every_n_steps
-
-    def on_after_backward(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
-        if trainer.global_step % self.log_every_n_steps != 0:
-            return
-        tb_logger = pl_module.logger
-        if tb_logger is None:
-            return
-        experiment = tb_logger.experiment
-        if not hasattr(experiment, "add_histogram"):
-            return
-        step = trainer.global_step
-        for name, param in pl_module.named_parameters():
-            if param.requires_grad:
-                experiment.add_histogram(f"weights/{name}", param.data, global_step=step)
-                if param.grad is not None:
-                    experiment.add_histogram(f"gradients/{name}", param.grad, global_step=step)
 
 
 @dataclass
@@ -60,6 +36,7 @@ def train_tft(
     validation_dataset: TimeSeriesDataSet,
     config: DictConfig,
     lightning_logger: Optional[Logger] = None,
+    extra_callbacks: Optional[List[pl.Callback]] = None,
 ) -> TrainingResult:
     """
     Core training loop for the Temporal Fusion Transformer.
@@ -113,34 +90,14 @@ def train_tft(
         # Fallback — TensorBoardLogger handles add_embedding/add_histogram
         # that pytorch-forecasting calls on logger.experiment.
         # CSVLogger does NOT support these and will crash.
-        lightning_logger = TensorBoardLogger(save_dir=".", name="training_logs", log_graph=True)
+        lightning_logger = TensorBoardLogger(save_dir=".", name="training_logs", log_graph=False)
 
     # 5. Initialize Trainer
-    #    Optional PyTorch profiler for GPU kernel traces in TensorBoard
-    profiler = None
-    profiler_name = OmegaConf.select(config, "training.profiler", default=None)
-    if profiler_name == "pytorch":
-        from torch.profiler import ProfilerActivity, schedule, tensorboard_trace_handler
-        sched_cfg = OmegaConf.select(config, "training.profiler_schedule", default={})
-        profiler = pl.profilers.PyTorchProfiler(
-            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-            schedule=schedule(
-                wait=sched_cfg.get("wait", 1),
-                warmup=sched_cfg.get("warmup", 1),
-                active=sched_cfg.get("active", 3),
-                repeat=sched_cfg.get("repeat", 2),
-            ),
-            on_trace_ready=tensorboard_trace_handler(
-                str(lightning_logger.log_dir) if hasattr(lightning_logger, "log_dir") else "./profiler_logs"
-            ),
-            record_shapes=True,
-            with_stack=False,
-        )
-        logger.info("PyTorch profiler enabled — traces will appear in TensorBoard Profile tab")
-
-    # 5b. Gradient histogram callback
     log_every_n = OmegaConf.select(config, "training.log_every_n_steps", default=50)
-    gradient_cb = GradientHistogramCallback(log_every_n_steps=log_every_n)
+
+    callbacks = [lr_monitor, early_stop_callback]
+    if extra_callbacks:
+        callbacks.extend(extra_callbacks)
 
     trainer = pl.Trainer(
         max_epochs=config.training.max_epochs,
@@ -150,10 +107,10 @@ def train_tft(
         gradient_clip_val=config.training.gradient_clip_val,
         limit_train_batches=config.training.limit_train_batches,
         precision=config.training.precision,
-        callbacks=[lr_monitor, early_stop_callback, gradient_cb],
+        callbacks=callbacks,
         logger=lightning_logger,
         log_every_n_steps=log_every_n,
-        profiler=profiler,
+        num_sanity_val_steps=0,
     )
 
     # 6. Fit the model

@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import logging
 import os
+import tempfile
 from typing import Tuple, Dict, Any, Optional
 
 from google.cloud import aiplatform
@@ -262,35 +263,68 @@ def evaluate_model(
     # 5. Log to Vertex AI Experiments (visible in ZenML dashboard + GCP console)
     aiplatform.log_metrics({"test_mae": mae, "test_smape": smape})
 
-    # 6. Log to TensorBoard (detailed plots + scalars)
-    tb_log_dir = config.training.tensorboard_log_dir
-    os.makedirs(f"{tb_log_dir}/evaluation", exist_ok=True)
+    # 6. Log to TensorBoard (detailed plots + scalars) and save artifacts
+    local_eval_dir = tempfile.mkdtemp(prefix="eval_tb_")
     
-    # Save artifacts locally/GCS
-    artifact_path = "rush_hour_performance"
     try:
+        # Save plots to temp dir (not container CWD which is lost on exit)
+        html_path = os.path.join(local_eval_dir, "rush_hour_performance.html")
+        png_path = os.path.join(local_eval_dir, "rush_hour_performance.png")
+        
         # Save HTML (Interactive)
-        fig.write_html(f"{artifact_path}.html")
-        logger.info(f"Saved interactive plot to {artifact_path}.html")
+        fig.write_html(html_path)
+        logger.info(f"Saved interactive plot to {html_path}")
         
         # Save PNG (Static) - requires kaleido
+        has_png = False
         try:
-             fig.write_image(f"{artifact_path}.png", scale=2)
-             logger.info(f"Saved static plot to {artifact_path}.png")
+             fig.write_image(png_path, scale=2)
+             has_png = True
+             logger.info(f"Saved static plot to {png_path}")
         except Exception as e:
              logger.warning(f"Could not save static PNG (requires kaleido): {e}")
 
-        # Log to TensorBoard
-        # TensorBoard doesn't support interactive HTML directly in 'add_figure' (which expects matplotlib)
-        # However, we can use add_text to embed a link or raw HTML if supported, 
-        # or just rely on the GCS artifact logging.
-        # For now, we just log the scalars. The artifacts are tracked by ZenML/Vertex.
-        writer = SummaryWriter(log_dir=f"{tb_log_dir}/evaluation")
+        # Log scalars + image to TensorBoard
+        writer = SummaryWriter(log_dir=local_eval_dir)
         writer.add_scalar("eval/test_mae", mae, global_step=0)
         writer.add_scalar("eval/test_smape", smape, global_step=0)
+        
+        # Log rush hour plot as TensorBoard image if PNG was generated
+        if has_png:
+            try:
+                from PIL import Image
+                img = Image.open(png_path)
+                img_array = np.array(img)
+                # TensorBoard expects (H, W, C) for add_image with dataformats
+                writer.add_image("eval/rush_hour_performance", img_array, global_step=0, dataformats='HWC')
+                logger.info("Logged rush hour plot to TensorBoard as image")
+            except Exception as img_err:
+                logger.warning(f"Could not log image to TensorBoard: {img_err}")
+        
         writer.close()
+
+        # Upload everything (TB events + HTML + PNG) to GCS
+        gcs_tb_dir = config.training.tensorboard_log_dir
+        from google.cloud import storage as gcs_storage
+        try:
+            bucket_name = gcs_tb_dir.replace("gs://", "").split("/")[0]
+            prefix = "/".join(gcs_tb_dir.replace("gs://", "").split("/")[1:])
+            client = gcs_storage.Client()
+            bucket = client.bucket(bucket_name)
+            for root, _, files in os.walk(local_eval_dir):
+                for fname in files:
+                    local_path = os.path.join(root, fname)
+                    rel_path = os.path.relpath(local_path, local_eval_dir)
+                    blob_path = f"{prefix}/evaluation/{rel_path}"
+                    bucket.blob(blob_path).upload_from_filename(local_path)
+            logger.info("Uploaded evaluation artifacts to %s/evaluation", gcs_tb_dir)
+        except Exception as upload_err:
+            logger.warning(f"Failed to upload evaluation artifacts: {upload_err}")
         
     except Exception as e:
         logger.warning(f"Error during artifact saving: {e}")
+    finally:
+        import shutil
+        shutil.rmtree(local_eval_dir, ignore_errors=True)
     
     return mae, smape

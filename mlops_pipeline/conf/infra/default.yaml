@@ -18,3 +18,7 @@ parallel_trial_count: 5
 machine_type: "g2-standard-4"
 accelerator_type: "NVIDIA_L4"
 accelerator_count: 1
+
+# Vertex AI Managed TensorBoard
+tensorboard_instance_id: "8313539359009669120"
+tensorboard_resource_name: "projects/${infra.project_id}/locations/${infra.location}/tensorboards/${infra.tensorboard_instance_id}"

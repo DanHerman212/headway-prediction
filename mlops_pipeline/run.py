@@ -72,8 +72,15 @@ def main():
         # Configure Vertex Tracker Settings to avoid Metadata Collision
         # The Step 'train_model_step' uses the tracker 'vertex_tracker'.
         # We pass runtime settings to force it to use our specific experiment name.
+        # TensorBoard instance resource name for Vertex AI managed TensorBoard
+        tb_resource = (
+            "projects/realtime-headway-prediction/locations/us-east1/"
+            "tensorboards/8313539359009669120"
+        )
+
         vertex_tracker_settings = VertexExperimentTrackerSettings(
-            experiment=experiment_name
+            experiment=experiment_name,
+            experiment_tensorboard=tb_resource,
         )
 
         # Apply settings globally to the pipeline. 
