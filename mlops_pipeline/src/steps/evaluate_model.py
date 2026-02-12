@@ -18,7 +18,7 @@ from typing import Tuple, Dict, Any, Optional
 
 from google.cloud import aiplatform
 from torch.utils.tensorboard import SummaryWriter
-from zenml import step
+from zenml import step, get_step_context
 from omegaconf import DictConfig
 from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
 from pytorch_forecasting.metrics import MAE, SMAPE
@@ -199,7 +199,7 @@ class RushHourVisualizer:
         
         return fig
 
-@step(experiment_tracker="vertex_tracker", enable_cache=False)
+@step(enable_cache=False)
 def evaluate_model(
     model: TemporalFusionTransformer,
     test_dataset: TimeSeriesDataSet,
@@ -207,6 +207,11 @@ def evaluate_model(
 ) -> Tuple[float, float]:
     """
     Evaluates the model on the test set.
+
+    Logs metrics to the same Vertex AI Experiment run that the training step
+    created, by resuming the run via aiplatform.start_run(resume=True).
+    This avoids the TensorBoard run name collision that occurs when two steps
+    both declare experiment_tracker="vertex_tracker".
     """
     logger.info("Starting Model Evaluation on Test Set...")
 
@@ -260,8 +265,33 @@ def evaluate_model(
     # Generate the Rush Hour plot
     fig = viz.plot_rush_hour(window_size=180) # 3 hour window
     
-    # 5. Log to Vertex AI Experiments (visible in ZenML dashboard + GCP console)
-    aiplatform.log_metrics({"test_mae": mae, "test_smape": smape})
+    # 5. Log to Vertex AI Experiments by resuming the training step's run.
+    #    The experiment name comes from config; the run name is the ZenML pipeline run ID
+    #    (sanitized to match Vertex AI naming: lowercase, hyphens only).
+    try:
+        context = get_step_context()
+        run_name = context.pipeline_run.name
+    except Exception:
+        run_name = None
+        logger.warning("Could not retrieve ZenML step context for run name.")
+
+    experiment_name = config.get("experiment_name", "headway_tft").lower().replace("_", "-")
+
+    try:
+        aiplatform.init(
+            project=config.infra.project_id,
+            location=config.infra.location,
+            experiment=experiment_name,
+        )
+        if run_name:
+            aiplatform.start_run(run_name, resume=True)
+            aiplatform.log_metrics({"test_mae": mae, "test_smape": smape})
+            aiplatform.end_run()
+            logger.info("Logged eval metrics to Vertex AI Experiment run: %s", run_name)
+        else:
+            logger.warning("No run name available — skipping Vertex AI metric logging.")
+    except Exception as e:
+        logger.warning("Failed to log eval metrics to Vertex AI Experiments: %s", e)
 
     # 6. Log to TensorBoard (detailed plots + scalars) and save artifacts
     local_eval_dir = tempfile.mkdtemp(prefix="eval_tb_")
