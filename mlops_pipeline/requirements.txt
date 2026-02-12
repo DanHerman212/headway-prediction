@@ -24,3 +24,5 @@ matplotlib
 seaborn
 plotly>=5.18.0
 kaleido>=0.2.1                     # For static image export from Plotly
+# ONNX — model export in deploy step
+onnx

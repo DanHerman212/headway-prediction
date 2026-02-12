@@ -10,6 +10,7 @@ from .src.steps.ingest_data import ingest_data_step
 from .src.steps.process_data import process_data_step
 from .src.steps.train_model import train_model_step
 from .src.steps.evaluate_model import evaluate_model
+from .src.steps.deploy_model import deploy_model
 from .src.steps.fetch_best_vizier_params import fetch_best_vizier_params
 
 # Docker Settings — use CUDA-enabled parent image for GPU support
@@ -82,9 +83,18 @@ def headway_training_pipeline(
     )
 
     # 5. Evaluate Model
-    evaluate_model(
+    test_mae, test_smape, rush_hour_html = evaluate_model(
         model=model,
         test_dataset=test_ds,
         config=config,
         time_anchor_iso=time_anchor_iso,
+    )
+
+    # 6. Deploy Model to Vertex AI Prediction Endpoint
+    deploy_model(
+        model=model,
+        training_dataset=train_ds,
+        config=config,
+        test_mae=test_mae,
+        test_smape=test_smape,
     )
