@@ -29,58 +29,90 @@ logger = logging.getLogger(__name__)
 
 class RushHourVisualizer:
     """
-    Helper class to generate specific Rush Hour performance plots for A, C, E lines.
-    Now matches 'Next Steps' spec: Plotly interactive, train_id titles, improved colors.
+    Generates Rush Hour performance plots for A, C, E subway lines.
+
+    Requirements:
+      - Subplot titles show the decoded group_id (e.g. "A_northbound_14st")
+      - Every subplot has full hover labels (90% Confidence, Predicted P50, Actual)
+      - X-axis shows real timestamps derived from time_idx + dataset time anchor
+      - MTA Blue (#0039A6) colour scheme with accessible contrast
     """
-    def __init__(self, predictions: torch.Tensor, x: Dict[str, torch.Tensor], group_encoder: Any):
-        self.predictions = predictions.cpu() # Shape: (Batch, PredictionLength, Quantiles)
-        self.x = x # Dictionary containing decoder_target, groups, time_idx
-        self.group_encoder = group_encoder
-        
+
+    def __init__(
+        self,
+        predictions: torch.Tensor,
+        x: Dict[str, torch.Tensor],
+        test_dataset: TimeSeriesDataSet,
+        time_anchor_iso: str = "",
+    ):
+        self.predictions = predictions.cpu()  # (Batch, PredLen, Quantiles)
+        self.x = x
+        self.test_dataset = test_dataset
+        self.time_anchor = (
+            pd.Timestamp(time_anchor_iso) if time_anchor_iso else None
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _decode_groups(self, encoded_ids: np.ndarray) -> np.ndarray:
+        """Decode integer-encoded group IDs back to human-readable strings."""
+        try:
+            params = self.test_dataset.get_parameters()
+            encoder = params.get("categorical_encoders", {}).get("group_id")
+            if encoder is not None and hasattr(encoder, "inverse_transform"):
+                return encoder.inverse_transform(encoded_ids)
+        except Exception as e:
+            logger.warning("Could not decode groups via get_parameters(): %s", e)
+
+        # Fallback: use decoded_index which stores string group_ids per sample
+        try:
+            di = self.test_dataset.decoded_index
+            if "group_id" in di.columns:
+                unique_groups = di["group_id"].unique()
+                return np.array([
+                    unique_groups[int(g)] if int(g) < len(unique_groups) else str(g)
+                    for g in encoded_ids
+                ])
+        except Exception as e:
+            logger.warning("Fallback group decoding also failed: %s", e)
+
+        return encoded_ids.astype(str)
+
+    def _time_idx_to_timestamps(self, time_idx: np.ndarray) -> Optional[np.ndarray]:
+        """Convert integer time_idx values to real datetime timestamps.
+
+        time_idx is minutes elapsed from the global min arrival_time_dt
+        (computed in data_processing.clean_dataset).  The anchor is passed
+        in as ``time_anchor_iso``.
+        """
+        if self.time_anchor is None:
+            return None
+        try:
+            timestamps = self.time_anchor + pd.to_timedelta(time_idx, unit="min")
+            return timestamps.values
+        except Exception as e:
+            logger.warning("Could not convert time_idx to timestamps: %s", e)
+            return None
+
     def _reconstruct_dataframe(self) -> pd.DataFrame:
-        """
-        Reconstructs a flat DataFrame from the Tensor outputs.
-        """
-        # 1. Extract Targets and Predictions
+        """Build a flat DataFrame from tensor outputs with decoded groups and timestamps."""
         actuals = self.x["decoder_target"].cpu().view(-1).numpy()
-        
-        # We use the P50 (Median) for the main prediction line
-        # prediction shape is (Batch, Time, Quantiles), P50 is usually index 1
         p50 = self.predictions[:, :, 1].view(-1).numpy()
         p10 = self.predictions[:, :, 0].view(-1).numpy()
         p90 = self.predictions[:, :, 2].view(-1).numpy()
-        
-        # 2. Extract Groups
-        # Groups in x['groups'] are (Batch, 1). We need to repeat them for sequence length.
+
         batch_groups = self.x["groups"].cpu().view(-1)
         seq_len = self.predictions.shape[1]
-        
-        # Repeat group_ids for every timestep in the sequence
-        group_ids = batch_groups.repeat_interleave(seq_len).numpy()
-        
-        # Decode Group IDs to Strings (e.g., "A_South_Train123")
-        try:
-            if hasattr(self.group_encoder, "inverse_transform"):
-                decoded_groups = self.group_encoder.inverse_transform(group_ids)
-            elif hasattr(self.group_encoder, "classes_"):
-                 classes = self.group_encoder.classes_
-                 if isinstance(classes, dict):
-                     inv_map = {v: k for k, v in classes.items()}
-                 else:
-                     inv_map = {i: c for i, c in enumerate(classes)}
-                 decoded_groups = np.array([inv_map.get(g, str(g)) for g in group_ids])
-            else:
-                 decoded_groups = group_ids.astype(str)
-        except Exception as e:
-            logger.warning(f"Could not decode groups: {e}")
-            decoded_groups = group_ids.astype(str)
+        group_ids_encoded = batch_groups.repeat_interleave(seq_len).numpy()
+        decoded_groups = self._decode_groups(group_ids_encoded)
 
-        # 3. Create DataFrame
         if "decoder_time_idx" in self.x:
-            batch_time_idx = self.x["decoder_time_idx"].cpu().view(-1) 
-            time_idx = batch_time_idx.numpy()
+            time_idx = self.x["decoder_time_idx"].cpu().view(-1).numpy()
         else:
-             time_idx = np.arange(len(actuals))
+            time_idx = np.arange(len(actuals))
+
+        timestamps = self._time_idx_to_timestamps(time_idx)
 
         df = pd.DataFrame({
             "group": decoded_groups,
@@ -88,122 +120,173 @@ class RushHourVisualizer:
             "actual": actuals,
             "pred_p50": p50,
             "pred_p10": p10,
-            "pred_p90": p90
+            "pred_p90": p90,
         })
-        
+        if timestamps is not None:
+            df["timestamp"] = timestamps
+
         return df
 
-    def plot_rush_hour(self, start_idx_window: Optional[int] = None, window_size: int = 180) -> go.Figure:
-        """
-        Generates an interactive Plotly chart with subplots for specific trains/lines.
-        
-        Specs:
-        - Subplot titles include train_id/group
-        - X-axis in generic "Minutes from Start" (until we pass real timestamps)
-        - Color scheme: MTA Blue for predictions, accessible contrast
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def plot_rush_hour(
+        self,
+        start_idx_window: Optional[int] = None,
+        window_size: int = 180,
+    ) -> go.Figure:
+        """Generate an interactive Plotly figure with per-group subplots.
+
+        Parameters
+        ----------
+        start_idx_window : int, optional
+            Absolute time_idx to start the window.  If *None* the visualizer
+            picks a window centred on the median time_idx for each group.
+        window_size : int
+            Width of the display window in minutes (default 180 = 3 hours).
         """
         df = self._reconstruct_dataframe()
-        
-        # Filter for A, C, E lines or reasonable fallback
-        target_lines = ['A', 'C', 'E']
-        available_groups = df['group'].unique()
-        
+        has_timestamps = "timestamp" in df.columns
+
+        # ---- Select groups for A / C / E lines ----
+        target_lines = ["A", "C", "E"]
+        available_groups = df["group"].unique()
+
         plot_groups = []
         for g in available_groups:
-            line_letter = str(g).split('_')[0]
+            line_letter = str(g).split("_")[0]
             if line_letter in target_lines:
                 plot_groups.append(g)
-        
-        # Limit to 3 distinct groups to keep plot readable
+
         if not plot_groups:
             plot_groups = list(available_groups)[:3]
         else:
-            plot_groups = plot_groups[:3]
-            
-        # Create Subplots
+            # One per target line, up to 3
+            seen_lines: Dict[str, str] = {}
+            for g in plot_groups:
+                letter = str(g).split("_")[0]
+                if letter not in seen_lines:
+                    seen_lines[letter] = g
+            plot_groups = list(seen_lines.values())[:3]
+
+        # ---- Build subplots ----
         fig = make_subplots(
-            rows=len(plot_groups), cols=1,
+            rows=len(plot_groups),
+            cols=1,
             shared_xaxes=False,
-            vertical_spacing=0.1,
-            subplot_titles=[f"Train: {g}" for g in plot_groups]
+            vertical_spacing=0.12,
+            subplot_titles=[str(g) for g in plot_groups],
         )
 
         for i, group in enumerate(plot_groups):
             row = i + 1
-            group_df = df[df['group'] == group].sort_values("time_idx")
-            
+            group_df = df[df["group"] == group].sort_values("time_idx")
             if group_df.empty:
                 continue
 
-            # Heuristic: Find a busy window
+            # --- Time window ---
             if start_idx_window is None:
-                mid_point = group_df['time_idx'].median()
-                start_time = mid_point - (window_size / 2)
+                mid = group_df["time_idx"].median()
+                t_start = mid - (window_size / 2)
             else:
-                start_time = start_idx_window
+                t_start = start_idx_window
+            t_end = t_start + window_size
 
-            end_time = start_time + window_size
-            
-            # Slice the window
-            mask = (group_df['time_idx'] >= start_time) & (group_df['time_idx'] <= end_time)
-            plot_df = group_df[mask]
-            
+            plot_df = group_df[
+                (group_df["time_idx"] >= t_start) & (group_df["time_idx"] <= t_end)
+            ]
             if plot_df.empty:
                 continue
 
-            # 1. Prediction Interval (P10-P90) - Filled Area
-            # Plotly trick: P10 (transparent line) + P90 (filled down to P10)
-            fig.add_trace(go.Scatter(
-                x=plot_df['time_idx'], y=plot_df['pred_p10'],
-                mode='lines', line=dict(width=0),
-                showlegend=False, hoverinfo='skip'
-            ), row=row, col=1)
-            
-            fig.add_trace(go.Scatter(
-                x=plot_df['time_idx'], y=plot_df['pred_p90'],
-                mode='lines', line=dict(width=0),
-                fill='tonexty', fillcolor='rgba(0, 57, 166, 0.2)', # MTA Blue transparent
-                name='90% Confidence' if i == 0 else None,
-                showlegend=(i == 0)
-            ), row=row, col=1)
+            # Use timestamps for x-axis when available, raw time_idx otherwise
+            x_vals = plot_df["timestamp"] if has_timestamps else plot_df["time_idx"]
 
-            # 2. Main Prediction (P50)
-            fig.add_trace(go.Scatter(
-                x=plot_df['time_idx'], y=plot_df['pred_p50'],
-                mode='lines',
-                line=dict(color='#0039A6', width=2), # MTA Blue
-                name='Predicted (P50)' if i == 0 else None,
-                showlegend=(i == 0)
-            ), row=row, col=1)
+            # --- Confidence band (P10 → P90) ---
+            fig.add_trace(
+                go.Scatter(
+                    x=x_vals,
+                    y=plot_df["pred_p10"],
+                    mode="lines",
+                    line=dict(width=0),
+                    showlegend=False,
+                    hoverinfo="skip",
+                ),
+                row=row, col=1,
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=x_vals,
+                    y=plot_df["pred_p90"],
+                    mode="lines",
+                    line=dict(width=0),
+                    fill="tonexty",
+                    fillcolor="rgba(0, 57, 166, 0.2)",
+                    name="90% Confidence",
+                    legendgroup="confidence",
+                    showlegend=(i == 0),
+                    hovertemplate="P90: %{y:.2f}<extra>90% Confidence</extra>",
+                ),
+                row=row, col=1,
+            )
 
-            # 3. Actuals
-            fig.add_trace(go.Scatter(
-                x=plot_df['time_idx'], y=plot_df['actual'],
-                mode='markers',
-                marker=dict(color='black', size=5, symbol='circle'),
-                name='Actual Headway' if i == 0 else None,
-                showlegend=(i == 0)
-            ), row=row, col=1)
+            # --- P50 prediction ---
+            fig.add_trace(
+                go.Scatter(
+                    x=x_vals,
+                    y=plot_df["pred_p50"],
+                    mode="lines",
+                    line=dict(color="#0039A6", width=2),
+                    name="Predicted (P50)",
+                    legendgroup="p50",
+                    showlegend=(i == 0),
+                    hovertemplate="P50: %{y:.2f} min<extra>Predicted (P50)</extra>",
+                ),
+                row=row, col=1,
+            )
 
-            # Layout tweaks per subplot
-            fig.update_xaxes(title_text="Time Index (Minutes)", row=row, col=1)
+            # --- Actuals ---
+            fig.add_trace(
+                go.Scatter(
+                    x=x_vals,
+                    y=plot_df["actual"],
+                    mode="markers",
+                    marker=dict(color="black", size=5, symbol="circle"),
+                    name="Actual Headway",
+                    legendgroup="actual",
+                    showlegend=(i == 0),
+                    hovertemplate="Actual: %{y:.2f} min<extra>Actual Headway</extra>",
+                ),
+                row=row, col=1,
+            )
+
+            # --- Axis labels ---
+            x_title = "Time" if has_timestamps else "Time Index (minutes from dataset start)"
+            fig.update_xaxes(title_text=x_title, row=row, col=1)
             fig.update_yaxes(title_text="Headway (min)", row=row, col=1)
 
-        # Global Layout
+            if has_timestamps:
+                fig.update_xaxes(
+                    tickformat="%b %d %H:%M",
+                    dtick=30 * 60 * 1000,  # tick every 30 min (ms for datetime axes)
+                    row=row, col=1,
+                )
+
         fig.update_layout(
-            height=300 * len(plot_groups),
-            title_text="Rush Hour Headway Predictions (Model Eval)",
+            height=350 * len(plot_groups),
+            title_text="Rush Hour Headway Predictions — Model Evaluation (Test Set)",
             template="plotly_white",
-            hovermode="x unified"
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
-        
+
         return fig
 
 @step(enable_cache=False)
 def evaluate_model(
     model: TemporalFusionTransformer,
     test_dataset: TimeSeriesDataSet,
-    config: DictConfig
+    config: DictConfig,
+    time_anchor_iso: str = "",
 ) -> Tuple[float, float]:
     """
     Evaluates the model on the test set.
@@ -253,14 +336,8 @@ def evaluate_model(
     
     # 4. Generate Rush Hour Visualizations
     logger.info("Generating Rush Hour Visualization...")
-    
-    if hasattr(model.dataset_parameters, "categorical_encoders"):
-         group_encoder = model.dataset_parameters["categorical_encoders"]["group_id"]
-    else:
-         # Best effort recovery
-         group_encoder = None
 
-    viz = RushHourVisualizer(predictions, x, group_encoder)
+    viz = RushHourVisualizer(predictions, x, test_dataset, time_anchor_iso)
     
     # Generate the Rush Hour plot
     fig = viz.plot_rush_hour(window_size=180) # 3 hour window

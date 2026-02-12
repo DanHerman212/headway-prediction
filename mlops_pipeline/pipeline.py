@@ -61,8 +61,8 @@ def headway_training_pipeline(
     # 2. Ingest Data
     raw_df = ingest_data_step(file_path=data_path)
 
-    # 3. Process Data (Returns training, val, test datasets)
-    train_ds, val_ds, test_ds = process_data_step(
+    # 3. Process Data (Returns training, val, test datasets + time anchor)
+    train_ds, val_ds, test_ds, time_anchor_iso = process_data_step(
         raw_data=raw_df, 
         config=config
     )
@@ -85,5 +85,6 @@ def headway_training_pipeline(
     evaluate_model(
         model=model,
         test_dataset=test_ds,
-        config=config
+        config=config,
+        time_anchor_iso=time_anchor_iso,
     )

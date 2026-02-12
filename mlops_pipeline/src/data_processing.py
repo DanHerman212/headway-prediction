@@ -3,10 +3,18 @@ import pandas as pd
 from omegaconf import DictConfig
 from pytorch_forecasting import TimeSeriesDataSet
 from pytorch_forecasting.data import GroupNormalizer
+from typing import Tuple
 
-def clean_dataset(data: pd.DataFrame) -> pd.DataFrame:
+def clean_dataset(data: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
     """
     Apply physics-based cleaning, imputation, and time indexing.
+
+    Returns
+    -------
+    (df, time_anchor_iso)
+        Cleaned DataFrame and the ISO-8601 string of the global minimum
+        arrival_time_dt, so downstream consumers can convert time_idx
+        back to real timestamps.
     """
     df = data.copy()
 
@@ -53,8 +61,11 @@ def clean_dataset(data: pd.DataFrame) -> pd.DataFrame:
 
     # Sort final dataframe
     df = df.sort_values(['group_id', 'time_idx'])
+
+    # Return the anchor so callers can map time_idx → real timestamps
+    time_anchor_iso = min_time.isoformat()
     
-    return df
+    return df, time_anchor_iso
 
 def get_slice_with_lookback(full_df: pd.DataFrame, start_date, end_date, lookback: int):
     """
@@ -78,9 +89,18 @@ def get_slice_with_lookback(full_df: pd.DataFrame, start_date, end_date, lookbac
     
     return core_df
 
-def create_datasets(data: pd.DataFrame, config: DictConfig):
+def create_datasets(data: pd.DataFrame, config: DictConfig, time_anchor_iso: str = ""):
     """
     Splits the data and initializes TimeSeriesDataSet objects based on the configuration.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Cleaned DataFrame from ``clean_dataset``.
+    config : DictConfig
+        Processing section of the Hydra config.
+    time_anchor_iso : str
+        ISO-8601 timestamp of the global min arrival_time_dt (time_idx=0).
     """
     # Parse cutoffs (handle timestamps safely)
     is_tz_aware = data['arrival_time_dt'].dt.tz is not None
@@ -123,4 +143,4 @@ def create_datasets(data: pd.DataFrame, config: DictConfig):
     validation = TimeSeriesDataSet.from_dataset(training, val_df_input, predict=False, stop_randomization=True)
     test = TimeSeriesDataSet.from_dataset(training, test_df_input, predict=False, stop_randomization=True)
 
-    return training, validation, test
+    return training, validation, test, time_anchor_iso
