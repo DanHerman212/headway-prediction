@@ -8,13 +8,17 @@ Logs results to Vertex AI Experiments + TensorBoard.
 
 import pandas as pd
 import numpy as np
+import re
 import torch
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import logging
 import os
 import tempfile
-from typing import Tuple, Dict, Any, Optional
+from typing import Annotated, Tuple, Dict, Any, Optional
 
 from google.cloud import aiplatform
 from torch.utils.tensorboard import SummaryWriter
@@ -137,11 +141,14 @@ class RushHourVisualizer:
     ) -> go.Figure:
         """Generate an interactive Plotly figure with per-group subplots.
 
+        Selects the most data-rich AM rush hour day (07:00-10:00) for each
+        group.  Falls back to PM rush (17:00-20:00) if no AM data exists.
+
         Parameters
         ----------
         start_idx_window : int, optional
             Absolute time_idx to start the window.  If *None* the visualizer
-            picks a window centred on the median time_idx for each group.
+            auto-selects a rush hour window from the timestamps.
         window_size : int
             Width of the display window in minutes (default 180 = 3 hours).
         """
@@ -184,12 +191,29 @@ class RushHourVisualizer:
             if group_df.empty:
                 continue
 
-            # --- Time window ---
-            if start_idx_window is None:
+            # --- Rush hour window selection ---
+            rush_period = None
+            if start_idx_window is not None:
+                t_start = start_idx_window
+            elif has_timestamps:
+                gts = pd.to_datetime(group_df["timestamp"])
+                hours = gts.dt.hour
+                am_mask = hours.between(7, 9)
+                pm_mask = hours.between(17, 19)
+                if am_mask.any():
+                    rush_df = group_df.loc[am_mask]
+                    rush_period = "AM Rush (07:00-10:00)"
+                else:
+                    rush_df = group_df.loc[pm_mask]
+                    rush_period = "PM Rush (17:00-20:00)"
+                # Pick the date with the most observations (typically a weekday)
+                rush_ts = pd.to_datetime(rush_df["timestamp"])
+                best_date = rush_ts.dt.date.value_counts().idxmax()
+                day_rush = rush_df.loc[rush_ts.dt.date == best_date]
+                t_start = day_rush["time_idx"].min()
+            else:
                 mid = group_df["time_idx"].median()
                 t_start = mid - (window_size / 2)
-            else:
-                t_start = start_idx_window
             t_end = t_start + window_size
 
             plot_df = group_df[
@@ -197,6 +221,12 @@ class RushHourVisualizer:
             ]
             if plot_df.empty:
                 continue
+
+            # Annotate subplot title with rush period
+            if rush_period and i < len(fig.layout.annotations):
+                fig.layout.annotations[i].update(
+                    text=f"{group} \u2014 {rush_period}"
+                )
 
             # Use timestamps for x-axis when available, raw time_idx otherwise
             x_vals = plot_df["timestamp"] if has_timestamps else plot_df["time_idx"]
@@ -287,7 +317,11 @@ def evaluate_model(
     test_dataset: TimeSeriesDataSet,
     config: DictConfig,
     time_anchor_iso: str = "",
-) -> Tuple[float, float]:
+) -> Tuple[
+    Annotated[float, "test_mae"],
+    Annotated[float, "test_smape"],
+    Annotated[str, "rush_hour_plot_html"],
+]:
     """
     Evaluates the model on the test set.
 
@@ -316,7 +350,8 @@ def evaluate_model(
     # 2. Generate Predictions
     raw_prediction = model.predict(test_loader, mode="raw", return_x=True)
     
-    predictions = raw_prediction.output["prediction"]
+    raw_output = raw_prediction.output
+    predictions = raw_output["prediction"]
     x = raw_prediction.x
     
     # 3. Calculate Global Metrics
@@ -340,14 +375,20 @@ def evaluate_model(
     viz = RushHourVisualizer(predictions, x, test_dataset, time_anchor_iso)
     
     # Generate the Rush Hour plot
-    fig = viz.plot_rush_hour(window_size=180) # 3 hour window
-    
+    fig = viz.plot_rush_hour(window_size=180)  # 3 hour window
+
+    # Capture interactive HTML for artifact output
+    html_content = fig.to_html(full_html=True, include_plotlyjs="cdn")
+
     # 5. Log to Vertex AI Experiments by resuming the training step's run.
     #    The experiment name comes from config; the run name is the ZenML pipeline run ID
     #    (sanitized to match Vertex AI naming: lowercase, hyphens only).
     try:
         context = get_step_context()
-        run_name = context.pipeline_run.name
+        raw_name = context.pipeline_run.name
+        # Sanitize to match ZenML Vertex tracker _format_name():
+        # lowercase, replace non-[a-z0-9-] with hyphen, truncate to 128
+        run_name = re.sub(r"[^a-z0-9-]", "-", raw_name.strip().lower())[:128].rstrip("-")
     except Exception:
         run_name = None
         logger.warning("Could not retrieve ZenML step context for run name.")
@@ -408,6 +449,22 @@ def evaluate_model(
             except Exception as img_err:
                 logger.warning(f"Could not log image to TensorBoard: {img_err}")
         
+        # TFT Interpretation: Feature Importance + Attention
+        try:
+            logger.info("Generating TFT interpretation plots...")
+            interpretation = model.interpret_output(raw_output, reduction="sum")
+            interp_figs = model.plot_interpretation(interpretation)
+            for key, interp_fig in interp_figs.items():
+                writer.add_figure(
+                    f"eval/interpretation_{key}", interp_fig, global_step=0
+                )
+                plt.close(interp_fig)
+            logger.info(
+                "Logged %d interpretation plots to TensorBoard", len(interp_figs)
+            )
+        except Exception as interp_err:
+            logger.warning("Could not generate interpretation plots: %s", interp_err)
+
         writer.close()
 
         # Upload everything (TB events + HTML + PNG) to GCS
@@ -433,5 +490,5 @@ def evaluate_model(
     finally:
         import shutil
         shutil.rmtree(local_eval_dir, ignore_errors=True)
-    
-    return mae, smape
+
+    return mae, smape, html_content

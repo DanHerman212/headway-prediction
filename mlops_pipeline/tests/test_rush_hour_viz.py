@@ -8,9 +8,9 @@ Run:
     python -m mlops_pipeline.tests.test_rush_hour_viz
 
 Opens the plot in your browser. Verify:
-  1. Subplot titles show decoded group_id strings (e.g. "A_south_local")
+  1. Subplot titles show decoded group_id + rush period (e.g. "A_South \u2014 AM Rush (07:00-10:00)")
   2. All subplots have hover labels: "Predicted (P50)", "90% Confidence", "Actual Headway"
-  3. X-axis shows real timestamps (e.g. "Dec 20 08:30")
+  3. X-axis shows real timestamps within a rush hour window
 """
 
 import os
@@ -33,41 +33,47 @@ def _build_synthetic_data() -> pd.DataFrame:
     """Create a DataFrame that mimics the real training data schema."""
     np.random.seed(42)
 
-    groups = ["A_south_local", "C_north_express", "E_south_local"]
+    groups = ["A_South", "C_N", "E_South"]
     rows = []
 
-    # Generate 3 hours of data per group, ~1 observation per minute
-    base_time = pd.Timestamp("2025-12-20 07:00:00", tz="UTC")
+    # Generate 3 days of data per group (~1 obs per minute during service hours)
+    # to test rush hour date-picking logic
+    base_time = pd.Timestamp("2025-12-18 05:00:00", tz="UTC")  # Thu 5am
     for group in groups:
         route = group.split("_")[0]
-        n_points = 200  # ~200 minutes of data
-        for t in range(n_points):
-            arrival = base_time + pd.Timedelta(minutes=t)
-            headway = np.random.normal(loc=6.0, scale=2.0)
-            headway = max(1.0, headway)
-            rows.append({
-                "group_id": group,
-                "route_id": route,
-                "direction": group.split("_")[1],
-                "regime_id": "AM_RUSH" if 7 <= arrival.hour < 10 else "MIDDAY",
-                "track_id": "express" if "express" in group else "local",
-                "preceding_route_id": route,
-                "arrival_time_dt": arrival,
-                "time_idx": t,  # Will be recomputed below
-                "service_headway": headway,
-                "preceding_train_gap": headway + np.random.normal(0, 0.5),
-                "upstream_headway_14th": headway + np.random.normal(0, 0.3),
-                "travel_time_14th": np.random.normal(2.0, 0.3),
-                "travel_time_14th_deviation": np.random.normal(0, 0.1),
-                "travel_time_23rd": np.random.normal(1.8, 0.2),
-                "travel_time_23rd_deviation": np.random.normal(0, 0.1),
-                "travel_time_34th": np.random.normal(2.2, 0.3),
-                "travel_time_34th_deviation": np.random.normal(0, 0.1),
-                "stops_at_23rd": 1.0,
-                "hour_sin": np.sin(2 * np.pi * arrival.hour / 24),
-                "hour_cos": np.cos(2 * np.pi * arrival.hour / 24),
-                "empirical_median": 5.5,
-            })
+        direction = group.split("_")[1]
+        for day_offset in range(3):  # 3 days
+            day_start = base_time + pd.Timedelta(days=day_offset)
+            # Service hours: 5am - 1am (~20h per day)
+            for minute in range(0, 20 * 60, 1):
+                arrival = day_start + pd.Timedelta(minutes=minute)
+                headway = np.random.normal(loc=6.0, scale=2.0)
+                headway = max(1.0, headway)
+                rows.append({
+                    "group_id": group,
+                    "route_id": route,
+                    "direction": direction,
+                    "regime_id": "AM_RUSH" if 7 <= arrival.hour < 10 else (
+                        "PM_RUSH" if 17 <= arrival.hour < 20 else "OFF_PEAK"
+                    ),
+                    "track_id": "express" if direction == "N" else "local",
+                    "preceding_route_id": route,
+                    "arrival_time_dt": arrival,
+                    "time_idx": 0,  # recomputed below
+                    "service_headway": headway,
+                    "preceding_train_gap": headway + np.random.normal(0, 0.5),
+                    "upstream_headway_14th": headway + np.random.normal(0, 0.3),
+                    "travel_time_14th": np.random.normal(2.0, 0.3),
+                    "travel_time_14th_deviation": np.random.normal(0, 0.1),
+                    "travel_time_23rd": np.random.normal(1.8, 0.2),
+                    "travel_time_23rd_deviation": np.random.normal(0, 0.1),
+                    "travel_time_34th": np.random.normal(2.2, 0.3),
+                    "travel_time_34th_deviation": np.random.normal(0, 0.1),
+                    "stops_at_23rd": 1.0,
+                    "hour_sin": np.sin(2 * np.pi * arrival.hour / 24),
+                    "hour_cos": np.cos(2 * np.pi * arrival.hour / 24),
+                    "empirical_median": 5.5,
+                })
 
     df = pd.DataFrame(rows)
 
@@ -188,9 +194,15 @@ def main():
     print("\n--- Verification Checklist ---")
     subplot_titles = [ann.text for ann in fig.layout.annotations if hasattr(ann, "text")]
     print(f"  Subplot titles: {subplot_titles}")
-    has_numeric_title = any(t.isdigit() for t in subplot_titles)
-    if has_numeric_title:
-        print("  FAIL: Subplot titles still show numeric IDs")
+    has_rush_label = any("Rush" in t for t in subplot_titles)
+    if not has_rush_label:
+        print("  FAIL: No rush period annotation in subplot titles")
+    else:
+        print("  OK: Subplot titles include rush period annotation")
+
+    has_group_name = any("A_South" in t or "C_N" in t or "E_South" in t for t in subplot_titles)
+    if not has_group_name:
+        print("  FAIL: Subplot titles missing decoded group names")
     else:
         print("  OK: Subplot titles show decoded group names")
 
@@ -201,12 +213,16 @@ def main():
     else:
         print("  OK: All traces have meaningful names")
 
-    # Check x-axis data for timestamps
+    # Check x-axis data falls within rush hour
     first_data_trace = next((t for t in fig.data if t.x is not None and len(t.x) > 0), None)
     if first_data_trace is not None:
         sample = first_data_trace.x[0]
         if isinstance(sample, (pd.Timestamp, np.datetime64)) or "T" in str(sample):
-            print(f"  OK: X-axis uses timestamps (sample: {sample})")
+            ts = pd.Timestamp(sample)
+            if 7 <= ts.hour < 10 or 17 <= ts.hour < 20:
+                print(f"  OK: X-axis timestamps fall in rush hour (sample: {sample})")
+            else:
+                print(f"  WARN: X-axis timestamp may not be in rush hour (sample: {sample}, hour={ts.hour})")
         else:
             print(f"  FAIL: X-axis still uses raw values (sample: {sample})")
     else:
