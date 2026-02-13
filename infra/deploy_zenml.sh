@@ -21,7 +21,8 @@ DB_USER="mlops-user"
 
 # Derived
 SA_EMAIL="${SERVICE_ACCOUNT}@${PROJECT_ID}.iam.gserviceaccount.com"
-IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/zenml-server:v1"
+# Use a timestamp-based tag so Cloud Run always pulls the fresh image
+IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/zenml-server:$(date +%Y%m%d-%H%M%S)"
 INSTANCE_CONNECTION_NAME=$(gcloud sql instances describe "${SQL_INSTANCE}" --format="value(connectionName)")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

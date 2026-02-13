@@ -22,7 +22,7 @@ from zenml import step, get_step_context
 from omegaconf import DictConfig
 from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
 
-from mlops_pipeline.src.serving.onnx_export import export_tft_to_onnx
+from ..serving.onnx_export import export_tft_to_onnx
 
 logger = logging.getLogger(__name__)
 

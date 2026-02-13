@@ -63,6 +63,8 @@ spec:
               value: sql
             - name: ZENML_CONTAINER
               value: "true"
+            - name: ZENML_ENABLE_IMPLICIT_AUTH_METHODS
+              value: "true"
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
