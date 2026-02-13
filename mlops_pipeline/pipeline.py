@@ -83,7 +83,7 @@ def headway_training_pipeline(
     )
 
     # 5. Evaluate Model
-    test_mae, test_smape, rush_hour_html = evaluate_model(
+    test_mae, test_smape, rush_hour_html, interpretation_html = evaluate_model(
         model=model,
         test_dataset=test_ds,
         config=config,

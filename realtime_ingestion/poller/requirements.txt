@@ -1,0 +1,4 @@
+# Poller dependencies - fetch, parse protobuf extensions, publish
+google-cloud-pubsub>=2.18.0
+requests>=2.31.0
+protobuf>=6.33.0
