@@ -49,7 +49,7 @@ def _build_test_payload(group_id: str, route: str, direction: str) -> dict:
             "hour_cos": round(math.cos(2 * math.pi * hour / 24), 4),
             "empirical_median": 5.5,
             "route_id": route,
-            "regime_id": "AM_RUSH",
+            "regime_id": "Night" if (hour >= 22 or hour < 5) else "Day",
             "track_id": "local" if direction == "South" else "express",
             "preceding_route_id": route,
         })

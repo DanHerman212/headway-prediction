@@ -69,15 +69,65 @@ _metadata: Dict[str, Any] = None
 _dataset_params: Dict[str, Any] = None
 
 
+# Required artifact files the model needs to serve
+_REQUIRED_ARTIFACTS = ["model.onnx", "model_metadata.json", "dataset_params.json"]
+_LOCAL_MODEL_DIR = "/tmp/model_artifacts"
+
+
+def _download_from_gcs(gcs_uri: str, local_dir: str) -> None:
+    """Download model artifacts from a GCS URI to a local directory.
+
+    Vertex AI sets AIP_STORAGE_URI to a gs:// URI for custom containers.
+    The container must download the artifacts itself.
+    """
+    from google.cloud import storage as gcs_storage
+
+    # Parse gs://bucket/prefix
+    path = gcs_uri.replace("gs://", "")
+    bucket_name = path.split("/")[0]
+    prefix = "/".join(path.split("/")[1:])
+    if prefix and not prefix.endswith("/"):
+        prefix += "/"
+
+    logger.info("Downloading artifacts from gs://%s/%s to %s",
+                bucket_name, prefix, local_dir)
+    os.makedirs(local_dir, exist_ok=True)
+
+    client = gcs_storage.Client()
+    bucket = client.bucket(bucket_name)
+    blobs = list(bucket.list_blobs(prefix=prefix))
+    if not blobs:
+        raise FileNotFoundError(f"No blobs found at {gcs_uri}")
+
+    for blob in blobs:
+        # Compute relative path from prefix
+        rel_path = blob.name[len(prefix):] if prefix else blob.name
+        if not rel_path or rel_path.endswith("/"):
+            continue
+        local_path = os.path.join(local_dir, rel_path)
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        blob.download_to_filename(local_path)
+        logger.info("  Downloaded %s (%.1f KB)", rel_path,
+                    os.path.getsize(local_path) / 1024)
+
+
 def _load_model():
     """Load ONNX model + metadata from the model directory.
 
-    Vertex AI mounts the model artifact directory at AIP_STORAGE_URI
-    (usually /mnt/models/ or the default artifact path).
+    Vertex AI sets AIP_STORAGE_URI to a gs:// URI for custom containers.
+    This function downloads from GCS first, then loads locally.
     """
     global _session, _metadata, _dataset_params
 
-    model_dir = os.environ.get("AIP_STORAGE_URI", "/mnt/models")
+    storage_uri = os.environ.get("AIP_STORAGE_URI", "/mnt/models")
+
+    # If it's a GCS path, download artifacts locally first
+    if storage_uri.startswith("gs://"):
+        _download_from_gcs(storage_uri, _LOCAL_MODEL_DIR)
+        model_dir = _LOCAL_MODEL_DIR
+    else:
+        model_dir = storage_uri
+
     # In some deployments the artifacts are nested; handle both layouts
     onnx_path = os.path.join(model_dir, "model.onnx")
     if not os.path.exists(onnx_path):
@@ -87,6 +137,12 @@ def _load_model():
                 onnx_path = os.path.join(root, "model.onnx")
                 model_dir = root
                 break
+
+    if not os.path.exists(onnx_path):
+        raise FileNotFoundError(
+            f"model.onnx not found in {storage_uri} (searched {model_dir}). "
+            f"Available files: {os.listdir(model_dir) if os.path.isdir(model_dir) else 'dir not found'}"
+        )
 
     logger.info("Loading ONNX model from %s", onnx_path)
     _session = ort.InferenceSession(
@@ -234,11 +290,21 @@ def health():
     return jsonify({"status": "healthy"})
 
 
+def _safe_load_model():
+    """Attempt to load model, logging errors instead of crashing."""
+    try:
+        _load_model()
+        logger.info("Model loaded successfully")
+    except Exception:
+        logger.exception("Failed to load model at startup — /health will return 503")
+
+
 if __name__ == "__main__":
-    _load_model()
+    _load_model()  # Fail fast in direct execution
     port = int(os.environ.get("AIP_HTTP_PORT", "8080"))
     logger.info("Starting prediction server on port %d", port)
     app.run(host="0.0.0.0", port=port)
 else:
-    # When imported by gunicorn --preload, load model eagerly
-    _load_model()
+    # When imported by gunicorn --preload, load model but don't crash the
+    # process — let the health check report 503 so logs are visible.
+    _safe_load_model()

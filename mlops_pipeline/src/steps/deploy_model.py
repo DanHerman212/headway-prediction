@@ -239,6 +239,7 @@ def deploy_model(
             min_replica_count=MIN_REPLICAS,
             max_replica_count=MAX_REPLICAS,
             traffic_percentage=100,
+            deploy_request_timeout=1200,  # 20 min hard timeout
         )
         logger.info("Model deployed to endpoint: %s", endpoint.resource_name)
 

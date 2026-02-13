@@ -7,7 +7,8 @@ RUN pip install --no-cache-dir \
     onnxruntime>=1.17.0 \
     flask>=3.0 \
     gunicorn>=22.0 \
-    numpy>=1.24
+    numpy>=1.24 \
+    google-cloud-storage>=2.9.0
 
 COPY predictor.py .
 
