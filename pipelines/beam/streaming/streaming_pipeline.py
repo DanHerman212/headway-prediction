@@ -35,17 +35,72 @@ from pipelines.beam.transforms.firestore_sink import WriteToFirestoreFn
 
 logger = logging.getLogger(__name__)
 
+TARGET_STATION = "A32S"
 
-def _log_tap(label):
-    """Return a logging function that logs and passes through the element."""
-    def _log(element):
-        if isinstance(element, dict):
-            gid = element.get("group_id", "?")
-            logger.info("[%s] group_id=%s | keys=%s", label, gid, sorted(element.keys()))
-        else:
-            logger.info("[%s] %s", label, str(element)[:200])
+FEATURE_FIELDS = [
+    "service_headway",
+    "upstream_headway_14th",
+    "travel_time_14th",
+    "travel_time_23rd",
+    "travel_time_34th",
+    "preceding_train_gap",
+    "travel_time_deviation_14th",
+    "travel_time_deviation_23rd",
+    "travel_time_deviation_34th",
+    "empirical_median",
+    "hour_sin",
+    "hour_cos",
+    "time_idx",
+    "regime_id",
+]
+
+
+def _log_target_station(element):
+    """Log every event at the target station with all generated features."""
+    if element.get("stop_id") != TARGET_STATION:
         return element
-    return _log
+    gid = element.get("group_id", "?")
+    route = element.get("route_id", "?")
+    track = element.get("track_id", "?")
+    trip = element.get("trip_uid", "?")
+    at = element.get("arrival_time", "?")
+    features = {k: element.get(k) for k in FEATURE_FIELDS}
+    logger.info(
+        "\n╔══ TARGET STATION EVENT ══════════════════════════"
+        "\n║ group: %-10s route: %s  track: %s"
+        "\n║ trip:  %s"
+        "\n║ arrival_time: %s"
+        "\n║ features:"
+        "\n║   service_headway:    %s"
+        "\n║   upstream_hw_14th:   %s"
+        "\n║   travel_time_14th:   %s"
+        "\n║   travel_time_23rd:   %s"
+        "\n║   travel_time_34th:   %s"
+        "\n║   preceding_gap:      %s"
+        "\n║   tt_dev_14th:        %s"
+        "\n║   tt_dev_23rd:        %s"
+        "\n║   tt_dev_34th:        %s"
+        "\n║   empirical_median:   %s"
+        "\n║   hour_sin/cos:       %s / %s"
+        "\n║   time_idx:           %s"
+        "\n║   regime_id:          %s"
+        "\n╚══════════════════════════════════════════════════",
+        gid, route, track, trip, at,
+        features["service_headway"],
+        features["upstream_headway_14th"],
+        features["travel_time_14th"],
+        features["travel_time_23rd"],
+        features["travel_time_34th"],
+        features["preceding_train_gap"],
+        features["travel_time_deviation_14th"],
+        features["travel_time_deviation_23rd"],
+        features["travel_time_deviation_34th"],
+        features["empirical_median"],
+        features["hour_sin"], features["hour_cos"],
+        features["time_idx"],
+        features["regime_id"],
+    )
+    return element
 
 
 def run(argv=None):
@@ -94,9 +149,6 @@ def run(argv=None):
             | "KeyForState" >> beam.Map(lambda msg: ("all_routes", msg))
             | "DetectArrivals" >> beam.ParDo(DetectArrivalsFn())
         )
-
-        # Tap: arrival detection output
-        arrivals = arrivals | "TapArrivals" >> beam.Map(_log_tap("ARRIVAL"))
 
         # --- Step 3: Feature Engineering ---
         # 3a. Row-level enrichment (flat — adds time_idx, group_id, regime, etc.)
@@ -157,9 +209,9 @@ def run(argv=None):
             )
         )
 
-        # Tap: fully-engineered records
-        feature_records = feature_records | "TapFeatures" >> beam.Map(
-            _log_tap("FEATURES")
+        # Feedback: log every target station event with all features
+        feature_records = feature_records | "LogTargetStation" >> beam.Map(
+            _log_target_station
         )
 
         # --- Step 4: Window Buffer ---
@@ -169,18 +221,6 @@ def run(argv=None):
                 lambda x: (x.get("group_id", "Unknown"), x)
             )
             | "BufferWindow" >> beam.ParDo(BufferWindowFn())
-        )
-
-        # Tap: windows emitted
-        windows = windows | "TapWindows" >> beam.Map(
-            lambda w: (
-                logger.info(
-                    "[WINDOW] group_id=%s  obs_count=%d",
-                    w.get("group_id", "?"),
-                    len(w.get("observations", [])),
-                ),
-                w,
-            )[-1]
         )
 
         # --- Step 5: Sink ---
