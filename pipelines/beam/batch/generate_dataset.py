@@ -7,14 +7,14 @@ from apache_beam.options.pipeline_options import (PipelineOptions,
                                                  GoogleCloudOptions, 
                                                  SetupOptions)
 
-from pipelines.beam.shared.transforms import (EnrichRecordFn, 
-                                               CalculateServiceHeadwayFn, 
-                                               CalculateTrackGapFn, 
-                                               EnrichWithEmpiricalFn,
-                                               CalculateUpstreamTravelTimeFn,
-                                               CalculateUpstreamHeadwayFn,
-                                               CalculateTravelTimeDeviationFn,
-                                               ReindexTimeInGroupsFn)
+from pipelines.beam.transforms.transforms import (EnrichRecordFn, 
+                                                   CalculateServiceHeadwayFn, 
+                                                   CalculateTrackGapFn, 
+                                                   EnrichWithEmpiricalFn,
+                                                   CalculateUpstreamTravelTimeFn,
+                                                   CalculateUpstreamHeadwayFn,
+                                                   CalculateTravelTimeDeviationFn,
+                                                   ReindexTimeInGroupsFn)
 
 # --- define schema for parque export ---
 output_schema = pa.schema([
