@@ -1288,3 +1288,87 @@ INFO:__main__:
 INFO:pipelines.beam.transforms.window_buffer:Buffer warmup E_South: 17/20 observations
 INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
 INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:__main__:
+╔══ TARGET STATION EVENT ══════════════════════════
+║ group: C_South    route: C  track: A1
+║ trip:  20260217_087550_C..S04R
+║ arrival_time: 2026-02-17T20:06:27+00:00
+║ features:
+║   service_headway:    4.583333333333333
+║   upstream_hw_14th:   4.6
+║   travel_time_14th:   1.9833333333333334
+║   travel_time_23rd:   3.0
+║   travel_time_34th:   5.0
+║   preceding_gap:      2.0
+║   preceding_route:    E
+║   tt_dev_14th:        -0.09999966666666671
+║   tt_dev_23rd:        -0.5833330000000001
+║   tt_dev_34th:        -0.16666700000000034
+║   empirical_median:   8.258333
+║   hour_sin/cos:       -0.8526401643540921 / 0.522498564715949
+║   time_idx:           29522646
+║   regime_id:          Day
+╚══════════════════════════════════════════════════
+INFO:pipelines.beam.transforms.window_buffer:Buffer warmup C_South: 14/20 observations
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:__main__:
+╔══ TARGET STATION EVENT ══════════════════════════
+║ group: A_South    route: A  track: A3
+║ trip:  20260217_087800_A..S58R
+║ arrival_time: 2026-02-17T20:07:53+00:00
+║ features:
+║   service_headway:    5.016666666666667
+║   upstream_hw_14th:   5.0
+║   travel_time_14th:   2.0166666666666666
+║   travel_time_23rd:   None
+║   travel_time_34th:   4.433333333333334
+║   preceding_gap:      5.016666666666667
+║   preceding_route:    A
+║   tt_dev_14th:        0.016666666666666607
+║   tt_dev_23rd:        None
+║   tt_dev_34th:        0.06666633333333394
+║   empirical_median:   8.816667
+║   hour_sin/cos:       -0.8503522249955628 / 0.5262139236518696
+║   time_idx:           29522647
+║   regime_id:          Day
+╚══════════════════════════════════════════════════
+INFO:pipelines.beam.transforms.window_buffer:Buffer warmup A_South: 15/20 observations
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:__main__:
+╔══ TARGET STATION EVENT ══════════════════════════
+║ group: E_South    route: E  track: A1
+║ trip:  20260217_087550_E..S71R
+║ arrival_time: 2026-02-17T20:11:27+00:00
+║ features:
+║   service_headway:    7.0
+║   upstream_hw_14th:   6.583333333333333
+║   travel_time_14th:   2.0
+║   travel_time_23rd:   3.5833333333333335
+║   travel_time_34th:   5.583333333333333
+║   preceding_gap:      5.0
+║   preceding_route:    C
+║   tt_dev_14th:        -0.11666700000000008
+║   tt_dev_23rd:        3.33333333379926e-07
+║   tt_dev_34th:        0.4166663333333327
+║   empirical_median:   6.0
+║   hour_sin/cos:       -0.8410390129643925 / 0.5409744713679937
+║   time_idx:           29522651
+║   regime_id:          Day
+╚══════════════════════════════════════════════════
+INFO:pipelines.beam.transforms.window_buffer:Buffer warmup E_South: 18/20 observations
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176

@@ -94,9 +94,13 @@ FEATURE_FIELDS = [
 
 
 def _add_stops_at_23rd(element):
-    """Derive stops_at_23rd binary flag from travel_time_23rd."""
+    """Derive stops_at_23rd binary flag and impute express train Nones."""
     tt23 = element.get("travel_time_23rd")
     element["stops_at_23rd"] = 1.0 if (tt23 is not None and tt23 > 0) else 0.0
+    # Express trains skip 23rd St — impute with training-set means
+    if element["stops_at_23rd"] == 0.0:
+        element["travel_time_23rd"] = 3.773551
+        element["travel_time_23rd_deviation"] = 0.180276
     return element
 
 
