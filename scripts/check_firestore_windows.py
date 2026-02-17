@@ -69,10 +69,19 @@ def format_window(doc: dict) -> str:
         route = "?"
         track = "?"
 
+    # Extract prediction if present
+    p10 = doc.get("headway_p10")
+    p50 = doc.get("headway_p50")
+    p90 = doc.get("headway_p90")
+    if p50 is not None:
+        pred_str = f"P10={p10:.1f} P50={p50:.1f} P90={p90:.1f}"
+    else:
+        pred_str = "no prediction"
+
     return (
         f"  {group_id:12s} | obs: {obs_count:2d}/20 | "
         f"last_arrival: {arrival_time} | headway: {hw_str:>10s} | "
-        f"route: {route} | track: {track} | updated: {updated_str}"
+        f"route: {route} | track: {track} | {pred_str} | updated: {updated_str}"
     )
 
 

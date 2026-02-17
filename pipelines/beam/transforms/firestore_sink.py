@@ -1,15 +1,18 @@
 """
 Firestore sink for streaming headway prediction pipeline.
 
-Writes the latest 20-observation window per group_id to Firestore
-so the serving layer can read it for real-time inference.
+Writes the latest 20-observation window and prediction per group_id
+to Firestore for real-time serving.
 
 Document structure (collection: "headway_windows"):
     doc id: group_id (e.g. "A_South")
     fields:
-      - group_id:     str
-      - observations:  list[dict]  (20 enriched records)
-      - updated_at:   timestamp    (server-set)
+      - group_id:      str
+      - observations:   list[dict]  (20 enriched records)
+      - headway_p10:   float | None
+      - headway_p50:   float | None
+      - headway_p90:   float | None
+      - updated_at:    timestamp    (server-set)
 """
 
 import logging
@@ -23,12 +26,14 @@ COLLECTION = "headway_windows"
 
 
 class WriteToFirestoreFn(beam.DoFn):
-    """Writes a complete window to Firestore, keyed by group_id.
+    """Writes a complete window + prediction to Firestore, keyed by group_id.
 
-    Input: {"group_id": str, "observations": list[dict]}
+    Input: {"group_id": str, "observations": list[dict],
+            "headway_p10": float|None, "headway_p50": float|None,
+            "headway_p90": float|None}
 
     Each write overwrites the previous document for that group_id,
-    so Firestore always holds the most recent window.
+    so Firestore always holds the most recent window and prediction.
 
     The Firestore client is created per-bundle (setup/teardown) to
     avoid serialization issues with Beam's DoFn lifecycle.
@@ -50,14 +55,23 @@ class WriteToFirestoreFn(beam.DoFn):
         group_id = element["group_id"]
         observations = element["observations"]
 
-        doc_ref = self._client.collection(self._collection).document(group_id)
-        doc_ref.set({
+        doc_data = {
             "group_id": group_id,
             "observations": observations,
             "updated_at": firestore.SERVER_TIMESTAMP,
-        })
+        }
 
-        logger.debug("Wrote window for %s (%d obs)", group_id, len(observations))
+        # Include predictions if present
+        for field in ("headway_p10", "headway_p50", "headway_p90"):
+            if element.get(field) is not None:
+                doc_data[field] = element[field]
+
+        doc_ref = self._client.collection(self._collection).document(group_id)
+        doc_ref.set(doc_data)
+
+        p50 = element.get("headway_p50")
+        pred_str = f" (P50={p50:.2f})" if p50 is not None else ""
+        logger.debug("Wrote window for %s (%d obs)%s", group_id, len(observations), pred_str)
         yield element
 
     def teardown(self):

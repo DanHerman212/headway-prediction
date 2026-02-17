@@ -10,6 +10,7 @@ Pipeline steps:
 """
 
 import argparse
+import json
 import logging
 
 import apache_beam as beam
@@ -19,6 +20,7 @@ from apache_beam.options.pipeline_options import (
     SetupOptions,
     StandardOptions,
 )
+from google.cloud import storage as gcs_storage
 
 from pipelines.beam.transforms.arrival_detector import DetectArrivalsFn
 from pipelines.beam.transforms.transforms import (
@@ -31,11 +33,47 @@ from pipelines.beam.transforms.transforms import (
     EnrichWithEmpiricalFn,
 )
 from pipelines.beam.transforms.window_buffer import BufferWindowFn
+from pipelines.beam.transforms.predict import PredictHeadwayFn
 from pipelines.beam.transforms.firestore_sink import WriteToFirestoreFn
 
 logger = logging.getLogger(__name__)
 
 TARGET_STATION = "A32S"
+
+# Default GCS paths for side input maps
+_DEFAULT_EMPIRICAL = "gs://realtime-headway-prediction-pipelines/side_inputs/empirical_map.json"
+_DEFAULT_MEDIAN_TT = "gs://realtime-headway-prediction-pipelines/side_inputs/median_tt_map.json"
+
+
+def _load_map_from_gcs(gcs_path: str) -> dict:
+    """Download a JSON map from GCS and return as a Python dict."""
+    # Parse gs://bucket/path
+    path = gcs_path.replace("gs://", "")
+    bucket_name = path.split("/", 1)[0]
+    blob_path = path.split("/", 1)[1]
+
+    client = gcs_storage.Client()
+    blob = client.bucket(bucket_name).blob(blob_path)
+    raw = json.loads(blob.download_as_text())
+    return raw
+
+
+def _convert_empirical_keys(raw: dict) -> dict:
+    """Convert 'A,Weekday,10' string keys to ('A','Weekday',10) tuple keys."""
+    out = {}
+    for k, v in raw.items():
+        parts = k.split(",")
+        out[(parts[0], parts[1], int(parts[2]))] = v
+    return out
+
+
+def _convert_median_tt_keys(raw: dict) -> dict:
+    """Convert 'A,Weekday,10,A31S' string keys to ('A','Weekday',10,'A31S') tuple keys."""
+    out = {}
+    for k, v in raw.items():
+        parts = k.split(",")
+        out[(parts[0], parts[1], int(parts[2]), parts[3])] = v
+    return out
 
 FEATURE_FIELDS = [
     "service_headway",
@@ -44,15 +82,22 @@ FEATURE_FIELDS = [
     "travel_time_23rd",
     "travel_time_34th",
     "preceding_train_gap",
-    "travel_time_deviation_14th",
-    "travel_time_deviation_23rd",
-    "travel_time_deviation_34th",
+    "travel_time_14th_deviation",
+    "travel_time_23rd_deviation",
+    "travel_time_34th_deviation",
     "empirical_median",
     "hour_sin",
     "hour_cos",
     "time_idx",
     "regime_id",
 ]
+
+
+def _add_stops_at_23rd(element):
+    """Derive stops_at_23rd binary flag from travel_time_23rd."""
+    tt23 = element.get("travel_time_23rd")
+    element["stops_at_23rd"] = 1.0 if (tt23 is not None and tt23 > 0) else 0.0
+    return element
 
 
 def _log_target_station(element):
@@ -92,9 +137,9 @@ def _log_target_station(element):
         features["travel_time_23rd"],
         features["travel_time_34th"],
         features["preceding_train_gap"],
-        features["travel_time_deviation_14th"],
-        features["travel_time_deviation_23rd"],
-        features["travel_time_deviation_34th"],
+        features["travel_time_14th_deviation"],
+        features["travel_time_23rd_deviation"],
+        features["travel_time_34th_deviation"],
         features["empirical_median"],
         features["hour_sin"], features["hour_cos"],
         features["time_idx"],
@@ -122,8 +167,31 @@ def run(argv=None):
         default="us-east1",
         help="GCP region for Dataflow",
     )
+    parser.add_argument(
+        "--empirical_map_gcs",
+        default=_DEFAULT_EMPIRICAL,
+        help="GCS path to empirical_map.json",
+    )
+    parser.add_argument(
+        "--median_tt_map_gcs",
+        default=_DEFAULT_MEDIAN_TT,
+        help="GCS path to median_tt_map.json",
+    )
 
     known_args, pipeline_args = parser.parse_known_args(argv)
+
+    # --- Load side input maps from GCS ---
+    logger.info("Loading empirical_map from %s", known_args.empirical_map_gcs)
+    empirical_map = _convert_empirical_keys(
+        _load_map_from_gcs(known_args.empirical_map_gcs)
+    )
+    logger.info("Loaded empirical_map: %d entries", len(empirical_map))
+
+    logger.info("Loading median_tt_map from %s", known_args.median_tt_map_gcs)
+    median_tt_map = _convert_median_tt_keys(
+        _load_map_from_gcs(known_args.median_tt_map_gcs)
+    )
+    logger.info("Loaded median_tt_map: %d entries", len(median_tt_map))
 
     pipeline_options = PipelineOptions(pipeline_args)
     pipeline_options.view_as(SetupOptions).save_main_session = True
@@ -196,7 +264,7 @@ def run(argv=None):
             with_track_gap
             | "CalcDeviation" >> beam.ParDo(
                 CalculateTravelTimeDeviationFn(),
-                median_tt_map={},  # TODO: load from GCS
+                median_tt_map=median_tt_map,
             )
         )
 
@@ -205,13 +273,18 @@ def run(argv=None):
             with_deviation
             | "EnrichEmpirical" >> beam.ParDo(
                 EnrichWithEmpiricalFn(),
-                empirical_map={},  # TODO: load from GCS
+                empirical_map=empirical_map,
             )
         )
 
         # Feedback: log every target station event with all features
         feature_records = feature_records | "LogTargetStation" >> beam.Map(
             _log_target_station
+        )
+
+        # 3h. Derived binary flag: does this train stop at 23rd St?
+        feature_records = feature_records | "AddStopsAt23rd" >> beam.Map(
+            _add_stops_at_23rd
         )
 
         # --- Step 4: Window Buffer ---
@@ -223,9 +296,17 @@ def run(argv=None):
             | "BufferWindow" >> beam.ParDo(BufferWindowFn())
         )
 
-        # --- Step 5: Sink ---
-        _ = (
+        # --- Step 5: Prediction ---
+        predictions = (
             windows
+            | "Predict" >> beam.ParDo(
+                PredictHeadwayFn(project=known_args.project_id)
+            )
+        )
+
+        # --- Step 6: Sink ---
+        _ = (
+            predictions
             | "WriteFirestore" >> beam.ParDo(
                 WriteToFirestoreFn(project=known_args.project_id)
             )

@@ -1,0 +1,139 @@
+WARNING:root:crcmod package not found. This package is required if python-snappy or google-crc32c are not installed. To ensure crcmod is installed, install the tfrecord extra: pip install apache-beam[tfrecord]
+/Users/danherman/Desktop/headway-prediction/.venv/lib/python3.11/site-packages/google/cloud/aiplatform/models.py:52: FutureWarning: Support for google-cloud-storage < 3.0.0 will be removed in a future version of google-cloud-aiplatform. Please upgrade to google-cloud-storage >= 3.0.0.
+  from google.cloud.aiplatform.utils import gcs_utils
+INFO:__main__:Loading empirical_map from gs://realtime-headway-prediction-pipelines/side_inputs/empirical_map.json
+INFO:__main__:Loaded empirical_map: 174 entries
+INFO:__main__:Loading median_tt_map from gs://realtime-headway-prediction-pipelines/side_inputs/median_tt_map.json
+INFO:__main__:Loaded median_tt_map: 517 entries
+INFO:root:Missing pipeline option (runner). Executing pipeline using the default runner: DirectRunner.
+WARNING:apache_beam.transforms.core:Key coder FastPrimitivesCoder for transform <ParDo(PTransform) label=[CalcUpstreamHeadway]> with stateful DoFn may not be deterministic. This may cause incorrect behavior for complex key types. Consider adding an input type hint for this transform.
+WARNING:apache_beam.transforms.core:Key coder FastPrimitivesCoder for transform <ParDo(PTransform) label=[CalcTravelTime]> with stateful DoFn may not be deterministic. This may cause incorrect behavior for complex key types. Consider adding an input type hint for this transform.
+WARNING:apache_beam.transforms.core:Key coder FastPrimitivesCoder for transform <ParDo(PTransform) label=[CalcServiceHeadway]> with stateful DoFn may not be deterministic. This may cause incorrect behavior for complex key types. Consider adding an input type hint for this transform.
+WARNING:apache_beam.transforms.core:Key coder FastPrimitivesCoder for transform <ParDo(PTransform) label=[CalcTrackGap]> with stateful DoFn may not be deterministic. This may cause incorrect behavior for complex key types. Consider adding an input type hint for this transform.
+WARNING:apache_beam.transforms.core:Key coder FastPrimitivesCoder for transform <ParDo(PTransform) label=[BufferWindow]> with stateful DoFn may not be deterministic. This may cause incorrect behavior for complex key types. Consider adding an input type hint for this transform.
+INFO:apache_beam.runners.direct.direct_runner:Running pipeline with PrismRunner.
+INFO:apache_beam.runners.worker.worker_pool_main:Listening for workers at localhost:49595
+INFO:apache_beam.runners.portability.prism_runner:Using cached prism binary/zip from /Users/danherman/.apache_beam/cache/prism/bin/apache_beam-v2.71.0-prism-darwin-arm64.zip for https://github.com/apache/beam/releases/download/v2.71.0/apache_beam-v2.71.0-prism-darwin-arm64.zip
+INFO:apache_beam.runners.portability.prism_runner:Using cached prism binary from /Users/danherman/.apache_beam/cache/prism/bin/apache_beam-v2.71.0-prism-darwin-arm64 for /Users/danherman/.apache_beam/cache/prism/bin/apache_beam-v2.71.0-prism-darwin-arm64.zip
+INFO:apache_beam.runners.portability.prism_runner:Prism binary path resolved to: /Users/danherman/.apache_beam/cache/prism/bin/apache_beam-v2.71.0-prism-darwin-arm64
+INFO:apache_beam.utils.subprocess_server:Starting service with ('/Users/danherman/.apache_beam/cache/prism/bin/apache_beam-v2.71.0-prism-darwin-arm64' '--job_port' '49596' '--log_level' 'info' '--log_kind' 'json' '--serve_http=false')
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1771351458.598417 75651099 fork_posix.cc:71] Other threads are currently calling into gRPC, skipping fork() handlers
+INFO:PrismRunner:Serving JobManagement (endpoint='localhost:49596')
+WARNING:PrismRunner:unknown transform, with payload (urn='beam:transform:pubsub_read:v1', name='ReadPubSub/Read', payload='EkJwcm9qZWN0cy9yZWFsdGltZS1oZWFkd2F5LXByZWRpY3Rpb24vc3Vic2NyaXB0aW9ucy9ndGZzLXJ0LWFjZS1zdWI=')
+ERROR:PrismRunner:unable to run job (cause='unimplemented features', jobname='job', errors='unsupported feature "PTransform.Spec.Urn" set with value beam:transform:pubsub_read:v1 ReadPubSub/Read')
+ERROR:PrismRunner:job failed (job={'key': 'job-001', 'name': 'job'}, error='found 1 uses of features unimplemented in prism in job job:\nunsupported feature "PTransform.Spec.Urn" set with value beam:transform:pubsub_read:v1 ReadPubSub/Read')
+INFO:apache_beam.runners.direct.direct_runner:Exception with PrismRunner:
+ <_InactiveRpcError of RPC that terminated with:
+	status = StatusCode.UNKNOWN
+	details = "found 1 uses of features unimplemented in prism in job job:
+unsupported feature "PTransform.Spec.Urn" set with value beam:transform:pubsub_read:v1 ReadPubSub/Read"
+	debug_error_string = "UNKNOWN:Error received from peer  {grpc_status:2, grpc_message:"found 1 uses of features unimplemented in prism in job job:\nunsupported feature \"PTransform.Spec.Urn\" set with value beam:transform:pubsub_read:v1 ReadPubSub/Read"}"
+>
+
+INFO:apache_beam.runners.direct.direct_runner:Falling back to DirectRunner
+INFO:apache_beam.runners.direct.direct_runner:Running pipeline with DirectRunner.
+I0000 00:00:1771351459.615661 75651785 fork_posix.cc:71] Other threads are currently calling into gRPC, skipping fork() handlers
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:__main__:
+╔══ TARGET STATION EVENT ══════════════════════════
+║ group: A_South    route: A  track: A3
+║ trip:  20260217_075100_A..S58R
+║ arrival_time: 2026-02-17T18:05:52+00:00
+║ features:
+║   service_headway:    None
+║   upstream_hw_14th:   None
+║   travel_time_14th:   2.0
+║   travel_time_23rd:   None
+║   travel_time_34th:   None
+║   preceding_gap:      None
+║   tt_dev_14th:        0.0
+║   tt_dev_23rd:        None
+║   tt_dev_34th:        None
+║   empirical_median:   6.0
+║   hour_sin/cos:       -0.9997620270799091 / 0.021814885034560468
+║   time_idx:           29522525
+║   regime_id:          Day
+╚══════════════════════════════════════════════════
+INFO:pipelines.beam.transforms.window_buffer:Buffer warmup A_South: 1/20 observations
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:__main__:
+╔══ TARGET STATION EVENT ══════════════════════════
+║ group: E_South    route: E  track: A1
+║ trip:  20260217_074900_E..S71R
+║ arrival_time: 2026-02-17T18:06:27+00:00
+║ features:
+║   service_headway:    None
+║   upstream_hw_14th:   None
+║   travel_time_14th:   1.9666666666666666
+║   travel_time_23rd:   2.5833333333333335
+║   travel_time_34th:   None
+║   preceding_gap:      None
+║   tt_dev_14th:        -0.20000033333333334
+║   tt_dev_23rd:        -1.0333336666666666
+║   tt_dev_34th:        None
+║   empirical_median:   4.666667
+║   hour_sin/cos:       -0.9996573249755573 / 0.026176948307874003
+║   time_idx:           29522526
+║   regime_id:          Day
+╚══════════════════════════════════════════════════
+INFO:pipelines.beam.transforms.window_buffer:Buffer warmup E_South: 1/20 observations
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:__main__:
+╔══ TARGET STATION EVENT ══════════════════════════
+║ group: A_South    route: A  track: A3
+║ trip:  20260217_075900_A..S57R
+║ arrival_time: 2026-02-17T18:09:27+00:00
+║ features:
+║   service_headway:    3.5833333333333335
+║   upstream_hw_14th:   3.5833333333333335
+║   travel_time_14th:   2.0
+║   travel_time_23rd:   None
+║   travel_time_34th:   4.583333333333333
+║   preceding_gap:      3.5833333333333335
+║   tt_dev_14th:        0.0
+║   tt_dev_23rd:        None
+║   tt_dev_34th:        0.33333333333333304
+║   empirical_median:   6.0
+║   hour_sin/cos:       -0.9992290362407229 / 0.039259815759068645
+║   time_idx:           29522529
+║   regime_id:          Day
+╚══════════════════════════════════════════════════
+INFO:pipelines.beam.transforms.window_buffer:Buffer warmup A_South: 2/20 observations
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:__main__:
+╔══ TARGET STATION EVENT ══════════════════════════
+║ group: E_South    route: E  track: A1
+║ trip:  20260217_075650_E..S71R
+║ arrival_time: 2026-02-17T18:10:29+00:00
+║ features:
+║   service_headway:    4.033333333333333
+║   upstream_hw_14th:   4.383333333333334
+║   travel_time_14th:   1.6166666666666667
+║   travel_time_23rd:   2.9833333333333334
+║   travel_time_34th:   5.066666666666666
+║   preceding_gap:      4.033333333333333
+║   tt_dev_14th:        -0.5500003333333332
+║   tt_dev_23rd:        -0.6333336666666667
+║   tt_dev_34th:        -0.10000033333333391
+║   empirical_median:   4.666667
+║   hour_sin/cos:       -0.9990482215818577 / 0.04361938736533665
+║   time_idx:           29522530
+║   regime_id:          Day
+╚══════════════════════════════════════════════════
+INFO:pipelines.beam.transforms.window_buffer:Buffer warmup E_South: 2/20 observations
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176
+INFO:pipelines.beam.transforms.predict:Resolved endpoint: projects/668468556154/locations/us-east1/endpoints/8948953725771186176

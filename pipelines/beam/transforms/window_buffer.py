@@ -53,8 +53,17 @@ class BufferWindowFn(beam.DoFn):
         # Persist updated buffer
         buffer_state.write(buffer)
 
-        # Only emit when we have a full window
-        if len(buffer) >= ENCODER_LENGTH:
+        buf_len = len(buffer)
+        if buf_len < ENCODER_LENGTH:
+            logger.info(
+                "Buffer warmup %s: %d/%d observations",
+                group_id, buf_len, ENCODER_LENGTH,
+            )
+        else:
+            logger.info(
+                "Buffer full %s: emitting window (%d obs)",
+                group_id, buf_len,
+            )
             yield {
                 "group_id": group_id,
                 "observations": list(buffer),
