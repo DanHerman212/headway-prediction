@@ -122,6 +122,7 @@ def _log_target_station(element):
         "\n║   travel_time_23rd:   %s"
         "\n║   travel_time_34th:   %s"
         "\n║   preceding_gap:      %s"
+        "\n║   preceding_route:    %s"
         "\n║   tt_dev_14th:        %s"
         "\n║   tt_dev_23rd:        %s"
         "\n║   tt_dev_34th:        %s"
@@ -137,6 +138,7 @@ def _log_target_station(element):
         features["travel_time_23rd"],
         features["travel_time_34th"],
         features["preceding_train_gap"],
+        element.get("preceding_route_id", "?"),
         features["travel_time_14th_deviation"],
         features["travel_time_23rd_deviation"],
         features["travel_time_34th_deviation"],
