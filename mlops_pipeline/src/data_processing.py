@@ -40,19 +40,10 @@ def clean_dataset(data: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
         df[col] = df[col].fillna(0.0)
 
     # 4. Handle 23rd St Express/Local Logic
-    # Express trains (no stop) have null travel times. We mark them and fill with a neutral mean.
+    # stops_at_23rd and imputed travel times are computed upstream in generate_dataset.py
+    # to match the streaming pipeline exactly. No recomputation needed here.
     if 'travel_time_23rd' in df.columns:
-        # Create binary flag
-        df['stops_at_23rd'] = np.where((df['travel_time_23rd'].notna()) & (df['travel_time_23rd'] > 0), 1.0, 0.0)
-        
-        # Calculate mean of VALID stops only for filling
-        valid_mean_23rd = df.loc[df['stops_at_23rd'] == 1.0, 'travel_time_23rd'].mean()
-        if pd.isna(valid_mean_23rd): 
-            valid_mean_23rd = 0.0
-            
-        # Fill missing with mean
-        df.loc[df['stops_at_23rd'] == 0.0, 'travel_time_23rd'] = valid_mean_23rd
-        df['travel_time_23rd'] = df['travel_time_23rd'].fillna(valid_mean_23rd)
+        df['travel_time_23rd'] = df['travel_time_23rd'].fillna(df['travel_time_23rd'].median())
 
     # 5. Correct Time Index (Physical Time)
     # Calculate absolute minutes elapsed since the global minimum time

@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies for batch ingestion scripts
+RUN pip install --no-cache-dir \
+    google-cloud-storage \
+    google-cloud-bigquery \
+    requests \
+    python-dotenv
+
+# Copy batch ingestion scripts
+COPY batch_ingestion/python/ /app/
+
+# Default entrypoint — overridden per Cloud Run Job
+ENTRYPOINT ["python"]

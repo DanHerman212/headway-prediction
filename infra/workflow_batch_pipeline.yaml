@@ -1,0 +1,206 @@
+# ============================================
+# Cloud Workflow: Batch Ingestion Pipeline
+# ============================================
+# Orchestrates the full data acquisition, cleaning,
+# and training dataset preparation process.
+#
+# Steps:
+#   0. Truncate raw table
+#   1. Download historical data (Cloud Run Job)
+#   2. Delete trips files (Cloud Run Job)
+#   3. Load CSVs to BigQuery (Cloud Run Job)
+#   4. Create clean table (BigQuery SQL)
+#   5. Generate training dataset (Dataflow batch)
+# ============================================
+
+main:
+  params: [args]
+  steps:
+
+    - init:
+        assign:
+          - project_id: ${sys.get_env("PROJECT_ID")}
+          - region: ${sys.get_env("REGION")}
+          - bq_dataset: ${sys.get_env("BQ_DATASET")}
+          - training_cutoff_date: ${sys.get_env("TRAINING_CUTOFF_DATE")}
+          - gcs_bucket: ${sys.get_env("GCS_BUCKET")}
+
+    # ------------------------------------------
+    # Step 0: Truncate raw table
+    # ------------------------------------------
+    - truncate_raw:
+        call: googleapis.bigquery.v2.jobs.insert
+        args:
+          projectId: ${project_id}
+          body:
+            configuration:
+              query:
+                query: ${"TRUNCATE TABLE `" + project_id + "." + bq_dataset + ".raw`"}
+                useLegacySql: false
+        result: truncate_result
+
+    - log_truncate:
+        call: sys.log
+        args:
+          text: "Step 0 complete — raw table truncated"
+          severity: INFO
+
+    # ------------------------------------------
+    # Step 1: Download historical data
+    # ------------------------------------------
+    - run_download:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${"projects/" + project_id + "/locations/" + region + "/jobs/batch-download"}
+        result: download_execution
+
+    - wait_download:
+        call: googleapis.run.v2.projects.locations.jobs.executions.get
+        args:
+          name: ${download_execution.metadata.name}
+        result: download_status
+        next: check_download
+
+    - check_download:
+        switch:
+          - condition: ${download_status.completionTime != null}
+            next: log_download
+          - condition: ${download_status.failedCount > 0}
+            raise: "Step 1 failed — download job had failures"
+        next: sleep_download
+
+    - sleep_download:
+        call: sys.sleep
+        args:
+          seconds: 30
+        next: wait_download
+
+    - log_download:
+        call: sys.log
+        args:
+          text: "Step 1 complete — historical data downloaded"
+          severity: INFO
+
+    # ------------------------------------------
+    # Step 2: Delete trips files
+    # ------------------------------------------
+    - run_delete_trips:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${"projects/" + project_id + "/locations/" + region + "/jobs/batch-delete-trips"}
+        result: delete_execution
+
+    - wait_delete:
+        call: googleapis.run.v2.projects.locations.jobs.executions.get
+        args:
+          name: ${delete_execution.metadata.name}
+        result: delete_status
+        next: check_delete
+
+    - check_delete:
+        switch:
+          - condition: ${delete_status.completionTime != null}
+            next: log_delete
+          - condition: ${delete_status.failedCount > 0}
+            raise: "Step 2 failed — delete trips job had failures"
+        next: sleep_delete
+
+    - sleep_delete:
+        call: sys.sleep
+        args:
+          seconds: 15
+        next: wait_delete
+
+    - log_delete:
+        call: sys.log
+        args:
+          text: "Step 2 complete — trips files deleted"
+          severity: INFO
+
+    # ------------------------------------------
+    # Step 3: Load CSVs to BigQuery
+    # ------------------------------------------
+    - run_load_bq:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${"projects/" + project_id + "/locations/" + region + "/jobs/batch-load-bq"}
+        result: load_execution
+
+    - wait_load:
+        call: googleapis.run.v2.projects.locations.jobs.executions.get
+        args:
+          name: ${load_execution.metadata.name}
+        result: load_status
+        next: check_load
+
+    - check_load:
+        switch:
+          - condition: ${load_status.completionTime != null}
+            next: log_load
+          - condition: ${load_status.failedCount > 0}
+            raise: "Step 3 failed — BQ load job had failures"
+        next: sleep_load
+
+    - sleep_load:
+        call: sys.sleep
+        args:
+          seconds: 30
+        next: wait_load
+
+    - log_load:
+        call: sys.log
+        args:
+          text: "Step 3 complete — data loaded to BigQuery"
+          severity: INFO
+
+    # ------------------------------------------
+    # Step 4: Create clean table
+    # ------------------------------------------
+    - create_clean_table:
+        call: googleapis.bigquery.v2.jobs.insert
+        args:
+          projectId: ${project_id}
+          body:
+            configuration:
+              query:
+                query: ${"CREATE OR REPLACE TABLE `" + project_id + "." + bq_dataset + ".clean` AS SELECT r.trip_uid, r.stop_id, r.track, TIMESTAMP_SECONDS(CAST(SPLIT(r.trip_uid, '_')[SAFE_OFFSET(0)] AS INT64)) AS trip_date, SUBSTR(SPLIT(r.trip_uid, '_')[SAFE_OFFSET(1)], 1, 1) AS route_id, SUBSTR(SPLIT(r.trip_uid, '..')[SAFE_OFFSET(1)], 1, 1) AS direction, TIMESTAMP_SECONDS(r.arrival_time) AS arrival_time FROM `" + project_id + "." + bq_dataset + ".raw` r WHERE r.arrival_time IS NOT NULL"}
+                useLegacySql: false
+        result: clean_result
+
+    - log_clean:
+        call: sys.log
+        args:
+          text: "Step 4 complete — clean table created"
+          severity: INFO
+
+    # ------------------------------------------
+    # Step 5: Launch Dataflow batch pipeline
+    # ------------------------------------------
+    - launch_dataflow:
+        call: googleapis.dataflow.v1b3.projects.locations.templates.launch
+        args:
+          projectId: ${project_id}
+          location: ${region}
+          body:
+            jobName: "generate-training-dataset"
+            parameters:
+              project_id: ${project_id}
+              temp_location: ${"gs://" + gcs_bucket + "/temp"}
+              training_cutoff_date: ${training_cutoff_date}
+              side_input_output: "gs://realtime-headway-prediction-pipelines/side_inputs"
+            environment:
+              tempLocation: ${"gs://" + gcs_bucket + "/temp"}
+              zone: ${region + "-b"}
+          gcsPath: ${"gs://" + gcs_bucket + "/templates/generate_dataset"}
+        result: dataflow_result
+
+    - log_dataflow:
+        call: sys.log
+        args:
+          text: ${"Step 5 complete — Dataflow job launched: " + dataflow_result.job.id}
+          severity: INFO
+
+    - done:
+        return:
+          status: "Pipeline complete"
+          dataflow_job_id: ${dataflow_result.job.id}

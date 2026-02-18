@@ -1,0 +1,11 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install the project and its dependencies
+COPY setup.py .
+COPY pipelines/ pipelines/
+RUN pip install --no-cache-dir -e .
+
+# Default: launch the batch pipeline
+ENTRYPOINT ["python", "-m", "pipelines.beam.batch.generate_dataset"]

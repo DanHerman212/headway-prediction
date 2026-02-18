@@ -1,5 +1,7 @@
 import argparse 
+import json
 import logging
+import os
 from datetime import datetime, date
 import pyarrow as pa
 import apache_beam as beam
@@ -52,6 +54,7 @@ output_schema = pa.schema([
     ('travel_time_23rd_deviation', pa.float64()),
     ('travel_time_34th',pa.float64()),
     ('travel_time_34th_deviation', pa.float64()),
+    ('stops_at_23rd', pa.float64()),
 ])
 
 # --- helper functions ---
@@ -66,7 +69,7 @@ def extract_travel_time_key(element, feature_name, station_id):
         
     route = element.get('route_id', 'OTHER')
     day_of_week = element.get('day_of_week')
-    day_type = 'Weekend' if day_of_week and day_of_week > 5 else 'Weekday'
+    day_type = 'Weekend' if day_of_week and day_of_week >= 5 else 'Weekday'
     ts = element.get('timestamp')
     hour = datetime.fromtimestamp(ts).hour if ts else 0
     
@@ -95,10 +98,60 @@ def compute_median(item):
     (key, headways) = item
     return (key, statistics.median(headways))
 
+
+def _format_empirical_entry(item):
+    """Convert ((route, day_type, hour), median) to (str_key, median)."""
+    (route, day_type, hour), value = item
+    return (f"{route},{day_type},{hour}", round(float(value), 6))
+
+
+def _format_median_tt_entry(item):
+    """Convert ((route, day_type, hour, station), median) to (str_key, median)."""
+    (route, day_type, hour, station), value = item
+    return (f"{route},{day_type},{hour},{station}", round(float(value), 6))
+
+
+class _WriteMapToJson(beam.PTransform):
+    """Collect a PCollection of (str_key, float_value) pairs into a single
+    JSON file at the given GCS (or local) path."""
+
+    def __init__(self, output_path, label_suffix=''):
+        super().__init__()
+        self._output_path = output_path
+        self._label_suffix = label_suffix
+
+    def expand(self, pcoll):
+        return (
+            pcoll
+            | f'AsList{self._label_suffix}' >> beam.combiners.ToDict()
+            | f'ToJson{self._label_suffix}' >> beam.Map(lambda d: json.dumps(d, indent=2))
+            | f'Write{self._label_suffix}' >> beam.io.WriteToText(
+                self._output_path,
+                shard_name_template='',  # single file, no shard suffix
+                file_name_suffix='',     # no extra extension
+                append_trailing_newlines=False,
+            )
+        )
+
 def sort_events(item):
     key, records = item
     sorted_records = sorted(records, key=lambda x: x['timestamp'])
     return [(key, r) for r in sorted_records]
+
+def impute_express_23rd(record):
+    """Derive stops_at_23rd flag and impute express train Nones.
+    
+    Must match streaming_pipeline._add_stops_at_23rd exactly to prevent
+    training-serving skew.
+    """
+    tt23 = record.get('travel_time_23rd')
+    record['stops_at_23rd'] = 1.0 if (tt23 is not None and tt23 > 0) else 0.0
+    # Express trains skip 23rd St — impute with training-set means
+    if record['stops_at_23rd'] == 0.0:
+        record['travel_time_23rd'] = 3.773551
+        record['travel_time_23rd_deviation'] = 0.180276
+    return record
+
 
 def sanitize_record(record):
     # 1. Remove unnecessary columns that were used for logic but not needed in output
@@ -118,7 +171,28 @@ def run(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--project_id', required=True, help='GCP project ID')
     parser.add_argument('--temp_location', required=True, help='GCP location for temp files')
+    parser.add_argument(
+        '--training_cutoff_date',
+        default=os.environ.get('TRAINING_CUTOFF_DATE'),
+        help='ISO date for the training/validation split (e.g. 2025-10-29). '
+             'Data before this date is used to build side-input maps. '
+             'Defaults to TRAINING_CUTOFF_DATE env var.',
+    )
+    parser.add_argument(
+        '--side_input_output',
+        default=None,
+        help='GCS prefix for side-input JSON export '
+             '(e.g. gs://bucket/side_inputs). '
+             'Writes empirical_map.json and median_tt_map.json. '
+             'If omitted, side inputs are not exported.',
+    )
     known_args, pipeline_args = parser.parse_known_args(argv)
+
+    # Convert training cutoff date to Unix timestamp
+    if not known_args.training_cutoff_date:
+        parser.error('--training_cutoff_date is required (or set TRAINING_CUTOFF_DATE in .env)')
+    training_cutoff_ts = datetime.fromisoformat(known_args.training_cutoff_date).timestamp()
+    logging.info('Training cutoff: %s (%.0f)', known_args.training_cutoff_date, training_cutoff_ts)
 
     # 2. configure beam pipelines
     pipeline_options = PipelineOptions(pipeline_args)
@@ -131,8 +205,8 @@ def run(argv=None):
     # 3. define the query
     query = """
     SELECT
-        trip_uid, stop_id, track, stop_name, trip_date, route_id, direction, arrival_time
-    FROM `headway_prediction.ml_baseline`
+        trip_uid, stop_id, track, trip_date, route_id, direction, arrival_time
+    FROM `headway_prediction.clean`
     WHERE track IN ('A1','A3')
         AND direction = 'S'
     """
@@ -204,12 +278,10 @@ def run(argv=None):
         )
         
         # --- STEP 6: Side Input Generation (Maps) ---
-        TRAINING_CUTOFF = 1763424000.0
-        
         # A: Empirical Schedule Map
         schedule_map = (
             with_track_gap
-            | 'FilterTraining' >> beam.Filter(lambda x: x.get('timestamp', 0) < TRAINING_CUTOFF)
+            | 'FilterTraining' >> beam.Filter(lambda x: x.get('timestamp', 0) < training_cutoff_ts)
             | 'ExtractKeys'    >> beam.FlatMap(extract_schedule_key)
             | 'GroupKeys'      >> beam.GroupByKey()
             | 'CalcMedian'     >> beam.Map(compute_median)
@@ -218,7 +290,7 @@ def run(argv=None):
         # B: Empirical Travel Time Map
         training_data_for_tt = (
             with_track_gap 
-            | 'FilterTrainTT' >> beam.Filter(lambda x: x.get('timestamp', 0) < TRAINING_CUTOFF)
+            | 'FilterTrainTT' >> beam.Filter(lambda x: x.get('timestamp', 0) < training_cutoff_ts)
         )
         
         tt_map_34 = (training_data_for_tt | 'Keys34' >> beam.FlatMap(lambda x: extract_travel_time_key(x, 'travel_time_34th', 'A28S')))
@@ -231,6 +303,28 @@ def run(argv=None):
             | 'GroupTT' >> beam.GroupByKey()
             | 'CalcMedianTT' >> beam.Map(compute_median)
         )
+
+        # --- STEP 6c: Export side inputs to GCS ---
+        if known_args.side_input_output:
+            gcs_prefix = known_args.side_input_output.rstrip('/')
+
+            _ = (
+                schedule_map
+                | 'FmtEmpirical' >> beam.Map(_format_empirical_entry)
+                | 'WriteEmpirical' >> _WriteMapToJson(
+                    f'{gcs_prefix}/empirical_map.json',
+                    label_suffix='Empirical',
+                )
+            )
+
+            _ = (
+                median_tt_map
+                | 'FmtMedianTT' >> beam.Map(_format_median_tt_entry)
+                | 'WriteMedianTT' >> _WriteMapToJson(
+                    f'{gcs_prefix}/median_tt_map.json',
+                    label_suffix='MedianTT',
+                )
+            )
 
         # --- STEP 7: Apply Deviations ---
         with_deviations = (
@@ -250,9 +344,15 @@ def run(argv=None):
             )
         )
 
+        # --- STEP 8b: Express train imputation (must match streaming pipeline) ---
+        with_imputed = (
+            with_empirical
+            | 'ImputeExpress23rd' >> beam.Map(impute_express_23rd)
+        )
+
         # --- STEP 9: Finalize Dataset for Training ---
         final_training_data = (
-            with_empirical
+            with_imputed
             # 1. Strict Drop of Missing Targets (so we don't have gaps)
             | 'FilterMissingTargets' >> beam.Filter(lambda x: x.get('service_headway') is not None)
             
