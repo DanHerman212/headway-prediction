@@ -31,11 +31,7 @@ SERVING_CONTAINER_URI = (
     "us-east1-docker.pkg.dev/realtime-headway-prediction/"
     "mlops-images/headway-serving:latest"
 )
-ENDPOINT_DISPLAY_NAME = "headway-prediction-endpoint"
 MODEL_DISPLAY_NAME = "headway-tft"
-SERVING_MACHINE_TYPE = "n1-standard-4"
-MIN_REPLICAS = 1
-MAX_REPLICAS = 3
 
 
 def _save_dataset_params(training_dataset: TimeSeriesDataSet, output_dir: str) -> str:
@@ -111,38 +107,15 @@ def _upload_dir_to_gcs(local_dir: str, gcs_uri: str) -> None:
     logger.info("Uploaded %s to %s", local_dir, gcs_uri)
 
 
-def _get_or_create_endpoint(
-    project: str, location: str
-) -> aiplatform.Endpoint:
-    """Get the existing prediction endpoint or create a new one."""
-    endpoints = aiplatform.Endpoint.list(
-        filter=f'display_name="{ENDPOINT_DISPLAY_NAME}"',
-        project=project,
-        location=location,
-    )
-    if endpoints:
-        endpoint = endpoints[0]
-        logger.info("Using existing endpoint: %s", endpoint.resource_name)
-        return endpoint
-
-    endpoint = aiplatform.Endpoint.create(
-        display_name=ENDPOINT_DISPLAY_NAME,
-        project=project,
-        location=location,
-    )
-    logger.info("Created new endpoint: %s", endpoint.resource_name)
-    return endpoint
-
-
 @step(enable_cache=False)
-def deploy_model(
+def register_model(
     model: TemporalFusionTransformer,
     training_dataset: TimeSeriesDataSet,
     config: DictConfig,
     test_mae: float,
     test_smape: float,
-) -> Annotated[str, "endpoint_resource_name"]:
-    """Export model to ONNX, register in Vertex AI, and deploy to endpoint.
+) -> Annotated[str, "model_resource_name"]:
+    """Export model to ONNX, upload artifacts to GCS, and register in Vertex AI Model Registry.
 
     Parameters
     ----------
@@ -160,7 +133,7 @@ def deploy_model(
     Returns
     -------
     str
-        The Vertex AI endpoint resource name.
+        The Vertex AI Model Registry resource name.
     """
     project = config.infra.project_id
     location = config.infra.location
@@ -223,27 +196,7 @@ def deploy_model(
         )
         logger.info("Registered model: %s", vertex_model.resource_name)
 
-        # ---- 4. Deploy to endpoint ----
-        endpoint = _get_or_create_endpoint(project, location)
-
-        # Undeploy existing models to do a clean swap
-        if endpoint.traffic_split:
-            logger.info("Undeploying previous model versions...")
-            endpoint.undeploy_all()
-
-        logger.info("Deploying model to endpoint...")
-        endpoint.deploy(
-            model=vertex_model,
-            deployed_model_display_name=f"{MODEL_DISPLAY_NAME}-{run_id[:16]}",
-            machine_type=SERVING_MACHINE_TYPE,
-            min_replica_count=MIN_REPLICAS,
-            max_replica_count=MAX_REPLICAS,
-            traffic_percentage=100,
-            deploy_request_timeout=1200,  # 20 min hard timeout
-        )
-        logger.info("Model deployed to endpoint: %s", endpoint.resource_name)
-
-        return endpoint.resource_name
+        return vertex_model.resource_name
 
     finally:
         shutil.rmtree(local_dir, ignore_errors=True)

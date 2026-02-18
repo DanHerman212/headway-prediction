@@ -15,8 +15,7 @@ from pipelines.beam.transforms.transforms import (EnrichRecordFn,
                                                    EnrichWithEmpiricalFn,
                                                    CalculateUpstreamTravelTimeFn,
                                                    CalculateUpstreamHeadwayFn,
-                                                   CalculateTravelTimeDeviationFn,
-                                                   ReindexTimeInGroupsFn)
+                                                   CalculateTravelTimeDeviationFn)
 
 # --- define schema for parque export ---
 output_schema = pa.schema([
@@ -353,15 +352,8 @@ def run(argv=None):
         # --- STEP 9: Finalize Dataset for Training ---
         final_training_data = (
             with_imputed
-            # 1. Strict Drop of Missing Targets (so we don't have gaps)
+            # Strict Drop of Missing Targets (so we don't have gaps)
             | 'FilterMissingTargets' >> beam.Filter(lambda x: x.get('service_headway') is not None)
-            
-            # 2. Re-Group to generate sequential index
-            | 'KeyForIndexing' >> beam.Map(lambda x: (x.get('group_id'), x))
-            | 'GroupForIndexing' >> beam.GroupByKey()
-            
-            # 3. Apply Re-indexing
-            | 'ReindexTime' >> beam.ParDo(ReindexTimeInGroupsFn())
         )
 
         write_to_parque = (

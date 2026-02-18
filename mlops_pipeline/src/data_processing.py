@@ -34,6 +34,11 @@ def clean_dataset(data: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
         if col in df.columns:
             df[col] = df[col].fillna(df[col].median())
 
+    # 3b. Clip outliers — overnight gaps can exceed 5000 min, cap at 20
+    # 98th percentile ≈ 20 min; beyond that = "no recent preceding train"
+    if 'preceding_train_gap' in df.columns:
+        df['preceding_train_gap'] = df['preceding_train_gap'].clip(upper=20.0)
+
     # Fill deviations with 0.0 (assume on-time if unknown)
     dev_cols = [c for c in df.columns if 'deviation' in c]
     for col in dev_cols:

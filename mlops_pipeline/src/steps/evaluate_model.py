@@ -36,9 +36,9 @@ from zenml.types import HTMLString
 logger = logging.getLogger(__name__)
 
 # -- Plot window (fixed) ---------------------------------------------------
-PLOT_DATE = "2026-01-14"
+PLOT_DATE = "2026-02-11"
 PLOT_HOUR_START = 15  # inclusive
-PLOT_HOUR_END = 21    # exclusive
+PLOT_HOUR_END = 20    # exclusive
 PLOT_TZ = "America/New_York"
 
 

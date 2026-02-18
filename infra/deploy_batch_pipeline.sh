@@ -137,9 +137,9 @@ gcloud run jobs create batch-generate-dataset \
   --project="${PROJECT_ID}" \
   --region="${REGION}" \
   --image="${IMAGE_PIPELINE}:${TAG}" \
-  --args="--project_id,${PROJECT_ID},--temp_location,gs://${GCP_BUCKET}/temp,--training_cutoff_date,${TRAINING_CUTOFF_DATE},--side_input_output,gs://realtime-headway-prediction-pipelines/side_inputs,--runner,DataflowRunner,--region,${REGION},--setup_file,/app/setup.py" \
+  --args="--project_id,${PROJECT_ID},--temp_location,gs://${GCP_BUCKET}/temp,--training_cutoff_date,${TRAINING_CUTOFF_DATE},--side_input_output,gs://realtime-headway-prediction-pipelines/side_inputs,--runner,DataflowRunner,--region,${REGION},--setup_file,/app/setup.py,--machine_type,n2-highmem-4,--disk_size_gb,100" \
   --set-env-vars="TRAINING_CUTOFF_DATE=${TRAINING_CUTOFF_DATE}" \
-  --task-timeout=3600 \
+  --task-timeout=7200 \
   --max-retries=0 \
   --memory=4Gi \
   2>/dev/null || \
@@ -147,9 +147,9 @@ gcloud run jobs update batch-generate-dataset \
   --project="${PROJECT_ID}" \
   --region="${REGION}" \
   --image="${IMAGE_PIPELINE}:${TAG}" \
-  --args="--project_id,${PROJECT_ID},--temp_location,gs://${GCP_BUCKET}/temp,--training_cutoff_date,${TRAINING_CUTOFF_DATE},--side_input_output,gs://realtime-headway-prediction-pipelines/side_inputs,--runner,DataflowRunner,--region,${REGION},--setup_file,/app/setup.py" \
+  --args="--project_id,${PROJECT_ID},--temp_location,gs://${GCP_BUCKET}/temp,--training_cutoff_date,${TRAINING_CUTOFF_DATE},--side_input_output,gs://realtime-headway-prediction-pipelines/side_inputs,--runner,DataflowRunner,--region,${REGION},--setup_file,/app/setup.py,--machine_type,n2-highmem-4,--disk_size_gb,100" \
   --set-env-vars="TRAINING_CUTOFF_DATE=${TRAINING_CUTOFF_DATE}" \
-  --task-timeout=3600 \
+  --task-timeout=7200 \
   --memory=4Gi
 
 # --- Step 4: Deploy Workflow ---
