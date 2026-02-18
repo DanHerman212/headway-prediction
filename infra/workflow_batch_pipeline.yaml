@@ -174,33 +174,41 @@ main:
           severity: INFO
 
     # ------------------------------------------
-    # Step 5: Launch Dataflow batch pipeline
+    # Step 5: Generate training dataset (Dataflow via Cloud Run Job)
     # ------------------------------------------
-    - launch_dataflow:
-        call: googleapis.dataflow.v1b3.projects.locations.templates.launch
+    - run_generate_dataset:
+        call: googleapis.run.v2.projects.locations.jobs.run
         args:
-          projectId: ${project_id}
-          location: ${region}
-          body:
-            jobName: "generate-training-dataset"
-            parameters:
-              project_id: ${project_id}
-              temp_location: ${"gs://" + gcs_bucket + "/temp"}
-              training_cutoff_date: ${training_cutoff_date}
-              side_input_output: "gs://realtime-headway-prediction-pipelines/side_inputs"
-            environment:
-              tempLocation: ${"gs://" + gcs_bucket + "/temp"}
-              zone: ${region + "-b"}
-          gcsPath: ${"gs://" + gcs_bucket + "/templates/generate_dataset"}
-        result: dataflow_result
+          name: ${"projects/" + project_id + "/locations/" + region + "/jobs/batch-generate-dataset"}
+        result: dataflow_execution
+
+    - wait_dataflow:
+        call: googleapis.run.v2.projects.locations.jobs.executions.get
+        args:
+          name: ${dataflow_execution.metadata.name}
+        result: dataflow_status
+        next: check_dataflow
+
+    - check_dataflow:
+        switch:
+          - condition: ${dataflow_status.completionTime != null}
+            next: log_dataflow
+          - condition: ${dataflow_status.failedCount > 0}
+            raise: "Step 5 failed — Dataflow batch pipeline had failures"
+        next: sleep_dataflow
+
+    - sleep_dataflow:
+        call: sys.sleep
+        args:
+          seconds: 60
+        next: wait_dataflow
 
     - log_dataflow:
         call: sys.log
         args:
-          text: ${"Step 5 complete — Dataflow job launched: " + dataflow_result.job.id}
+          text: "Step 5 complete — training dataset generated and side inputs exported"
           severity: INFO
 
     - done:
         return:
           status: "Pipeline complete"
-          dataflow_job_id: ${dataflow_result.job.id}
