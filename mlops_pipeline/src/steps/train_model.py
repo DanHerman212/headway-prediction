@@ -118,7 +118,19 @@ def train_model_step(
         "attention_head_size": config.model.attention_head_size,
         "dropout": config.model.dropout,
         "hidden_continuous_size": config.model.hidden_continuous_size,
+        "lstm_layers": config.model.lstm_layers,
+        "optimizer": config.model.optimizer,
+        "max_encoder_length": config.processing.max_encoder_length,
     }
+    # Log feature lists as comma-separated strings for experiment tracking
+    feature_params = {
+        "known_reals": ",".join(config.processing.time_varying_known_reals),
+        "unknown_reals": ",".join(config.processing.time_varying_unknown_reals),
+        "known_categoricals": ",".join(config.processing.time_varying_known_categoricals),
+        "unknown_categoricals": ",".join(config.processing.time_varying_unknown_categoricals),
+        "static_categoricals": ",".join(config.processing.static_categoricals),
+    }
+    hparams.update(feature_params)
     aiplatform.log_params(hparams)
     tb_logger.log_hyperparams(hparams)
 

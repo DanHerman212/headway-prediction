@@ -1,9 +1,9 @@
 # Data transformation parameters
 max_prediction_length: 1
 min_prediction_length: 1
-max_encoder_length: 20
+max_encoder_length: 30
 training_cutoff_delta: 0
-min_encoder_length: 10
+min_encoder_length: 20
 
 # Data Splits
 train_end_date: "2025-10-29"
@@ -31,6 +31,7 @@ time_varying_known_categoricals:
 
 time_varying_known_reals:
   - "time_idx"
+  - "day_of_week"
   - "hour_sin"
   - "hour_cos"
   - "empirical_median"

@@ -1,11 +1,11 @@
 # Hardware & Loader Parameters
-batch_size: 128                   # Notebook value. (Plan is to test 512 on A100)
+batch_size: 256                   # Notebook value. (Plan is to test 512 on A100)
 val_batch_size_multiplier: 10     # Used in notebook to speed up validation
-num_workers: 8                    # Optimized for parquet loading
+num_workers: 12                    # Optimized for parquet loading
 pin_memory: true                  # Recommended in notebook comments for GPU speed
 
 # Trainer Parameters
-max_epochs: 100
+max_epochs: 50
 gradient_clip_val: 0.1            # Critical for LSTM stability
 limit_train_batches: 1.0          # Use 100% of data
 precision: "bf16-mixed"           # Optimized for A100
@@ -14,7 +14,7 @@ devices: 1
 enable_model_summary: true
 
 # Early Stopping Configuration
-early_stopping_patience: 15
+early_stopping_patience: 10
 early_stopping_min_delta: 1e-4
 
 # TensorBoard
