@@ -156,6 +156,16 @@ main:
     # ------------------------------------------
     # Step 4: Create clean table
     # ------------------------------------------
+    - build_clean_query:
+        assign:
+          - fqn_clean: ${"`" + project_id + "." + bq_dataset + ".clean`"}
+          - fqn_raw: ${"`" + project_id + "." + bq_dataset + ".raw`"}
+          - clean_select: "r.trip_uid, r.stop_id, r.track, TIMESTAMP_SECONDS(CAST(SPLIT(r.trip_uid, '_')[SAFE_OFFSET(0)] AS INT64)) AS trip_date"
+          - clean_select2: ", SUBSTR(SPLIT(r.trip_uid, '_')[SAFE_OFFSET(1)], 1, 1) AS route_id"
+          - clean_select3: ", SUBSTR(SPLIT(r.trip_uid, '..')[SAFE_OFFSET(1)], 1, 1) AS direction"
+          - clean_select4: ", TIMESTAMP_SECONDS(r.arrival_time) AS arrival_time"
+          - clean_query: ${"CREATE OR REPLACE TABLE " + fqn_clean + " AS SELECT " + clean_select + clean_select2 + clean_select3 + clean_select4 + " FROM " + fqn_raw + " r WHERE r.arrival_time IS NOT NULL"}
+
     - create_clean_table:
         call: googleapis.bigquery.v2.jobs.insert
         args:
@@ -163,7 +173,7 @@ main:
           body:
             configuration:
               query:
-                query: ${"CREATE OR REPLACE TABLE `" + project_id + "." + bq_dataset + ".clean` AS SELECT r.trip_uid, r.stop_id, r.track, TIMESTAMP_SECONDS(CAST(SPLIT(r.trip_uid, '_')[SAFE_OFFSET(0)] AS INT64)) AS trip_date, SUBSTR(SPLIT(r.trip_uid, '_')[SAFE_OFFSET(1)], 1, 1) AS route_id, SUBSTR(SPLIT(r.trip_uid, '..')[SAFE_OFFSET(1)], 1, 1) AS direction, TIMESTAMP_SECONDS(r.arrival_time) AS arrival_time FROM `" + project_id + "." + bq_dataset + ".raw` r WHERE r.arrival_time IS NOT NULL"}
+                query: ${clean_query}
                 useLegacySql: false
         result: clean_result
 
