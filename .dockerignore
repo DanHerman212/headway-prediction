@@ -38,10 +38,7 @@ test_*.py
 
 # Large/unnecessary folders
 staging_area/
-batch_ingestion/
 notebooks/
 docs/
-infra/
 scripts/
-pipelines/
 headway_prediction_pipeline.egg-info/
