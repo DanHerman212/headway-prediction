@@ -52,16 +52,24 @@ gcloud artifacts repositories create "${REPO}" \
 echo "--- Step 2a: Building ingestion image ---"
 gcloud builds submit "${PROJECT_ROOT}" \
   --project="${PROJECT_ID}" \
-  --tag="${IMAGE_INGESTION}:${TAG}" \
-  --dockerfile=infra/Dockerfile.batch_ingestion \
-  --timeout=600
+  --timeout=600 \
+  --config=/dev/stdin <<EOF
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', '${IMAGE_INGESTION}:${TAG}', '-f', 'infra/Dockerfile.batch_ingestion', '.']
+images: ['${IMAGE_INGESTION}:${TAG}']
+EOF
 
 echo "--- Step 2b: Building pipeline image ---"
 gcloud builds submit "${PROJECT_ROOT}" \
   --project="${PROJECT_ID}" \
-  --tag="${IMAGE_PIPELINE}:${TAG}" \
-  --dockerfile=infra/Dockerfile.batch_pipeline \
-  --timeout=600
+  --timeout=600 \
+  --config=/dev/stdin <<EOF
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', '${IMAGE_PIPELINE}:${TAG}', '-f', 'infra/Dockerfile.batch_pipeline', '.']
+images: ['${IMAGE_PIPELINE}:${TAG}']
+EOF
 
 # --- Step 3: Create/update Cloud Run Jobs ---
 echo "--- Step 3: Creating Cloud Run Jobs ---"
