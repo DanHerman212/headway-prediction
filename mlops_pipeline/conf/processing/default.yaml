@@ -1,9 +1,9 @@
 # Data transformation parameters
 max_prediction_length: 1
 min_prediction_length: 1
-max_encoder_length: 30
+max_encoder_length: 20
 training_cutoff_delta: 0
-min_encoder_length: 20
+min_encoder_length: 10
 
 # Data Splits
 train_end_date: "2025-10-29"

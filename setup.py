@@ -6,7 +6,9 @@ setuptools.setup(
     install_requires=[
         'apache-beam[gcp]',
         'pyarrow',
-        # 'statistics' is part of stdlib in python 3, so no need to lsit it
+        'google-cloud-aiplatform>=1.38.0',
+        'google-cloud-firestore>=2.13.0',
+        'google-cloud-storage>=2.9.0',
     ],
     packages=setuptools.find_packages(),
 )
