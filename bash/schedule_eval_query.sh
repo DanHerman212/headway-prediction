@@ -25,8 +25,19 @@ if [[ ! -f "$SQL_FILE" ]]; then
   exit 1
 fi
 
-# Read SQL, collapse to single line for JSON embedding
-QUERY=$(cat "$SQL_FILE" | grep -v '^--' | tr '\n' ' ' | sed 's/  */ /g')
+# Read SQL, strip comment lines
+# Write params to a temp JSON file to avoid shell escaping issues
+# (backticks in BQ table refs get interpreted as command substitution otherwise)
+PARAMS_FILE=$(mktemp /tmp/bq_params.XXXXXX.json)
+python3 -c "
+import json, re
+with open('$SQL_FILE') as f:
+    lines = [l for l in f if not l.strip().startswith('--')]
+q = ' '.join(lines).strip()
+q = re.sub(r'\s+', ' ', q)
+with open('$PARAMS_FILE', 'w') as out:
+    json.dump({'query': q, 'write_disposition': 'WRITE_APPEND'}, out)
+"
 
 echo "=== Scheduling evaluation query ==="
 echo "  Project:  $PROJECT"
@@ -43,7 +54,9 @@ bq mk \
   --display_name="$DISPLAY_NAME" \
   --location="$LOCATION" \
   --schedule="$SCHEDULE" \
-  --params="{\"query\":\"$QUERY\",\"write_disposition\":\"WRITE_APPEND\"}"
+  --params="$(cat "$PARAMS_FILE")"
+
+rm -f "$PARAMS_FILE"
 
 echo ""
 echo "=== Scheduled query created ==="

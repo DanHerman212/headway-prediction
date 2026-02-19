@@ -78,7 +78,7 @@ up:
 	@if [ -f $(PID_FILE) ] && kill -0 $$(cat $(PID_FILE)) 2>/dev/null; then \
 		echo "  Pipeline already running (PID $$(cat $(PID_FILE)))"; \
 	else \
-		python -m pipelines.beam.streaming.streaming_pipeline \
+		python3 -m pipelines.beam.streaming.streaming_pipeline \
 			--input_subscription $(SUB_FULL) --project_id $(PROJECT) \
 			>$(LOG_FILE) 2>&1 & \
 		echo $$! > $(PID_FILE); \
@@ -187,7 +187,7 @@ start-ingestion:
 	fi
 	@echo ""
 	@echo "[3/3] Launching Dataflow streaming pipeline..."
-	@python -m pipelines.beam.streaming.streaming_pipeline \
+	@python3 -m pipelines.beam.streaming.streaming_pipeline \
 		--input_subscription $(SUB_FULL) \
 		--project_id $(PROJECT) \
 		--region $(REGION) \
@@ -217,64 +217,31 @@ start-ingestion:
 
 pause-ingestion:
 	@echo ""
-	@echo "=== PAUSING INGESTION ==="
+	@echo "=== PAUSING POLLER ==="
 	@echo ""
-	@echo "[1/2] Stopping poller on VM..."
+	@echo "Stopping poller on VM..."
 	@gcloud compute ssh $(VM) --zone=$(ZONE) --project=$(PROJECT) \
 		--quiet --strict-host-key-checking=no \
 		--command="sudo systemctl stop gtfs-poller" 2>/dev/null \
 		&& echo "  Poller stopped" \
 		|| echo "  WARNING: Could not stop poller (VM may not be running)"
 	@echo ""
-	@echo "[2/2] Draining Dataflow job..."
-	@JOB_ID=$$(gcloud dataflow jobs list \
-		--project=$(PROJECT) --region=$(REGION) \
-		--filter="name=$(DATAFLOW_JOB_NAME) AND state=Running" \
-		--format="value(JOB_ID)" --limit=1 2>/dev/null); \
-	if [ -n "$$JOB_ID" ]; then \
-		gcloud dataflow jobs drain "$$JOB_ID" \
-			--project=$(PROJECT) --region=$(REGION) --quiet; \
-		echo "  Dataflow job $$JOB_ID draining (will finish in-flight work)"; \
-	else \
-		echo "  No running Dataflow job found"; \
-	fi
-	@echo ""
-	@echo "=== INGESTION PAUSED ==="
-	@echo "  Pub/Sub messages will accumulate (7-day retention)."
+	@echo "=== POLLER PAUSED ==="
+	@echo "  Dataflow is still running (will idle until new messages arrive)."
 	@echo "  Resume: make restart-ingestion"
 
 restart-ingestion:
 	@echo ""
-	@echo "=== RESTARTING INGESTION ==="
+	@echo "=== RESTARTING POLLER ==="
 	@echo ""
-	@echo "[1/2] Starting poller on VM..."
+	@echo "Starting poller on VM..."
 	@gcloud compute ssh $(VM) --zone=$(ZONE) --project=$(PROJECT) \
 		--quiet --strict-host-key-checking=no \
 		--command="sudo systemctl start gtfs-poller" 2>/dev/null \
 		&& echo "  Poller started" \
 		|| echo "  WARNING: Could not start poller (is VM running?)"
 	@echo ""
-	@echo "[2/2] Launching Dataflow streaming pipeline..."
-	@python -m pipelines.beam.streaming.streaming_pipeline \
-		--input_subscription $(SUB_FULL) \
-		--project_id $(PROJECT) \
-		--region $(REGION) \
-		--runner DataflowRunner \
-		--project $(PROJECT) \
-		--region $(REGION) \
-		--staging_location $(DATAFLOW_BUCKET)/staging \
-		--temp_location $(DATAFLOW_BUCKET)/temp \
-		--setup_file ./setup.py \
-		--job_name $(DATAFLOW_JOB_NAME) \
-		--machine_type $(DATAFLOW_WORKER) \
-		--max_num_workers $(DATAFLOW_MAX_WORKERS) \
-		--streaming \
-		--save_main_session \
-		--service_account_email $(SA) \
-		--enable_streaming_engine
-	@echo ""
-	@echo "=== INGESTION RESTARTED ==="
-	@echo "  Dataflow will process any backlog from Pub/Sub, then resume real-time."
+	@echo "=== POLLER RESTARTED ==="
 
 teardown:
 	@echo ""
@@ -368,8 +335,8 @@ help:
 	@echo "  Production (Dataflow):"
 	@echo "    make deploy-infra        Provision VM + Pub/Sub + GCS staging"
 	@echo "    make start-ingestion     Start poller + launch Dataflow pipeline"
-	@echo "    make pause-ingestion     Stop poller + drain Dataflow (preserves Pub/Sub backlog)"
-	@echo "    make restart-ingestion   Start poller + relaunch Dataflow"
+	@echo "    make pause-ingestion     Stop poller (Dataflow keeps running)"
+	@echo "    make restart-ingestion   Resume poller"
 	@echo "    make teardown            Delete all production resources"
 	@echo "    make prod-status         Check status of all components"
 	@echo "    make prod-logs           Tail Dataflow or poller logs"
