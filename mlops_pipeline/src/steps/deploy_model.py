@@ -57,28 +57,44 @@ def _save_dataset_params(training_dataset: TimeSeriesDataSet, output_dir: str) -
             }
 
     # Serialize target normalizer params (GroupNormalizer)
+    #
+    # GroupNormalizer stores fitted values in `norm_`, a DataFrame with
+    # columns ["center", "scale"] indexed by the *encoded* group_id (int).
+    # We map those back to original group names using the categorical encoder.
     normalizer_params = {}
-    target_norm = params.get("target_normalizer", None)
-    if target_norm is not None and hasattr(target_norm, "get_parameters"):
-        try:
-            norm_p = target_norm.get_parameters()
-            # Convert numpy arrays / tensors to lists for JSON
-            normalizer_params = {
-                k: v.tolist() if hasattr(v, "tolist") else v
-                for k, v in norm_p.items()
-            }
-        except Exception:
-            pass
+    target_norm = training_dataset.target_normalizer
+    if target_norm is not None and hasattr(target_norm, "norm_"):
+        norm_df = target_norm.norm_
+
+        # Build inverse mapping: encoded_int -> original_name
+        gid_encoder = cat_encoders.get("group_id", cat_encoders.get("__group_id__group_id"))
+        inv_map = {}
+        if gid_encoder is not None and hasattr(gid_encoder, "classes_"):
+            inv_map = {v: k for k, v in gid_encoder.classes_.items()}
+
+        center_map = {}
+        scale_map = {}
+        for encoded_id, row in norm_df.iterrows():
+            orig_name = str(inv_map.get(encoded_id, encoded_id))
+            center_map[orig_name] = float(row["center"])
+            scale_map[orig_name] = float(row["scale"])
+
+        normalizer_params["center"] = center_map
+        normalizer_params["scale"] = scale_map
+        logger.info(
+            "Serialized normalizer params: %d groups — %s",
+            len(center_map),
+            list(center_map.keys()),
+        )
     elif target_norm is not None:
-        # Fallback: store center_ and scale_ if available
-        if hasattr(target_norm, "center_"):
-            normalizer_params["center"] = {
-                str(k): float(v) for k, v in target_norm.center_.items()
-            }
-        if hasattr(target_norm, "scale_"):
-            normalizer_params["scale"] = {
-                str(k): float(v) for k, v in target_norm.scale_.items()
-            }
+        logger.warning(
+            "Target normalizer %s has no norm_ attribute — "
+            "normalizer_params will be empty!",
+            type(target_norm).__name__,
+        )
+
+    if not normalizer_params:
+        logger.warning("normalizer_params is EMPTY — predictions will not be denormalized!")
 
     dataset_params = {
         "categorical_encoders": encoder_mappings,

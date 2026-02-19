@@ -1,0 +1,33 @@
+type: object
+description: >
+  Flat feature schema for TFDV analysis. Model Monitoring uses this to compute
+  drift and skew statistics on the numeric features from prediction requests.
+properties:
+  service_headway:
+    type: number
+  preceding_train_gap:
+    type: number
+  upstream_headway_14th:
+    type: number
+  travel_time_14th:
+    type: number
+  travel_time_14th_deviation:
+    type: number
+  travel_time_23rd:
+    type: number
+  travel_time_23rd_deviation:
+    type: number
+  travel_time_34th:
+    type: number
+  travel_time_34th_deviation:
+    type: number
+  stops_at_23rd:
+    type: number
+  hour_sin:
+    type: number
+  hour_cos:
+    type: number
+  empirical_median:
+    type: number
+  day_of_week:
+    type: number

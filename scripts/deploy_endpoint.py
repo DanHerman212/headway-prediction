@@ -22,6 +22,7 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import sys
 import time
 from typing import Dict, List, Optional
@@ -47,6 +48,11 @@ ENDPOINT_DISPLAY_NAME = "headway-prediction-endpoint"
 ARTIFACT_BUCKET = "gs://mlops-artifacts-realtime-headway-prediction"
 TRAINING_DATA_URI = f"{ARTIFACT_BUCKET}/data/training_data.parquet"
 MONITORING_DATASET_URI = f"{ARTIFACT_BUCKET}/monitoring/training_baseline.csv"
+PREDICT_SCHEMA_URI = f"{ARTIFACT_BUCKET}/monitoring/predict_instance_schema.yaml"
+ANALYSIS_SCHEMA_URI = f"{ARTIFACT_BUCKET}/monitoring/analysis_instance_schema.yaml"
+
+# Local schema files (checked into repo under infra/schemas/)
+_SCHEMA_DIR = os.path.join(os.path.dirname(__file__), "..", "infra", "schemas")
 
 # Machine for serving — ONNX on CPU is plenty fast for single-step predictions
 MACHINE_TYPE = "n1-standard-4"
@@ -211,6 +217,21 @@ def _generate_monitoring_baseline(dry_run: bool = False) -> str:
     bucket.blob(blob_path).upload_from_filename(csv_path)
     logger.info("Uploaded baseline CSV to %s (%d rows)", MONITORING_DATASET_URI, len(baseline_df))
 
+    # Upload schema YAML files alongside the baseline
+    for schema_name, gcs_uri in [
+        ("predict_instance_schema.yaml", PREDICT_SCHEMA_URI),
+        ("analysis_instance_schema.yaml", ANALYSIS_SCHEMA_URI),
+    ]:
+        local_schema = os.path.join(_SCHEMA_DIR, schema_name)
+        if not os.path.exists(local_schema):
+            logger.warning("Schema file not found: %s", local_schema)
+            continue
+        dest = gcs_uri.replace("gs://", "")
+        b_name = dest.split("/")[0]
+        b_path = "/".join(dest.split("/")[1:])
+        client.bucket(b_name).blob(b_path).upload_from_filename(local_schema)
+        logger.info("Uploaded schema %s to %s", schema_name, gcs_uri)
+
     return MONITORING_DATASET_URI
 
 
@@ -283,6 +304,8 @@ def _create_monitoring_job(
         schedule_config=schedule_config,
         alert_config=alert_config,
         objective_configs=objective_config,
+        predict_instance_schema_uri=PREDICT_SCHEMA_URI,
+        analysis_instance_schema_uri=ANALYSIS_SCHEMA_URI,
         project=PROJECT_ID,
         location=LOCATION,
     )

@@ -180,6 +180,14 @@ def _get_target_scale(group_id: str) -> np.ndarray:
     norm_params = _dataset_params.get("normalizer_params", {})
     center_map = norm_params.get("center", {})
     scale_map = norm_params.get("scale", {})
+    if str(group_id) not in center_map or str(group_id) not in scale_map:
+        logger.warning(
+            "group_id '%s' not found in normalizer_params "
+            "(available: %s) — using fallback center=0.0, scale=1.0. "
+            "Predictions will NOT be denormalized!",
+            group_id,
+            list(center_map.keys())[:5],
+        )
     center = float(center_map.get(str(group_id), 0.0))
     scale = float(scale_map.get(str(group_id), 1.0))
     return np.array([[center, scale]], dtype=np.float32)

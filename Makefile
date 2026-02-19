@@ -203,7 +203,8 @@ start-ingestion:
 		--streaming \
 		--save_main_session \
 		--service_account_email $(SA) \
-		--enable_streaming_engine
+		--enable_streaming_engine \
+		--no_wait
 	@echo ""
 	@echo "=== INGESTION RUNNING ==="
 	@echo ""

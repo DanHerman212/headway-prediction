@@ -36,7 +36,7 @@ with open('$SQL_FILE') as f:
 q = ' '.join(lines).strip()
 q = re.sub(r'\s+', ' ', q)
 with open('$PARAMS_FILE', 'w') as out:
-    json.dump({'query': q, 'write_disposition': 'WRITE_APPEND'}, out)
+    json.dump({'query': q}, out)
 "
 
 echo "=== Scheduling evaluation query ==="

@@ -299,6 +299,39 @@ def run(argv=None):
             _add_stops_at_23rd
         )
 
+        # 3i. Drop records with incomplete features (warmup period).
+        # The model cannot handle None inputs — only fully-populated
+        # records should enter the buffer and eventually reach the endpoint.
+        REQUIRED_FEATURES = [
+            "service_headway",
+            "upstream_headway_14th",
+            "travel_time_14th",
+            "travel_time_23rd",
+            "travel_time_34th",
+            "preceding_train_gap",
+            "travel_time_14th_deviation",
+            "travel_time_23rd_deviation",
+            "travel_time_34th_deviation",
+            "empirical_median",
+            "hour_sin",
+            "hour_cos",
+            "time_idx",
+        ]
+
+        def _has_all_features(element):
+            missing = [f for f in REQUIRED_FEATURES if element.get(f) is None]
+            if missing:
+                logger.debug(
+                    "Dropping %s — missing features: %s",
+                    element.get("group_id", "?"), missing,
+                )
+                return False
+            return True
+
+        feature_records = feature_records | "FilterCompleteFeatures" >> beam.Filter(
+            _has_all_features
+        )
+
         # --- Step 4: Window Buffer ---
         windows = (
             feature_records

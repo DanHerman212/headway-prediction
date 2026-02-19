@@ -1,0 +1,56 @@
+type: object
+description: >
+  Schema for a single prediction instance sent to the headway-tft endpoint.
+  Each instance contains a group_id and an array of recent observations
+  forming the encoder window for the TFT model.
+properties:
+  group_id:
+    type: string
+    description: "Route-direction group identifier (e.g. A_South, E_South)"
+  observations:
+    type: array
+    description: "Encoder window of recent observations (up to 20)"
+    items:
+      type: object
+      properties:
+        service_headway:
+          type: number
+        preceding_train_gap:
+          type: number
+        upstream_headway_14th:
+          type: number
+        travel_time_14th:
+          type: number
+        travel_time_14th_deviation:
+          type: number
+        travel_time_23rd:
+          type: number
+        travel_time_23rd_deviation:
+          type: number
+        travel_time_34th:
+          type: number
+        travel_time_34th_deviation:
+          type: number
+        stops_at_23rd:
+          type: number
+        hour_sin:
+          type: number
+        hour_cos:
+          type: number
+        empirical_median:
+          type: number
+        day_of_week:
+          type: number
+        time_idx:
+          type: integer
+        route_id:
+          type: string
+        regime_id:
+          type: string
+        track_id:
+          type: string
+        preceding_route_id:
+          type: string
+required:
+  - group_id
+  - observations
