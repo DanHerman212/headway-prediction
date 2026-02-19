@@ -359,6 +359,11 @@ def main():
         help="Skip the synthetic prediction smoke test",
     )
     parser.add_argument(
+        "--monitoring-only",
+        action="store_true",
+        help="Skip deployment — only set up monitoring + smoke test on existing endpoint",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print what would happen without making any changes",
@@ -368,23 +373,30 @@ def main():
     # Initialize Vertex AI SDK
     aiplatform.init(project=PROJECT_ID, location=LOCATION)
 
-    # Step 1: Find the latest registered model
-    logger.info("=" * 60)
-    logger.info("Step 1: Finding latest registered model")
-    logger.info("=" * 60)
-    model = _find_latest_model()
+    if not args.monitoring_only:
+        # Step 1: Find the latest registered model
+        logger.info("=" * 60)
+        logger.info("Step 1: Finding latest registered model")
+        logger.info("=" * 60)
+        model = _find_latest_model()
 
-    # Step 2: Get or create the endpoint
-    logger.info("=" * 60)
-    logger.info("Step 2: Getting or creating endpoint")
-    logger.info("=" * 60)
-    endpoint = _get_or_create_endpoint()
+        # Step 2: Get or create the endpoint
+        logger.info("=" * 60)
+        logger.info("Step 2: Getting or creating endpoint")
+        logger.info("=" * 60)
+        endpoint = _get_or_create_endpoint()
 
-    # Step 3: Deploy model to endpoint
-    logger.info("=" * 60)
-    logger.info("Step 3: Deploying model to endpoint")
-    logger.info("=" * 60)
-    _deploy_model(endpoint, model, dry_run=args.dry_run)
+        # Step 3: Deploy model to endpoint
+        logger.info("=" * 60)
+        logger.info("Step 3: Deploying model to endpoint")
+        logger.info("=" * 60)
+        _deploy_model(endpoint, model, dry_run=args.dry_run)
+    else:
+        logger.info("=" * 60)
+        logger.info("--monitoring-only: skipping deploy, resolving existing endpoint")
+        logger.info("=" * 60)
+        model = _find_latest_model()
+        endpoint = _get_or_create_endpoint()
 
     # Step 4: Model Monitoring
     if not args.skip_monitoring:
@@ -423,6 +435,8 @@ def main():
     if not args.skip_monitoring:
         logger.info("  Monitoring: ENABLED (1h interval, JS threshold %.2f)",
                      DEFAULT_DRIFT_THRESHOLD)
+    if args.monitoring_only:
+        logger.info("  Mode: monitoring-only (deployment skipped)")
     logger.info("=" * 60)
 
 

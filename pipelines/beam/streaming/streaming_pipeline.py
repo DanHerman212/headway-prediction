@@ -35,6 +35,7 @@ from pipelines.beam.transforms.transforms import (
 from pipelines.beam.transforms.window_buffer import BufferWindowFn
 from pipelines.beam.transforms.predict import PredictHeadwayFn
 from pipelines.beam.transforms.firestore_sink import WriteToFirestoreFn
+from pipelines.beam.transforms.bigquery_sink import WriteActuals, WritePredictions
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +184,11 @@ def run(argv=None):
         default=_DEFAULT_MEDIAN_TT,
         help="GCS path to median_tt_map.json",
     )
+    parser.add_argument(
+        "--bq_dataset",
+        default="headway_monitoring",
+        help="BigQuery dataset for prediction monitoring tables",
+    )
 
     known_args, pipeline_args = parser.parse_known_args(argv)
 
@@ -315,6 +321,27 @@ def run(argv=None):
             predictions
             | "WriteFirestore" >> beam.ParDo(
                 WriteToFirestoreFn(project=known_args.project_id)
+            )
+        )
+
+        # --- Step 7: BigQuery monitoring sinks ---
+        # Tables must exist — run: python scripts/setup_bq_monitoring.py
+        _ = (
+            feature_records
+            | "FilterValidActuals" >> beam.Filter(
+                lambda x: x.get("service_headway") is not None
+            )
+            | "WriteActualsBQ" >> WriteActuals(
+                project=known_args.project_id,
+                dataset=known_args.bq_dataset,
+            )
+        )
+
+        _ = (
+            predictions
+            | "WritePredictionsBQ" >> WritePredictions(
+                project=known_args.project_id,
+                dataset=known_args.bq_dataset,
             )
         )
 
