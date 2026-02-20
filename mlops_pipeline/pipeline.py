@@ -12,7 +12,7 @@ KFP artifacts; primitives and config pass as JSON strings.
 from typing import List, Optional
 
 from kfp import dsl
-from kfp.dsl import Input, Output, Dataset, Model, Artifact
+from kfp.dsl import HTML, Input, Output, Dataset, Model, Artifact
 
 # ---------------------------------------------------------------------------
 # Container image — built from infra/Dockerfile.training
@@ -146,8 +146,8 @@ def evaluate_model_op(
     time_anchor_in: Input[Artifact],
     test_mae_out: Output[Artifact],
     test_smape_out: Output[Artifact],
-    rush_hour_html: Output[Artifact],
-    interpretation_html: Output[Artifact],
+    rush_hour_html: Output[HTML],
+    interpretation_html: Output[HTML],
 ):
     """Evaluate on test set, produce plots, log metrics."""
     import json

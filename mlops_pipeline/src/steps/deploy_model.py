@@ -99,9 +99,11 @@ def _save_dataset_params(training_dataset: TimeSeriesDataSet, output_dir: str) -
     dataset_scalers = getattr(training_dataset, "scalers", {}) or {}
     for col_name, scaler in dataset_scalers.items():
         if hasattr(scaler, "center_") and hasattr(scaler, "scale_"):
+            center_val = scaler.center_
+            scale_val = scaler.scale_
             scaler_params[col_name] = {
-                "center": float(scaler.center_),
-                "scale": float(scaler.scale_),
+                "center": float(center_val.iloc[0]) if hasattr(center_val, "iloc") else float(center_val),
+                "scale": float(scale_val.iloc[0]) if hasattr(scale_val, "iloc") else float(scale_val),
             }
         elif hasattr(scaler, "parameters"):
             # Fallback: some EncoderNormalizer versions store a parameters dict
