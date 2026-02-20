@@ -1,16 +1,14 @@
 import hydra
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig
-from zenml import step
 
 from typing import List, Optional
 
 
-@step
-def load_config_step(
-    config_name: str = "config", 
+def load_config(
+    config_name: str = "config",
     config_path: str = "../../conf",
-    overrides: Optional[List[str]] = None
+    overrides: Optional[List[str]] = None,
 ) -> DictConfig:
     """
     Loads the Hydra configuration.
@@ -22,5 +20,5 @@ def load_config_step(
 
     with hydra.initialize(version_base=None, config_path=config_path):
         cfg = hydra.compose(config_name=config_name, overrides=overrides or [])
-    
+
     return cfg

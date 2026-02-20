@@ -1,7 +1,7 @@
 """
 run_vizier_study.py
 -------------------
-ZenML step that orchestrates Vertex AI Hyperparameter Tuning.
+Step that orchestrates Vertex AI Hyperparameter Tuning.
 
 Flow:
     1. Serialize train/val datasets to GCS  (trials run in isolated containers)
@@ -21,7 +21,6 @@ from google.cloud import aiplatform
 from google.cloud.aiplatform import hyperparameter_tuning as hpt
 from omegaconf import DictConfig, OmegaConf
 from pytorch_forecasting import TimeSeriesDataSet
-from zenml import step
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +84,7 @@ def _cast_best_params(best_params: Dict[str, Any], search_space: DictConfig) -> 
 # ZenML Step
 # ---------------------------------------------------------------------------
 
-@step(enable_cache=False)
-def run_vizier_study_step(
+def run_vizier_study(
     training_dataset: TimeSeriesDataSet,
     validation_dataset: TimeSeriesDataSet,
     config: DictConfig,

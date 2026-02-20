@@ -1,0 +1,23 @@
+# .gcloudignore — controls what Cloud Build uploads.
+# Cloud Build only needs: mlops_pipeline/ and infra/Dockerfile.training
+# Everything else is excluded to keep uploads fast and small.
+
+# Start by ignoring everything
+*
+
+# Then allowlist only what the Docker build needs
+!mlops_pipeline/
+!mlops_pipeline/**
+!infra/
+!infra/Dockerfile.training
+# Re-exclude everything else in infra/
+infra/*
+!infra/Dockerfile.training
+
+# Re-exclude artifacts inside mlops_pipeline/
+mlops_pipeline/__pycache__/
+mlops_pipeline/**/__pycache__/
+mlops_pipeline/*.pyc
+mlops_pipeline/**/*.pyc
+mlops_pipeline/local_artifacts/
+mlops_pipeline/mlruns/

@@ -1,4 +1,3 @@
-from zenml import step
 from google.cloud import aiplatform
 from omegaconf import DictConfig
 from typing import Dict, Any, Union
@@ -19,7 +18,6 @@ def _cast_vizier_value(value: Union[float, str]) -> Union[int, float, bool, str]
         return int(value)
     return value
 
-@step
 def fetch_best_vizier_params(config: DictConfig) -> Dict[str, Any]:
     """
     Queries Vertex AI for the best trial to MINIMIZE validation loss.

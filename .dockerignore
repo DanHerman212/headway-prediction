@@ -1,5 +1,9 @@
+# .dockerignore — second layer of defense after .gcloudignore.
+# The Dockerfile only COPYs mlops_pipeline/ so most of this is belt-and-suspenders.
+
 # Core Python artifacts
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *.so
 *.egg-info/
@@ -11,13 +15,17 @@ env/
 .ipynb_checkpoints/
 *.ipynb
 
-# ZenML
+# ZenML (archived)
 .zen/
 local_artifacts/
 
-# Data
+# Data & large files
 data/
 archive/
+*.parquet
+*.csv
+*.npy
+*.zip
 
 # Logs
 tensorboard_logs/
@@ -28,17 +36,22 @@ wandb/
 # Git
 .git/
 .gitignore
+.gcloudignore
 
 # OS
 .DS_Store
 
-# Test artifacts
-test_pipeline_local.py
+# Test files
 test_*.py
 
-# Large/unnecessary folders
+# Folders not needed in the training image
 staging_area/
 notebooks/
 docs/
 scripts/
+bash/
+batch_ingestion/
+realtime_ingestion/
+pipelines/
 headway_prediction_pipeline.egg-info/
+infra/

@@ -17,7 +17,7 @@ docker build --platform linux/amd64 -f infra/Dockerfile.hpo -t "$IMAGE_NAME" .
 echo ""
 echo "=== 2. Verifying Imports & Environment ==="
 # We run a simple one-liner that attempts to import the entrypoint module.
-# If dependencies (ZenML, Hydra, PyTorch Forecasting) are missing/broken, this will fail.
+# If dependencies (Hydra, PyTorch Forecasting, KFP) are missing/broken, this will fail.
 docker run --platform linux/amd64 --rm "$IMAGE_NAME" python -c "
 import sys
 import logging

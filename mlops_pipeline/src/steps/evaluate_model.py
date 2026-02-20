@@ -6,17 +6,16 @@ Evaluation step for the Headway Prediction Pipeline.
 Three responsibilities:
   1. Compute test MAE / sMAPE -> log to Vertex AI Experiments.
   2. Build a predictions-vs-actuals plot for a fixed time window
-     (Jan 14 2026 15:00-21:00 ET, one subplot per route) -> return
-     as an HTML ZenML artifact.
+     (one subplot per route) -> return as HTML.
   3. Generate TFT interpretation plots (feature importance + attention)
-     -> return as an HTML ZenML artifact.
+     -> return as HTML.
 """
 
 import io
 import base64
 import logging
 import re
-from typing import Annotated, Dict, Tuple
+from typing import Dict, Tuple
 
 import matplotlib
 matplotlib.use("Agg")
@@ -30,8 +29,6 @@ from omegaconf import DictConfig
 from plotly.subplots import make_subplots
 from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
 from pytorch_forecasting.metrics import MAE, SMAPE
-from zenml import step, get_step_context
-from zenml.types import HTMLString
 
 logger = logging.getLogger(__name__)
 
@@ -174,19 +171,23 @@ def build_interpretation_html(
     return "\n".join(html_parts)
 
 
-@step(enable_cache=False)
 def evaluate_model(
     model: TemporalFusionTransformer,
     test_dataset: TimeSeriesDataSet,
     config: DictConfig,
+    run_name: str,
     time_anchor_iso: str = "",
-) -> Tuple[
-    Annotated[float, "test_mae"],
-    Annotated[float, "test_smape"],
-    Annotated[HTMLString, "rush_hour_plot_html"],
-    Annotated[HTMLString, "interpretation_html"],
-]:
+) -> Tuple[float, float, str, str]:
     """Evaluate TFT on the test set.
+
+    Parameters
+    ----------
+    model : TemporalFusionTransformer
+    test_dataset : TimeSeriesDataSet
+    config : DictConfig
+    run_name : str
+        Pipeline run identifier for experiment logging.
+    time_anchor_iso : str
 
     Returns
     -------
@@ -221,14 +222,6 @@ def evaluate_model(
     logger.info("Test MAE=%.4f  sMAPE=%.4f", mae, smape)
 
     # -- 3. Log metrics to Vertex AI Experiments ----------------------------
-    try:
-        ctx = get_step_context()
-        run_name = re.sub(
-            r"[^a-z0-9-]", "-", ctx.pipeline_run.name.strip().lower()
-        )[:128].rstrip("-")
-    except Exception:
-        run_name = None
-
     experiment_name = (
         config.get("experiment_name", "headway-tft").lower().replace("_", "-")
     )
@@ -238,11 +231,13 @@ def evaluate_model(
             location=config.infra.location,
             experiment=experiment_name,
         )
-        if run_name:
-            aiplatform.start_run(run_name, resume=True)
-            aiplatform.log_metrics({"test_mae": mae, "test_smape": smape})
-            aiplatform.end_run()
-            logger.info("Logged metrics to experiment run: %s", run_name)
+        safe_run = re.sub(
+            r"[^a-z0-9-]", "-", run_name.strip().lower()
+        )[:128].rstrip("-")
+        aiplatform.start_run(safe_run, resume=True)
+        aiplatform.log_metrics({"test_mae": mae, "test_smape": smape})
+        aiplatform.end_run()
+        logger.info("Logged metrics to experiment run: %s", safe_run)
     except Exception as exc:
         logger.warning("Vertex AI Experiments logging failed: %s", exc)
 
@@ -251,16 +246,14 @@ def evaluate_model(
     time_anchor = pd.Timestamp(time_anchor_iso)
     df = _build_eval_dataframe(predictions, x, test_dataset, time_anchor)
     fig = build_prediction_figure(df)
-    rush_html = HTMLString(fig.to_html(full_html=True, include_plotlyjs="cdn"))
+    rush_html = fig.to_html(full_html=True, include_plotlyjs="cdn")
 
     # -- 5. TFT interpretation ----------------------------------------------
     logger.info("Generating TFT interpretation ...")
     try:
-        interp_html = HTMLString(build_interpretation_html(model, raw_prediction.output))
+        interp_html = build_interpretation_html(model, raw_prediction.output)
     except Exception as exc:
         logger.warning("Interpretation failed: %s", exc)
-        interp_html = HTMLString(
-            f"<html><body><p>Interpretation unavailable: {exc}</p></body></html>"
-        )
+        interp_html = f"<html><body><p>Interpretation unavailable: {exc}</p></body></html>"
 
     return mae, smape, rush_html, interp_html

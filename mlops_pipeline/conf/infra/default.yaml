@@ -15,8 +15,8 @@ max_trial_count: 20
 parallel_trial_count: 5
 
 # Machine spec for each trial worker
-machine_type: "g2-standard-4"
-accelerator_type: "NVIDIA_L4"
+machine_type: "a2-highgpu-1g"
+accelerator_type: "NVIDIA_TESLA_A100"
 accelerator_count: 1
 
 # Vertex AI Managed TensorBoard

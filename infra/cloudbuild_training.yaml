@@ -1,0 +1,44 @@
+# cloudbuild_training.yaml
+# Builds the KFP training image with Docker layer caching.
+#
+# Layer caching strategy:
+#   - Pulls the previous :latest image as a cache source
+#   - Docker reuses layers that haven't changed (requirements.txt → pip install)
+#   - Source-only changes rebuild only the final COPY layer (~10-15s)
+#   - Dependency changes trigger a full pip install (~3-5 min)
+#
+# Substitution variables (passed by run.py or CLI):
+#   _IMAGE_URI  — full Artifact Registry URI including tag
+
+steps:
+  # 1. Pull existing image for cache (|| true so it doesn't fail on first build)
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - 'docker pull $_IMAGE_URI || true'
+
+  # 2. Build with --cache-from
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--cache-from'
+      - '$_IMAGE_URI'
+      - '-f'
+      - 'infra/Dockerfile.training'
+      - '-t'
+      - '$_IMAGE_URI'
+      - '.'
+
+  # 3. Push
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '$_IMAGE_URI']
+
+images:
+  - '$_IMAGE_URI'
+
+tags: ['training', 'mlops']
+options:
+  logging: CLOUD_LOGGING_ONLY
+  # Use a larger machine for faster builds (especially pip install)
+  machineType: 'E2_HIGHCPU_8'

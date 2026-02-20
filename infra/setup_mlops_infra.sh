@@ -2,7 +2,7 @@
 # =============================================================================
 # setup_mlops_infra.sh
 #
-# Provisions ALL GCP infrastructure for the ZenML + MLflow deployment:
+# Provisions ALL GCP infrastructure for the Vertex AI Pipelines + MLflow deployment:
 #   - APIs, Service Account, IAM bindings
 #   - Cloud SQL MySQL 8.0 instance with two databases
 #   - Secret Manager secret for DB password

@@ -1,0 +1,25 @@
+# Dockerfile.training
+# Base image for all KFP v2 pipeline components (training, eval, deploy).
+# Also used for HPO trial containers on Vertex AI.
+FROM pytorch/pytorch:2.1.2-cuda12.1-cudnn8-runtime
+
+WORKDIR /app
+
+# 1. System dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. Python dependencies (cached layer)
+COPY mlops_pipeline/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 3. Source code
+COPY mlops_pipeline/ mlops_pipeline/
+
+# 4. Python path so 'mlops_pipeline' is importable
+ENV PYTHONPATH="/app"
+
+# No fixed ENTRYPOINT — KFP supplies the command per component.
+# For HPO trials, override with:
+#   --entrypoint python -m mlops_pipeline.src.hpo_entrypoint

@@ -1,6 +1,8 @@
 --extra-index-url https://download.pytorch.org/whl/cu121
 setuptools>=70,<78
-zenml[gcp,tensorboard]
+# KFP v2 — native Vertex AI Pipelines SDK
+kfp>=2.7.0
+google-cloud-pipeline-components>=2.14.0
 # Core ML
 pytorch-forecasting==1.0.0
 lightning==2.1.2
@@ -10,14 +12,14 @@ tensorboard
 pandas<2.2.0
 numpy<2.0.0
 pyarrow                            # Required for pd.read_parquet
-# Protobuf/gRPC — kfp 2.15+ needs protobuf 6.x
-protobuf>=6.31.1
-grpcio>=1.78.0
-grpcio-status>=1.78.0
+# Protobuf/gRPC — kfp 2.x needs protobuf >=4
+protobuf>=4.25.0
+grpcio>=1.62.0
+grpcio-status>=1.62.0
 # Libs
 hydra-core
 google-cloud-storage
-google-cloud-aiplatform>=1.38.0  # Vizier HPO via HyperparameterTuningJob
+google-cloud-aiplatform>=1.38.0  # Vizier HPO, Experiments, Model Registry
 cloudml-hypertune                # Trial metric reporting to Vizier
 gcsfs
 matplotlib

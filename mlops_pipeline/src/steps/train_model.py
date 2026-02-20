@@ -1,4 +1,4 @@
-"""train_model.py — ZenML training step with Vertex AI experiment tracking + TensorBoard."""
+"""train_model.py — Training step with Vertex AI experiment tracking + TensorBoard."""
 
 import logging
 import os
@@ -9,7 +9,6 @@ from typing import Any, Dict, List, Optional
 from google.cloud import aiplatform, storage
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import TensorBoardLogger
-from zenml import step
 from omegaconf import DictConfig, OmegaConf
 from pytorch_forecasting import TimeSeriesDataSet, TemporalFusionTransformer
 
@@ -69,22 +68,26 @@ def _upload_dir_to_gcs(local_dir: str, gcs_uri: str) -> None:
     logger.info("Uploaded TensorBoard logs from %s to %s", local_dir, gcs_uri)
 
 
-@step(experiment_tracker="vertex_tracker", enable_cache=False)
-def train_model_step(
+def train_model(
     training_dataset: TimeSeriesDataSet,
     validation_dataset: TimeSeriesDataSet,
     config: DictConfig,
+    run_name: str,
     vizier_params: Optional[Dict[str, Any]] = None,
 ) -> TemporalFusionTransformer:
     """
-    Train the TFT model.
+    Train the TFT model with Vertex AI Experiments tracking.
 
-    Vertex AI experiment tracker (managed by ZenML) provides:
-      - Params/metrics visible in ZenML dashboard + Vertex AI console
-      - TensorBoard integration via Vertex AI TensorBoard instance
-
-    TensorBoardLogger provides:
-      - Detailed per-step training curves, gradient histograms, embeddings
+    Parameters
+    ----------
+    training_dataset, validation_dataset : TimeSeriesDataSet
+        Processed data splits.
+    config : DictConfig
+        Full Hydra config.
+    run_name : str
+        Unique run identifier (used for experiment run naming + GCS paths).
+    vizier_params : dict, optional
+        Best hyperparameters from Vizier to override config.
     """
     # 0. Apply Vizier overrides (if provided) directly onto the loaded config
     if vizier_params:
@@ -96,9 +99,20 @@ def train_model_step(
                 logger.warning("Could not apply Vizier param %s=%s: %s", key, value, e)
         logger.info("Final config after Vizier overrides:\n%s", OmegaConf.to_yaml(config))
 
-    # 1. TensorBoard logger — write locally for speed, upload to GCS after training
+    # 1. Initialize Vertex AI Experiments
+    experiment_name = config.get("experiment_name", "headway-tft").lower().replace("_", "-")
+    tb_resource = config.infra.tensorboard_resource_name
+
+    aiplatform.init(
+        project=config.infra.project_id,
+        location=config.infra.location,
+        experiment=experiment_name,
+        experiment_tensorboard=tb_resource,
+    )
+    aiplatform.start_run(run_name)
+
+    # 2. TensorBoard logger — write locally for speed, upload to GCS after training
     local_tb_dir = tempfile.mkdtemp(prefix="tb_logs_")
-    experiment_name = config.get("experiment_name", "headway_tft")
     tb_logger = TensorBoardLogger(
         save_dir=local_tb_dir,
         name=experiment_name,
@@ -107,7 +121,7 @@ def train_model_step(
     )
     logger.info("TensorBoard logging locally to: %s (will upload to GCS after training)", local_tb_dir)
 
-    # 2. Log hyperparameters to Vertex AI Experiments (shows in ZenML + GCP)
+    # 3. Log hyperparameters to Vertex AI Experiments
     hparams = {
         "batch_size": config.training.batch_size,
         "max_epochs": config.training.max_epochs,
@@ -122,7 +136,6 @@ def train_model_step(
         "optimizer": config.model.optimizer,
         "max_encoder_length": config.processing.max_encoder_length,
     }
-    # Log feature lists as comma-separated strings for experiment tracking
     feature_params = {
         "known_reals": ",".join(config.processing.time_varying_known_reals),
         "unknown_reals": ",".join(config.processing.time_varying_unknown_reals),
@@ -134,7 +147,7 @@ def train_model_step(
     aiplatform.log_params(hparams)
     tb_logger.log_hyperparams(hparams)
 
-    # 3. Train
+    # 4. Train
     vertex_cb = VertexAIMetricsCallback()
     result = train_tft(
         training_dataset=training_dataset,
@@ -144,10 +157,11 @@ def train_model_step(
         extra_callbacks=[vertex_cb],
     )
 
-    # 4. Log final metric to Vertex AI Experiments
+    # 5. Log final metric to Vertex AI Experiments
     aiplatform.log_metrics({"best_val_loss": result.best_val_loss})
+    aiplatform.end_run()
 
-    # 5. Upload TensorBoard logs to GCS for persistent storage
+    # 6. Upload TensorBoard logs to GCS for persistent storage
     gcs_tb_dir = config.training.tensorboard_log_dir
     try:
         _upload_dir_to_gcs(local_tb_dir, f"{gcs_tb_dir}/{experiment_name}")

@@ -1,12 +1,11 @@
 """
 deploy_model.py
 ---------------
-ZenML pipeline step that:
+Pipeline step that:
   1. Exports the trained TFT to ONNX format
   2. Saves dataset parameters (encoders, normalizer mappings) as JSON
   3. Uploads all artifacts to GCS
   4. Registers the model in Vertex AI Model Registry
-  5. Deploys to a Vertex AI Prediction Endpoint
 """
 
 import json
@@ -14,11 +13,10 @@ import logging
 import os
 import tempfile
 import shutil
-from typing import Annotated, Dict, Any, Optional
+from typing import Dict, Any, Optional
 
 import torch
 from google.cloud import aiplatform, storage as gcs_storage
-from zenml import step, get_step_context
 from omegaconf import DictConfig
 from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
 
@@ -149,14 +147,14 @@ def _upload_dir_to_gcs(local_dir: str, gcs_uri: str) -> None:
     logger.info("Uploaded %s to %s", local_dir, gcs_uri)
 
 
-@step(enable_cache=False)
 def register_model(
     model: TemporalFusionTransformer,
     training_dataset: TimeSeriesDataSet,
     config: DictConfig,
     test_mae: float,
     test_smape: float,
-) -> Annotated[str, "model_resource_name"]:
+    run_id: str,
+) -> str:
     """Export model to ONNX, upload artifacts to GCS, and register in Vertex AI Model Registry.
 
     Parameters
@@ -171,6 +169,8 @@ def register_model(
         Test MAE from evaluation step (logged as model metadata).
     test_smape : float
         Test sMAPE from evaluation step (logged as model metadata).
+    run_id : str
+        Pipeline run identifier for artifact versioning.
 
     Returns
     -------
@@ -182,13 +182,6 @@ def register_model(
     artifact_bucket = config.infra.artifact_bucket
 
     # Determine run ID for artifact versioning
-    try:
-        context = get_step_context()
-        run_id = context.pipeline_run.name
-    except Exception:
-        import uuid
-        run_id = f"local-{uuid.uuid4().hex[:8]}"
-
     gcs_model_uri = f"{artifact_bucket}/models/{run_id}"
     logger.info("Deploying model for run: %s", run_id)
 
