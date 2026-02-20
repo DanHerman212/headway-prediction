@@ -51,5 +51,17 @@ time_varying_unknown_reals:
   - "travel_time_34th_deviation"
   - "stops_at_23rd"
 
-
-  
+# Per-feature z-score scalers (applied to non-target reals)
+# Not scaled: time_idx (handled by relative_time_idx), hour_sin/hour_cos
+# (already [-1,1]), stops_at_23rd (binary 0/1)
+scalers:
+  preceding_train_gap: "standard"
+  upstream_headway_14th: "standard"
+  travel_time_14th: "standard"
+  travel_time_14th_deviation: "standard"
+  travel_time_23rd: "standard"
+  travel_time_23rd_deviation: "standard"
+  travel_time_34th: "standard"
+  travel_time_34th_deviation: "standard"
+  empirical_median: "standard"
+  day_of_week: "standard"

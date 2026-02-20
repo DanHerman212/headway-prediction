@@ -96,9 +96,35 @@ def _save_dataset_params(training_dataset: TimeSeriesDataSet, output_dir: str) -
     if not normalizer_params:
         logger.warning("normalizer_params is EMPTY — predictions will not be denormalized!")
 
+    # Serialize per-feature scaler params (EncoderNormalizer with method="standard")
+    scaler_params = {}
+    dataset_scalers = getattr(training_dataset, "scalers", {}) or {}
+    for col_name, scaler in dataset_scalers.items():
+        if hasattr(scaler, "center_") and hasattr(scaler, "scale_"):
+            scaler_params[col_name] = {
+                "center": float(scaler.center_),
+                "scale": float(scaler.scale_),
+            }
+        elif hasattr(scaler, "parameters"):
+            # Fallback: some EncoderNormalizer versions store a parameters dict
+            sp = scaler.parameters or {}
+            scaler_params[col_name] = {
+                "center": float(sp.get("center", 0.0)),
+                "scale": float(sp.get("scale", 1.0)),
+            }
+    if scaler_params:
+        logger.info(
+            "Serialized scaler params: %d features — %s",
+            len(scaler_params),
+            list(scaler_params.keys()),
+        )
+    else:
+        logger.info("No per-feature scalers to serialize (raw inputs).")
+
     dataset_params = {
         "categorical_encoders": encoder_mappings,
         "normalizer_params": normalizer_params,
+        "scaler_params": scaler_params,
     }
 
     path = os.path.join(output_dir, "dataset_params.json")

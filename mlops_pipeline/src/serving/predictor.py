@@ -67,6 +67,7 @@ app = Flask(__name__)
 _session: ort.InferenceSession = None
 _metadata: Dict[str, Any] = None
 _dataset_params: Dict[str, Any] = None
+_scaler_lookup: Dict[str, tuple] = {}  # col_name -> (center, scale)
 
 
 # Required artifact files the model needs to serve
@@ -165,6 +166,14 @@ def _load_model():
     logger.info("Loaded dataset params with %d encoder mappings",
                 len(_dataset_params.get("categorical_encoders", {})))
 
+    # Build per-feature scaler lookup: col_name -> (center, scale)
+    global _scaler_lookup
+    _scaler_lookup = {}
+    for col, sp in _dataset_params.get("scaler_params", {}).items():
+        _scaler_lookup[col] = (float(sp["center"]), float(sp["scale"]))
+    logger.info("Loaded %d feature scalers: %s",
+                len(_scaler_lookup), list(_scaler_lookup.keys()))
+
 
 def _encode_categorical(col_name: str, value: str) -> int:
     """Map a categorical string value to its integer encoding."""
@@ -193,6 +202,28 @@ def _get_target_scale(group_id: str) -> np.ndarray:
     return np.array([[center, scale]], dtype=np.float32)
 
 
+def _normalize_target(value: float, group_id: str) -> float:
+    """Apply softplus then group z-score to service_headway.
+
+    Matches the GroupNormalizer(transformation='softplus') used during training.
+    """
+    sp = float(np.log1p(np.exp(value)))  # softplus transform
+    norm_params = _dataset_params.get("normalizer_params", {})
+    center = float(norm_params.get("center", {}).get(str(group_id), 0.0))
+    scale = float(norm_params.get("scale", {}).get(str(group_id), 1.0))
+    return (sp - center) / scale
+
+
+def _scale_feature(col: str, value: float) -> float:
+    """Apply z-score scaling if this column has fitted scaler params."""
+    if col in _scaler_lookup:
+        center, scale = _scaler_lookup[col]
+        if scale == 0.0:
+            return 0.0
+        return (value - center) / scale
+    return value
+
+
 def _preprocess(instance: Dict[str, Any]) -> Dict[str, np.ndarray]:
     """Convert a single request instance to ONNX input tensors.
 
@@ -215,6 +246,8 @@ def _preprocess(instance: Dict[str, Any]) -> Dict[str, np.ndarray]:
         pad_count = encoder_length - len(observations)
         observations = [observations[0]] * pad_count + observations
 
+    group_id = instance["group_id"]
+
     # Build encoder tensors
     encoder_cat = np.zeros((1, encoder_length, len(cat_cols)), dtype=np.int64)
     encoder_cont = np.zeros((1, encoder_length, len(real_cols)), dtype=np.float32)
@@ -223,7 +256,17 @@ def _preprocess(instance: Dict[str, Any]) -> Dict[str, np.ndarray]:
         for ci, col in enumerate(cat_cols):
             encoder_cat[0, t, ci] = _encode_categorical(col, obs.get(col, ""))
         for ri, col in enumerate(real_cols):
-            encoder_cont[0, t, ri] = float(obs.get(col, 0.0))
+            if col == "relative_time_idx":
+                # Positional offset: -19, -18, ..., -1, 0
+                encoder_cont[0, t, ri] = float(t - encoder_length + 1)
+            elif col == "encoder_length":
+                encoder_cont[0, t, ri] = float(encoder_length)
+            elif col == "service_headway":
+                raw = float(obs.get(col, 0.0))
+                encoder_cont[0, t, ri] = _normalize_target(raw, group_id)
+            else:
+                raw = float(obs.get(col, 0.0))
+                encoder_cont[0, t, ri] = _scale_feature(col, raw)
 
     # Build decoder tensors (1 step — use last observation's known features)
     last_obs = observations[-1]
@@ -233,15 +276,19 @@ def _preprocess(instance: Dict[str, Any]) -> Dict[str, np.ndarray]:
     for ci, col in enumerate(cat_cols):
         decoder_cat[0, 0, ci] = _encode_categorical(col, last_obs.get(col, ""))
     for ri, col in enumerate(real_cols):
-        # For the decoder step, increment time_idx by 1
-        if col == "time_idx":
-            decoder_cont[0, 0, ri] = float(last_obs.get(col, 0)) + 1
+        if col == "relative_time_idx":
+            decoder_cont[0, 0, ri] = 1.0  # one step ahead of encoder
+        elif col == "encoder_length":
+            decoder_cont[0, 0, ri] = float(encoder_length)
+        elif col == "time_idx":
+            raw = float(last_obs.get(col, 0)) + 1
+            decoder_cont[0, 0, ri] = _scale_feature(col, raw)
         elif col == "service_headway":
             decoder_cont[0, 0, ri] = 0.0  # target is unknown in decoder
         else:
-            decoder_cont[0, 0, ri] = float(last_obs.get(col, 0.0))
+            raw = float(last_obs.get(col, 0.0))
+            decoder_cont[0, 0, ri] = _scale_feature(col, raw)
 
-    group_id = instance["group_id"]
     target_scale = _get_target_scale(group_id)
 
     return {

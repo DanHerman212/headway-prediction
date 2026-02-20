@@ -3,7 +3,8 @@ import pandas as pd
 from omegaconf import DictConfig
 from pytorch_forecasting import TimeSeriesDataSet
 from pytorch_forecasting.data import GroupNormalizer
-from typing import Tuple
+from pytorch_forecasting.data.encoders import EncoderNormalizer
+from typing import Dict, Tuple
 
 def clean_dataset(data: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
     """
@@ -111,6 +112,12 @@ def create_datasets(data: pd.DataFrame, config: DictConfig, time_anchor_iso: str
     val_df_input = get_slice_with_lookback(data, train_end, val_end, lookback=config.max_encoder_length)
     test_df_input = get_slice_with_lookback(data, val_end, test_end, lookback=config.max_encoder_length)
 
+    # Build per-feature scalers dict from config (if present)
+    scalers_cfg: Dict[str, str] = dict(config.get("scalers", {}))
+    scalers_map: Dict[str, EncoderNormalizer] = {}
+    for col_name, method in scalers_cfg.items():
+        scalers_map[col_name] = EncoderNormalizer(method=method)
+
     # 1. Training Dataset
     training = TimeSeriesDataSet(
         train_df,
@@ -129,6 +136,7 @@ def create_datasets(data: pd.DataFrame, config: DictConfig, time_anchor_iso: str
         target_normalizer=GroupNormalizer(
             groups=list(config.group_ids), transformation=config.target_normalizer
         ),
+        scalers=scalers_map if scalers_map else None,
         add_relative_time_idx=config.add_relative_time_idx,
         add_target_scales=config.add_target_scales,
         add_encoder_length=config.add_encoder_length,
