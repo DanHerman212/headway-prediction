@@ -83,7 +83,7 @@ def process_data_op(
     train_ds_out: Output[Dataset],
     val_ds_out: Output[Dataset],
     test_ds_out: Output[Dataset],
-    time_anchor_iso: dsl.OutputPath(str),
+    time_anchor_out: Output[Artifact],
 ):
     """Clean data and create train/val/test TimeSeriesDataSet splits."""
     import torch
@@ -100,7 +100,7 @@ def process_data_op(
     torch.save(train_ds, train_ds_out.path)
     torch.save(val_ds, val_ds_out.path)
     torch.save(test_ds, test_ds_out.path)
-    with open(time_anchor_iso, "w") as f:
+    with open(time_anchor_out.path, "w") as f:
         f.write(anchor_iso)
 
 
@@ -143,9 +143,9 @@ def evaluate_model_op(
     test_ds_in: Input[Dataset],
     config_yaml: Input[Artifact],
     run_name: str,
-    time_anchor_iso: dsl.InputPath(str),
-    test_mae_out: dsl.OutputPath(float),
-    test_smape_out: dsl.OutputPath(float),
+    time_anchor_in: Input[Artifact],
+    test_mae_out: Output[Artifact],
+    test_smape_out: Output[Artifact],
     rush_hour_html: Output[Artifact],
     interpretation_html: Output[Artifact],
 ):
@@ -160,7 +160,7 @@ def evaluate_model_op(
     test_dataset = torch.load(test_ds_in.path, weights_only=False)
     with open(config_yaml.path) as f:
         config = OmegaConf.create(f.read())
-    with open(time_anchor_iso) as f:
+    with open(time_anchor_in.path) as f:
         anchor = f.read().strip()
 
     # Reconstruct model from state_dict using training dataset params
@@ -175,10 +175,10 @@ def evaluate_model_op(
         time_anchor_iso=anchor,
     )
 
-    # Write metric outputs as JSON (KFP OutputPath convention)
-    with open(test_mae_out, "w") as f:
+    # Write metric outputs as JSON strings
+    with open(test_mae_out.path, "w") as f:
         json.dump(mae, f)
-    with open(test_smape_out, "w") as f:
+    with open(test_smape_out.path, "w") as f:
         json.dump(smape, f)
 
     # Write HTML artifacts
@@ -193,12 +193,13 @@ def register_model_op(
     model_state_in: Input[Model],
     train_ds_in: Input[Dataset],
     config_yaml: Input[Artifact],
-    test_mae: float,
-    test_smape: float,
+    test_mae_in: Input[Artifact],
+    test_smape_in: Input[Artifact],
     run_id: str,
-    model_resource_name: dsl.OutputPath(str),
+    model_resource_name: Output[Artifact],
 ):
     """Export to ONNX, upload to GCS, register in Vertex AI Model Registry."""
+    import json
     import torch
     from omegaconf import OmegaConf
     from mlops_pipeline.src.model_definitions import create_model
@@ -207,6 +208,12 @@ def register_model_op(
     training_dataset = torch.load(train_ds_in.path, weights_only=False)
     with open(config_yaml.path) as f:
         config = OmegaConf.create(f.read())
+
+    # Read metrics from artifact files
+    with open(test_mae_in.path) as f:
+        test_mae = float(json.load(f))
+    with open(test_smape_in.path) as f:
+        test_smape = float(json.load(f))
 
     model = create_model(training_dataset, config)
     model.load_state_dict(torch.load(model_state_in.path, weights_only=False))
@@ -220,7 +227,7 @@ def register_model_op(
         run_id=run_id,
     )
 
-    with open(model_resource_name, "w") as f:
+    with open(model_resource_name.path, "w") as f:
         f.write(resource_name)
 
 
@@ -290,7 +297,7 @@ def headway_training_pipeline(
         test_ds_in=process_task.outputs["test_ds_out"],
         config_yaml=config_task.outputs["config_out"],
         run_name=run_name,
-        time_anchor_iso=process_task.outputs["time_anchor_iso"],
+        time_anchor_in=process_task.outputs["time_anchor_out"],
     )
 
     # 6. Register model in Vertex AI Model Registry
@@ -298,7 +305,7 @@ def headway_training_pipeline(
         model_state_in=train_task.outputs["model_out"],
         train_ds_in=process_task.outputs["train_ds_out"],
         config_yaml=config_task.outputs["config_out"],
-        test_mae=eval_task.outputs["test_mae_out"],
-        test_smape=eval_task.outputs["test_smape_out"],
+        test_mae_in=eval_task.outputs["test_mae_out"],
+        test_smape_in=eval_task.outputs["test_smape_out"],
         run_id=run_name,
     )

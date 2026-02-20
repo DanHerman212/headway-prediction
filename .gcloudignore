@@ -10,9 +10,9 @@
 !mlops_pipeline/**
 !infra/
 !infra/Dockerfile.training
-# Re-exclude everything else in infra/
-infra/*
-!infra/Dockerfile.training
+# Re-exclude everything else in top-level infra/ (anchored with /)
+/infra/*
+!/infra/Dockerfile.training
 
 # Re-exclude artifacts inside mlops_pipeline/
 mlops_pipeline/__pycache__/
