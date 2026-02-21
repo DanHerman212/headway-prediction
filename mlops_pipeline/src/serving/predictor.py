@@ -334,17 +334,24 @@ def predict():
             inputs,
         )
         # result[0] shape: (1, 1, 3) — batch=1, pred_len=1, quantiles=3
-        quantiles = result[0][0, 0, :]  # (3,) — already in minutes
+        quantiles = result[0][0, 0, :]  # (3,) — in normalized z-score space
 
-        # NOTE: TFT.forward() already calls transform_output() which
-        # applies GroupNormalizer inverse (z-score undo + softplus).
-        # The ONNX graph bakes this in, so no post-inference denorm needed.
+        # Denormalize: ONNX wraps TFT.forward() which returns normalized
+        # predictions.  The GroupNormalizer(transformation='softplus')
+        # inverse is:
+        #   1) undo z-score:  x = q * scale + center
+        #   2) softplus:      y = log(1 + exp(x))   [reverses the
+        #      softplus_inv that was applied to raw headways during training]
+        center, scale = inputs["target_scale"][0]  # (center, scale)
+        z_undone = quantiles * scale + center
+        # Numerically stable softplus (identity for large x to avoid overflow)
+        minutes = np.where(z_undone > 20.0, z_undone, np.log1p(np.exp(z_undone)))
 
         predictions.append({
             "group_id": instance["group_id"],
-            "headway_p10": round(float(quantiles[0]), 2),
-            "headway_p50": round(float(quantiles[1]), 2),
-            "headway_p90": round(float(quantiles[2]), 2),
+            "headway_p10": round(float(minutes[0]), 2),
+            "headway_p50": round(float(minutes[1]), 2),
+            "headway_p90": round(float(minutes[2]), 2),
         })
 
     elapsed_ms = (time.time() - start) * 1000
