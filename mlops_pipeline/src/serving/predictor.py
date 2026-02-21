@@ -252,6 +252,12 @@ def _preprocess(instance: Dict[str, Any]) -> Dict[str, np.ndarray]:
     encoder_cat = np.zeros((1, encoder_length, len(cat_cols)), dtype=np.int64)
     encoder_cont = np.zeros((1, encoder_length, len(real_cols)), dtype=np.float32)
 
+    # Pre-fetch target scale for the group — also used to fill the
+    # service_headway_center / service_headway_scale synthetic features
+    # that add_target_scales=True injects into x_reals.
+    ts = _get_target_scale(group_id)  # shape (1, 2)
+    t_center, t_scale = float(ts[0, 0]), float(ts[0, 1])
+
     for t, obs in enumerate(observations):
         for ci, col in enumerate(cat_cols):
             encoder_cat[0, t, ci] = _encode_categorical(col, obs.get(col, ""))
@@ -261,6 +267,10 @@ def _preprocess(instance: Dict[str, Any]) -> Dict[str, np.ndarray]:
                 encoder_cont[0, t, ri] = float(t - encoder_length + 1)
             elif col == "encoder_length":
                 encoder_cont[0, t, ri] = float(encoder_length)
+            elif col == "service_headway_center":
+                encoder_cont[0, t, ri] = t_center
+            elif col == "service_headway_scale":
+                encoder_cont[0, t, ri] = t_scale
             elif col == "service_headway":
                 raw = float(obs.get(col, 0.0))
                 encoder_cont[0, t, ri] = _normalize_target(raw, group_id)
@@ -280,6 +290,10 @@ def _preprocess(instance: Dict[str, Any]) -> Dict[str, np.ndarray]:
             decoder_cont[0, 0, ri] = 1.0  # one step ahead of encoder
         elif col == "encoder_length":
             decoder_cont[0, 0, ri] = float(encoder_length)
+        elif col == "service_headway_center":
+            decoder_cont[0, 0, ri] = t_center
+        elif col == "service_headway_scale":
+            decoder_cont[0, 0, ri] = t_scale
         elif col == "time_idx":
             raw = float(last_obs.get(col, 0)) + 1
             decoder_cont[0, 0, ri] = _scale_feature(col, raw)
@@ -289,8 +303,6 @@ def _preprocess(instance: Dict[str, Any]) -> Dict[str, np.ndarray]:
             raw = float(last_obs.get(col, 0.0))
             decoder_cont[0, 0, ri] = _scale_feature(col, raw)
 
-    target_scale = _get_target_scale(group_id)
-
     return {
         "encoder_cat": encoder_cat,
         "encoder_cont": encoder_cont,
@@ -298,7 +310,7 @@ def _preprocess(instance: Dict[str, Any]) -> Dict[str, np.ndarray]:
         "decoder_cont": decoder_cont,
         "encoder_lengths": np.array([encoder_length], dtype=np.int64),
         "decoder_lengths": np.array([prediction_length], dtype=np.int64),
-        "target_scale": target_scale,
+        "target_scale": ts,
     }
 
 
@@ -322,7 +334,11 @@ def predict():
             inputs,
         )
         # result[0] shape: (1, 1, 3) — batch=1, pred_len=1, quantiles=3
-        quantiles = result[0][0, 0, :]  # (3,)
+        quantiles = result[0][0, 0, :]  # (3,) — already in minutes
+
+        # NOTE: TFT.forward() already calls transform_output() which
+        # applies GroupNormalizer inverse (z-score undo + softplus).
+        # The ONNX graph bakes this in, so no post-inference denorm needed.
 
         predictions.append({
             "group_id": instance["group_id"],
