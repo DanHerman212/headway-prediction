@@ -3,7 +3,7 @@ set -e
 
 # build_and_push_serving.sh
 # -------------------------
-# Builds the ONNX serving image (used by the Vertex AI prediction endpoint)
+# Builds the PyTorch serving image (used by the Vertex AI prediction endpoint)
 # and pushes it to Artifact Registry via Cloud Build.
 
 PROJECT_ID="realtime-headway-prediction"

@@ -2,8 +2,10 @@
 deploy_model.py
 ---------------
 Pipeline step that:
-  1. Exports the trained TFT to ONNX format
-  2. Saves dataset parameters (encoders, normalizer mappings) as JSON
+  1. Saves the trained model state_dict
+  2. Saves the fitted TimeSeriesDataSet (carries all encoders, normalizers,
+     and scalers — the serving container uses it via from_dataset() so
+     preprocessing is identical to training by construction)
   3. Uploads all artifacts to GCS
   4. Registers the model in Vertex AI Model Registry
 """
@@ -20,8 +22,6 @@ from google.cloud import aiplatform, storage as gcs_storage
 from omegaconf import DictConfig
 from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
 
-from ..serving.onnx_export import export_tft_to_onnx
-
 logger = logging.getLogger(__name__)
 
 # ---- Constants ----
@@ -30,108 +30,6 @@ SERVING_CONTAINER_URI = (
     "mlops-images/headway-serving:latest"
 )
 MODEL_DISPLAY_NAME = "headway-tft"
-
-
-def _save_dataset_params(training_dataset: TimeSeriesDataSet, output_dir: str) -> str:
-    """Persist the dataset parameters needed to reconstruct inputs at serving time.
-
-    This includes categorical encoders (label mappings), normalizer params
-    (center/scale per group), and the column ordering the model expects.
-    """
-    params = training_dataset.get_parameters()
-
-    # Serialize categorical encoder mappings
-    encoder_mappings = {}
-    cat_encoders = params.get("categorical_encoders", {})
-    for col_name, encoder in cat_encoders.items():
-        if hasattr(encoder, "classes_"):
-            # NaNLabelEncoder stores classes_ as a dict {value: int}
-            encoder_mappings[col_name] = {
-                str(k): int(v) for k, v in encoder.classes_.items()
-            }
-        elif hasattr(encoder, "mapping"):
-            encoder_mappings[col_name] = {
-                str(k): int(v) for k, v in encoder.mapping.items()
-            }
-
-    # Serialize target normalizer params (GroupNormalizer)
-    #
-    # GroupNormalizer stores fitted values in `norm_`, a DataFrame with
-    # columns ["center", "scale"] indexed by the *encoded* group_id (int).
-    # We map those back to original group names using the categorical encoder.
-    normalizer_params = {}
-    target_norm = training_dataset.target_normalizer
-    if target_norm is not None and hasattr(target_norm, "norm_"):
-        norm_df = target_norm.norm_
-
-        # Build inverse mapping: encoded_int -> original_name
-        gid_encoder = cat_encoders.get("group_id", cat_encoders.get("__group_id__group_id"))
-        inv_map = {}
-        if gid_encoder is not None and hasattr(gid_encoder, "classes_"):
-            inv_map = {v: k for k, v in gid_encoder.classes_.items()}
-
-        center_map = {}
-        scale_map = {}
-        for encoded_id, row in norm_df.iterrows():
-            orig_name = str(inv_map.get(encoded_id, encoded_id))
-            center_map[orig_name] = float(row["center"])
-            scale_map[orig_name] = float(row["scale"])
-
-        normalizer_params["center"] = center_map
-        normalizer_params["scale"] = scale_map
-        logger.info(
-            "Serialized normalizer params: %d groups — %s",
-            len(center_map),
-            list(center_map.keys()),
-        )
-    elif target_norm is not None:
-        logger.warning(
-            "Target normalizer %s has no norm_ attribute — "
-            "normalizer_params will be empty!",
-            type(target_norm).__name__,
-        )
-
-    if not normalizer_params:
-        logger.warning("normalizer_params is EMPTY — predictions will not be denormalized!")
-
-    # Serialize per-feature scaler params (EncoderNormalizer with method="standard")
-    scaler_params = {}
-    dataset_scalers = getattr(training_dataset, "scalers", {}) or {}
-    for col_name, scaler in dataset_scalers.items():
-        if hasattr(scaler, "center_") and hasattr(scaler, "scale_"):
-            center_val = scaler.center_
-            scale_val = scaler.scale_
-            scaler_params[col_name] = {
-                "center": float(center_val.iloc[0]) if hasattr(center_val, "iloc") else float(center_val),
-                "scale": float(scale_val.iloc[0]) if hasattr(scale_val, "iloc") else float(scale_val),
-            }
-        elif hasattr(scaler, "parameters"):
-            # Fallback: some EncoderNormalizer versions store a parameters dict
-            sp = scaler.parameters or {}
-            scaler_params[col_name] = {
-                "center": float(sp.get("center", 0.0)),
-                "scale": float(sp.get("scale", 1.0)),
-            }
-    if scaler_params:
-        logger.info(
-            "Serialized scaler params: %d features — %s",
-            len(scaler_params),
-            list(scaler_params.keys()),
-        )
-    else:
-        logger.info("No per-feature scalers to serialize (raw inputs).")
-
-    dataset_params = {
-        "categorical_encoders": encoder_mappings,
-        "normalizer_params": normalizer_params,
-        "scaler_params": scaler_params,
-    }
-
-    path = os.path.join(output_dir, "dataset_params.json")
-    with open(path, "w") as f:
-        json.dump(dataset_params, f, indent=2)
-    logger.info("Saved dataset parameters to %s", path)
-    return path
 
 
 def _upload_dir_to_gcs(local_dir: str, gcs_uri: str) -> None:
@@ -187,24 +85,36 @@ def register_model(
     gcs_model_uri = f"{artifact_bucket}/models/{run_id}"
     logger.info("Deploying model for run: %s", run_id)
 
-    # ---- 1. Export model artifacts to temp dir ----
+    # ---- 1. Save model artifacts to temp dir ----
     local_dir = tempfile.mkdtemp(prefix="deploy_model_")
     try:
-        # ONNX export
-        logger.info("Exporting model to ONNX...")
-        export_tft_to_onnx(
-            tft_model=model,
-            output_path=local_dir,
-            encoder_length=config.processing.max_encoder_length,
-            prediction_length=config.processing.max_prediction_length,
-        )
+        # Full model — includes architecture + weights + hparams
+        # This avoids architecture-mismatch issues when loading with
+        # only a state_dict (which requires knowing hidden_size, etc.)
+        #
+        # IMPORTANT: Revert to the base TemporalFusionTransformer class
+        # before pickling. The training pipeline uses TFTDisablePlotting
+        # (a subclass that no-ops the matplotlib logging hooks to avoid
+        # crashes on A100 bf16), but that class lives in the
+        # mlops_pipeline package which is NOT installed in the serving
+        # container.  The serving container only has pytorch-forecasting,
+        # so pickle must reference the base class for torch.load() to
+        # succeed.  TFTDisablePlotting adds no state — only method
+        # overrides — so this is a safe cast.
+        model.__class__ = TemporalFusionTransformer
+        model_path = os.path.join(local_dir, "model_full.pt")
+        torch.save(model, model_path)
+        logger.info("Saved full model to %s (%.1f MB)",
+                     model_path, os.path.getsize(model_path) / 1e6)
 
-        # Dataset parameters (encoders + normalizers)
-        _save_dataset_params(training_dataset, local_dir)
-
-        # Also save a PyTorch state_dict as backup
-        torch.save(model.state_dict(), os.path.join(local_dir, "model_state_dict.pt"))
-        logger.info("Saved PyTorch state_dict as backup")
+        # Fitted TimeSeriesDataSet — carries ALL encoders, normalizers,
+        # and scalers.  The serving container loads this and uses
+        # TimeSeriesDataSet.from_dataset() so preprocessing is identical
+        # to training by construction.
+        ds_path = os.path.join(local_dir, "training_dataset.pt")
+        torch.save(training_dataset, ds_path)
+        logger.info("Saved fitted TimeSeriesDataSet to %s (%.1f MB)",
+                     ds_path, os.path.getsize(ds_path) / 1e6)
 
         # ---- 2. Upload to GCS ----
         logger.info("Uploading artifacts to %s", gcs_model_uri)
@@ -218,7 +128,7 @@ def register_model(
             "test_mae": f"{test_mae:.4f}",
             "test_smape": f"{test_smape:.4f}",
             "run_id": run_id,
-            "format": "onnx",
+            "format": "pytorch",
         }
 
         vertex_model = aiplatform.Model.upload(

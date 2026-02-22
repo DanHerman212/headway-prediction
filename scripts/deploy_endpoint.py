@@ -11,7 +11,6 @@ Steps:
   3. Deploy the model to the endpoint
   4. Generate training data stats baseline for monitoring
   5. Create a Model Monitoring job (feature drift + skew detection)
-  6. Smoke test with a synthetic prediction request
 
 Usage:
   python scripts/deploy_endpoint.py
@@ -317,51 +316,6 @@ def _create_monitoring_job(
     )
 
 
-def _smoke_test(endpoint: aiplatform.Endpoint) -> None:
-    """Send a synthetic prediction request to verify the endpoint is alive."""
-    logger.info("Running smoke test...")
-
-    # Build a fake 20-observation window
-    fake_obs = {
-        "service_headway": 5.0,
-        "preceding_train_gap": 4.5,
-        "upstream_headway_14th": 5.2,
-        "travel_time_14th": 2.1,
-        "travel_time_14th_deviation": 0.05,
-        "travel_time_23rd": 1.8,
-        "travel_time_23rd_deviation": 0.03,
-        "travel_time_34th": 2.3,
-        "travel_time_34th_deviation": 0.04,
-        "stops_at_23rd": 1.0,
-        "hour_sin": 0.87,
-        "hour_cos": -0.50,
-        "time_idx": 14200,
-        "empirical_median": 5.0,
-        "day_of_week": 2,
-        "route_id": "A",
-        "regime_id": "Day",
-        "track_id": "A1",
-        "preceding_route_id": "A",
-    }
-    instance = {
-        "group_id": "A_South",
-        "observations": [fake_obs] * 20,
-    }
-
-    start = time.time()
-    response = endpoint.predict(instances=[instance])
-    elapsed_ms = (time.time() - start) * 1000
-
-    pred = response.predictions[0]
-    logger.info(
-        "Smoke test passed ✓  P10=%.2f  P50=%.2f  P90=%.2f  (%.0f ms)",
-        pred["headway_p10"],
-        pred["headway_p50"],
-        pred["headway_p90"],
-        elapsed_ms,
-    )
-
-
 # ──────────────────────────────────────────────────────────────
 # Main
 # ──────────────────────────────────────────────────────────────
@@ -375,11 +329,6 @@ def main():
         "--skip-monitoring",
         action="store_true",
         help="Deploy the model but skip Model Monitoring setup",
-    )
-    parser.add_argument(
-        "--skip-smoke-test",
-        action="store_true",
-        help="Skip the synthetic prediction smoke test",
     )
     parser.add_argument(
         "--monitoring-only",
@@ -434,15 +383,6 @@ def main():
         _create_monitoring_job(endpoint, baseline_uri, dry_run=args.dry_run)
     else:
         logger.info("Skipping Model Monitoring (--skip-monitoring)")
-
-    # Step 5: Smoke test
-    if not args.skip_smoke_test and not args.dry_run:
-        logger.info("=" * 60)
-        logger.info("Step 5: Smoke test")
-        logger.info("=" * 60)
-        _smoke_test(endpoint)
-    else:
-        logger.info("Skipping smoke test")
 
     # Summary
     logger.info("=" * 60)

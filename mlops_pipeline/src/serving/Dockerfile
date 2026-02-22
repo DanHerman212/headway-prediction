@@ -1,14 +1,23 @@
-FROM python:3.11-slim
+FROM pytorch/pytorch:2.1.2-cuda12.1-cudnn8-runtime
 
 WORKDIR /app
 
-# Install only what's needed for serving — no PyTorch, no Lightning, no ZenML
+# System deps (minimal — no GPU needed for CPU inference, but base image has CUDA)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python deps — match training environment for pytorch-forecasting
+# Only install what's needed for inference (no kfp, no hydra, no plotting)
+# Quotes are required around specs with < or > to prevent shell redirection.
 RUN pip install --no-cache-dir \
-    onnxruntime>=1.17.0 \
-    flask>=3.0 \
-    gunicorn>=22.0 \
-    numpy>=1.24 \
-    google-cloud-storage>=2.9.0
+    "pytorch-forecasting==1.0.0" \
+    "lightning==2.1.2" \
+    "flask>=3.0" \
+    "gunicorn>=22.0" \
+    "pandas<2.2.0" \
+    "numpy<2.0.0" \
+    "google-cloud-storage>=2.9.0"
 
 COPY predictor.py .
 
@@ -17,9 +26,7 @@ ENV AIP_HTTP_PORT=8080
 
 EXPOSE 8080
 
-# Use gunicorn for production (4 workers, preload to share model in memory)
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "4", "--preload", \
+# gunicorn with 2 workers (model is ~200MB in memory, keep footprint reasonable)
+# --preload: load model once in master, fork to workers (shared memory)
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--preload", \
      "--timeout", "120", "predictor:app"]
-
-# For gunicorn preload to work, load the model at import time
-# The predictor module calls _load_model() when imported by gunicorn --preload
