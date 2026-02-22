@@ -23,21 +23,26 @@ from .pipeline import TRAINING_IMAGE, ingest_data_op, process_data_op
 
 @dsl.component(base_image=TRAINING_IMAGE)
 def load_hpo_config_op(
-    user_overrides_json: str,
+    config_gcs_uri: str,
     config_out: Output[Artifact],
 ):
-    """Load Hydra config with HPO profile and search space baked in."""
-    import json
-    from omegaconf import OmegaConf
-    from mlops_pipeline.src.steps.config_loader import load_config
+    """Download the fully-resolved HPO config YAML from GCS.
 
-    base_overrides = ["training=hpo", "+hpo_search_space=vizier_v1"]
-    user_overrides = json.loads(user_overrides_json) if user_overrides_json and user_overrides_json != "null" else []
-    all_overrides = base_overrides + user_overrides
+    run.py resolves the config locally (with HPO overrides applied)
+    and uploads the result to GCS.
+    """
+    from google.cloud import storage as gcs_storage
 
-    config = load_config(overrides=all_overrides)
+    path = config_gcs_uri.replace("gs://", "")
+    bucket_name = path.split("/")[0]
+    blob_path = "/".join(path.split("/")[1:])
+
+    client = gcs_storage.Client()
+    blob = client.bucket(bucket_name).blob(blob_path)
+    config_yaml = blob.download_as_text()
+
     with open(config_out.path, "w") as f:
-        f.write(OmegaConf.to_yaml(config, resolve=True))
+        f.write(config_yaml)
 
 
 @dsl.component(base_image=TRAINING_IMAGE)
@@ -73,7 +78,7 @@ def run_vizier_study_op(
 )
 def headway_hpo_pipeline(
     data_path: str,
-    hydra_overrides_json: str = "null",
+    config_gcs_uri: str,
 ):
     """
     Pipeline that runs a Vizier HPO study.
@@ -82,11 +87,11 @@ def headway_hpo_pipeline(
     ----------
     data_path : str
         GCS path to the training parquet file.
-    hydra_overrides_json : str
-        JSON-encoded list of additional Hydra overrides.
+    config_gcs_uri : str
+        GCS URI of the fully-resolved HPO config YAML (uploaded by run.py).
     """
-    # 1. Load config (HPO profile + search space merged inside the component)
-    config_task = load_hpo_config_op(user_overrides_json=hydra_overrides_json)
+    # 1. Load config (resolved locally by run.py with HPO overrides)
+    config_task = load_hpo_config_op(config_gcs_uri=config_gcs_uri)
 
     # 2. Ingest data
     ingest_task = ingest_data_op(file_path=data_path)

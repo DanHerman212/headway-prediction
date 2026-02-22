@@ -34,18 +34,29 @@ GPU_ACCELERATOR_COUNT = 1
 
 @dsl.component(base_image=TRAINING_IMAGE)
 def load_config_op(
-    overrides_json: str,
+    config_gcs_uri: str,
     config_out: Output[Artifact],
 ):
-    """Load Hydra configuration and serialize as YAML artifact."""
-    import json
-    from omegaconf import OmegaConf
-    from mlops_pipeline.src.steps.config_loader import load_config
+    """Download the fully-resolved config YAML from GCS.
 
-    overrides = json.loads(overrides_json) if overrides_json else None
-    config = load_config(overrides=overrides)
+    run.py resolves the Hydra config locally (reading workspace YAML files
+    and applying CLI overrides), then uploads the result to GCS.  This
+    component simply downloads that resolved config, so the pipeline
+    always uses the caller's local config — no Docker rebuild required
+    for config-only changes.
+    """
+    from google.cloud import storage as gcs_storage
+
+    path = config_gcs_uri.replace("gs://", "")
+    bucket_name = path.split("/")[0]
+    blob_path = "/".join(path.split("/")[1:])
+
+    client = gcs_storage.Client()
+    blob = client.bucket(bucket_name).blob(blob_path)
+    config_yaml = blob.download_as_text()
+
     with open(config_out.path, "w") as f:
-        f.write(OmegaConf.to_yaml(config, resolve=True))
+        f.write(config_yaml)
 
 
 @dsl.component(base_image=TRAINING_IMAGE)
@@ -242,7 +253,7 @@ def register_model_op(
 def headway_training_pipeline(
     data_path: str,
     run_name: str,
-    hydra_overrides_json: str = "null",
+    config_gcs_uri: str,
     use_vizier_params: bool = False,
 ):
     """
@@ -254,13 +265,13 @@ def headway_training_pipeline(
         GCS path to the training parquet file.
     run_name : str
         Unique run identifier (experiment run name, artifact prefix, etc.).
-    hydra_overrides_json : str
-        JSON-encoded list of Hydra overrides, e.g. '["model.lr=0.001"]'.
+    config_gcs_uri : str
+        GCS URI of the fully-resolved config YAML (uploaded by run.py).
     use_vizier_params : bool
         If True, fetch best params from the latest Vizier study.
     """
     # 1. Load config
-    config_task = load_config_op(overrides_json=hydra_overrides_json)
+    config_task = load_config_op(config_gcs_uri=config_gcs_uri)
 
     # 1b. Optionally fetch Vizier best params
     vizier_json = ""

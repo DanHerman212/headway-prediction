@@ -19,11 +19,13 @@ from datetime import datetime
 # Ensure the project root is always on the Python path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from google.cloud import aiplatform
+from google.cloud import aiplatform, storage as gcs_storage
 from kfp import compiler
+from omegaconf import OmegaConf
 
 from mlops_pipeline.pipeline import headway_training_pipeline, TRAINING_IMAGE
 from mlops_pipeline.hpo_pipeline import headway_hpo_pipeline
+from mlops_pipeline.src.steps.config_loader import load_config
 
 # --------------- Constants ---------------------------------------------------
 PROJECT_ID = "realtime-headway-prediction"
@@ -36,6 +38,16 @@ CLOUDBUILD_CONFIG = "infra/cloudbuild_training.yaml"
 def _sanitize_name(name: str) -> str:
     """Vertex AI experiment/run names: lowercase, [a-z0-9-], 128 chars max."""
     return re.sub(r"[^a-z0-9-]", "-", name.strip().lower())[:128].rstrip("-")
+
+
+def _upload_string_to_gcs(content: str, gcs_uri: str) -> None:
+    """Upload a string to GCS."""
+    path = gcs_uri.replace("gs://", "")
+    bucket_name = path.split("/")[0]
+    blob_path = "/".join(path.split("/")[1:])
+    client = gcs_storage.Client()
+    bucket = client.bucket(bucket_name)
+    bucket.blob(blob_path).upload_from_string(content, content_type="text/yaml")
 
 
 def _build_training_image() -> None:
@@ -134,14 +146,28 @@ def main():
     if not data_path.startswith("gs://"):
         data_path = os.path.abspath(data_path)
 
-    # JSON-encode Hydra overrides for pipeline parameter
-    overrides_json = json.dumps(hydra_overrides) if hydra_overrides else "null"
+    # ---- Resolve config locally and upload to GCS ---------------------------
+    # This reads the YAML files from the local workspace (not the Docker
+    # image), applies any Hydra overrides, and uploads the fully-resolved
+    # config to GCS.  The pipeline reads this GCS URI instead of the
+    # baked-in conf/ directory, so config changes never require a rebuild.
+    all_overrides = list(hydra_overrides) if hydra_overrides else []
+    if args.mode == "hpo":
+        all_overrides = ["training=hpo", "+hpo_search_space=vizier_v1"] + all_overrides
+    config = load_config(overrides=all_overrides or None)
+    resolved_yaml = OmegaConf.to_yaml(config, resolve=True)
+
+    config_gcs_uri = (
+        f"{PIPELINE_ROOT}/{run_name}/resolved_config.yaml"
+    )
+    _upload_string_to_gcs(resolved_yaml, config_gcs_uri)
 
     print(f"Mode:            {args.mode.upper()}")
     print(f"Data:            {data_path}")
     print(f"Experiment:      {experiment_name}")
     print(f"Run name:        {run_name}")
     print(f"Hydra overrides: {hydra_overrides or '(none)'}")
+    print(f"Config URI:      {config_gcs_uri}")
     if args.use_vizier_params:
         print("Vizier param injection: ENABLED")
 
@@ -151,14 +177,14 @@ def main():
         pipeline_params = {
             "data_path": data_path,
             "run_name": run_name,
-            "hydra_overrides_json": overrides_json,
+            "config_gcs_uri": config_gcs_uri,
             "use_vizier_params": args.use_vizier_params,
         }
     else:
         pipeline_func = headway_hpo_pipeline
         pipeline_params = {
             "data_path": data_path,
-            "hydra_overrides_json": overrides_json,
+            "config_gcs_uri": config_gcs_uri,
         }
 
     pipeline_json = os.path.join(
