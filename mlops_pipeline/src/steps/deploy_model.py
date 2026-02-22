@@ -25,9 +25,10 @@ from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
 logger = logging.getLogger(__name__)
 
 # ---- Constants ----
+# CPR image built by infra/build_and_push_cpr.sh
 SERVING_CONTAINER_URI = (
     "us-east1-docker.pkg.dev/realtime-headway-prediction/"
-    "mlops-images/headway-serving:latest"
+    "mlops-images/headway-serving-cpr:latest"
 )
 MODEL_DISPLAY_NAME = "headway-tft"
 

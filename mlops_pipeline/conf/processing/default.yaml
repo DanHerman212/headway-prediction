@@ -30,7 +30,6 @@ time_varying_known_categoricals:
   - "track_id"
 
 time_varying_known_reals:
-  - "time_idx"
   - "day_of_week"
   - "hour_sin"
   - "hour_cos"

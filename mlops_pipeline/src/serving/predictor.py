@@ -59,6 +59,7 @@ import os
 import time
 from typing import Any, Dict
 
+import numpy as np
 import pandas as pd
 import torch
 from flask import Flask, jsonify, request
@@ -216,12 +217,12 @@ def _predict_instance(instance: Dict[str, Any]) -> Dict[str, Any]:
     # Add a "future" row so the dataset can form a decoder window.
     # from_dataset(predict=True) needs at least 1 step beyond encoder.
     last_row = df.iloc[-1].copy()
+
+    # time_idx is used only as a structural index (not a model feature).
+    # Simply increment by 1 so from_dataset(predict=True) can form the
+    # decoder window.
     last_row["time_idx"] = int(last_row["time_idx"]) + 1
-    # IMPORTANT: Keep service_headway from last observation (forward-fill).
-    # Setting it to 0.0 corrupts the GroupNormalizer — the softplus
-    # preprocessing maps 0 → log(softplus(0)) ≈ −0.37, dragging down
-    # the group center and inflating scale, which systematically
-    # inflates all predictions.
+    # Keep service_headway from last observation (forward-fill).
     df = pd.concat([df, pd.DataFrame([last_row])], ignore_index=True)
 
     # Build dataset using from_dataset — inherits fitted encoders/normalizers

@@ -1,0 +1,9 @@
+# Requirements for the CPR serving container.
+# Must match the training environment for pytorch-forecasting compatibility.
+torch==2.1.2
+pytorch-forecasting==1.0.0
+lightning==2.1.2
+pandas<2.2.0
+numpy<2.0.0
+google-cloud-aiplatform>=1.25.0
+google-cloud-storage>=2.9.0
