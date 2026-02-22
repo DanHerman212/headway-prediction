@@ -217,7 +217,11 @@ def _predict_instance(instance: Dict[str, Any]) -> Dict[str, Any]:
     # from_dataset(predict=True) needs at least 1 step beyond encoder.
     last_row = df.iloc[-1].copy()
     last_row["time_idx"] = int(last_row["time_idx"]) + 1
-    last_row["service_headway"] = 0.0  # target is unknown
+    # IMPORTANT: Keep service_headway from last observation (forward-fill).
+    # Setting it to 0.0 corrupts the GroupNormalizer — the softplus
+    # preprocessing maps 0 → log(softplus(0)) ≈ −0.37, dragging down
+    # the group center and inflating scale, which systematically
+    # inflates all predictions.
     df = pd.concat([df, pd.DataFrame([last_row])], ignore_index=True)
 
     # Build dataset using from_dataset — inherits fitted encoders/normalizers
@@ -242,29 +246,14 @@ def _predict_instance(instance: Dict[str, Any]) -> Dict[str, Any]:
         batch_size=1, shuffle=False, num_workers=0,
     )
 
-    # Get raw model output + batch metadata for manual denormalization.
-    # The model's internal predictions are in NORMALIZED space (near 0)
-    # due to GroupNormalizer(softplus). We must explicitly denormalize
-    # via transform_output() to convert back to headway minutes.
+    # mode="quantiles" returns fully denormalized quantile predictions
+    # in the original scale (headway minutes). This handles the
+    # GroupNormalizer(softplus) inverse transform internally.
     with torch.no_grad():
-        raw_output = _model.predict(
-            dataloader,
-            mode="raw",
-            return_x=True,
-        )
+        predictions = _model.predict(dataloader, mode="quantiles")
 
-    # raw_output.output["prediction"]: (n_samples, pred_len, n_quantiles) — normalized
-    # raw_output.x["target_scale"]: (n_samples, 2) — (center, scale) per sample
-    raw_prediction = raw_output.output["prediction"]
-    target_scale = raw_output.x["target_scale"]
-
-    # Denormalize: reverses GroupNormalizer(softplus) → real minutes
-    denormalized = _model.transform_output(
-        raw_prediction, target_scale=target_scale,
-    )
-
-    # denormalized shape: (n_samples, prediction_length, n_quantiles)
-    quantiles = denormalized[0, 0, :].detach().cpu().numpy()
+    # predictions shape: (n_samples, prediction_length, n_quantiles)
+    quantiles = predictions[0, 0, :].detach().cpu().numpy()
 
     return {
         "group_id": group_id,
