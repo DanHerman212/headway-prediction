@@ -75,12 +75,48 @@ MONITORED_FEATURES = [
     "day_of_week",
 ]
 
+# Serving container image — CPR (Custom Prediction Routine)
+SERVING_CONTAINER_URI = (
+    "us-east1-docker.pkg.dev/realtime-headway-prediction/"
+    "mlops-images/headway-serving-cpr:latest"
+)
+
 # Default drift threshold per feature (Jensen-Shannon divergence)
 DEFAULT_DRIFT_THRESHOLD = 0.3
 
 # ──────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────
+
+
+def _reregister_model(old_model: aiplatform.Model) -> aiplatform.Model:
+    """Re-register the model with the same artifacts but a fresh container image pull.
+
+    Vertex AI resolves container image tags to digests at registration time.
+    When the serving container is rebuilt (e.g., to fix a bug), the existing
+    model resource still points to the OLD digest.  This function uploads a
+    new model version that forces Vertex AI to pull the latest image.
+    """
+    artifact_uri = old_model.gca_resource.artifact_uri
+    labels = dict(old_model.labels) if old_model.labels else {}
+    description = old_model.gca_resource.description or ""
+
+    logger.info("Re-registering model with fresh container image...")
+    logger.info("  artifact_uri: %s", artifact_uri)
+    logger.info("  container:    %s", SERVING_CONTAINER_URI)
+
+    new_model = aiplatform.Model.upload(
+        display_name=MODEL_DISPLAY_NAME,
+        artifact_uri=artifact_uri,
+        serving_container_image_uri=SERVING_CONTAINER_URI,
+        serving_container_predict_route="/predict",
+        serving_container_health_route="/health",
+        serving_container_ports=[8080],
+        labels=labels,
+        description=description + " [image-refresh]",
+    )
+    logger.info("New model registered: %s", new_model.resource_name)
+    return new_model
 
 
 def _find_latest_model() -> aiplatform.Model:
@@ -295,20 +331,38 @@ def _create_monitoring_job(
         monitor_interval=1,  # hours
     )
 
-    logger.info("Creating Model Monitoring job...")
-    job = aiplatform.ModelDeploymentMonitoringJob.create(
-        display_name=f"{MODEL_DISPLAY_NAME}-monitoring",
-        endpoint=endpoint,
-        logging_sampling_strategy=random_sampling,
-        schedule_config=schedule_config,
-        alert_config=alert_config,
-        objective_configs=objective_config,
-        predict_instance_schema_uri=PREDICT_SCHEMA_URI,
-        analysis_instance_schema_uri=ANALYSIS_SCHEMA_URI,
+    # Check if a monitoring job already exists for this endpoint
+    existing_jobs = aiplatform.ModelDeploymentMonitoringJob.list(
+        filter=f'endpoint="{endpoint.resource_name}"',
         project=PROJECT_ID,
         location=LOCATION,
     )
-    logger.info("Model Monitoring job created: %s", job.resource_name)
+    active_jobs = [j for j in existing_jobs if j.state.name not in ("JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED")]
+
+    if active_jobs:
+        job = active_jobs[0]
+        logger.info(
+            "Model Monitoring job already exists: %s (state=%s). "
+            "Skipping creation — update via console or `gcloud` if config changes are needed.",
+            job.resource_name,
+            job.state.name,
+        )
+    else:
+        logger.info("Creating Model Monitoring job...")
+        job = aiplatform.ModelDeploymentMonitoringJob.create(
+            display_name=f"{MODEL_DISPLAY_NAME}-monitoring",
+            endpoint=endpoint,
+            logging_sampling_strategy=random_sampling,
+            schedule_config=schedule_config,
+            alert_config=alert_config,
+            objective_configs=objective_config,
+            predict_instance_schema_uri=PREDICT_SCHEMA_URI,
+            analysis_instance_schema_uri=ANALYSIS_SCHEMA_URI,
+            project=PROJECT_ID,
+            location=LOCATION,
+        )
+        logger.info("Model Monitoring job created: %s", job.resource_name)
+
     logger.info(
         "Monitoring will check for drift every 1 hour. "
         "Thresholds: JS divergence > %.2f per feature.",
@@ -336,6 +390,11 @@ def main():
         help="Skip deployment — only set up monitoring + smoke test on existing endpoint",
     )
     parser.add_argument(
+        "--refresh-image",
+        action="store_true",
+        help="Re-register the model to pick up a newly built serving container image",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print what would happen without making any changes",
@@ -351,6 +410,10 @@ def main():
         logger.info("Step 1: Finding latest registered model")
         logger.info("=" * 60)
         model = _find_latest_model()
+
+        if args.refresh_image:
+            logger.info("--refresh-image: re-registering model with new container image")
+            model = _reregister_model(model)
 
         # Step 2: Get or create the endpoint
         logger.info("=" * 60)

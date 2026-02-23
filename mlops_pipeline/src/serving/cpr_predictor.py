@@ -45,14 +45,22 @@ class HeadwayPredictor(Predictor):
     def load(self, artifacts_uri: str) -> None:
         """Load model and fitted dataset from the artifacts directory.
 
-        The CPR SDK downloads GCS artifacts to a local path before calling
-        this method, so artifacts_uri is always a local directory.
+        The CPR SDK may pass either a local path (if it pre-downloaded
+        artifacts) or a GCS URI.  We handle both cases.
         """
         from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
 
         logger.info("Loading artifacts from %s", artifacts_uri)
 
-        ds_path = self._find_file(artifacts_uri, "training_dataset.pt")
+        # If the SDK passed a GCS URI, download artifacts locally first
+        if artifacts_uri.startswith("gs://"):
+            local_dir = self._download_gcs_artifacts(artifacts_uri)
+        else:
+            local_dir = artifacts_uri
+
+        logger.info("Resolved local artifact dir: %s", local_dir)
+
+        ds_path = self._find_file(local_dir, "training_dataset.pt")
         logger.info("Loading fitted TimeSeriesDataSet from %s", ds_path)
         self._training_dataset = torch.load(ds_path, weights_only=False, map_location="cpu")
         logger.info(
@@ -61,7 +69,7 @@ class HeadwayPredictor(Predictor):
             self._training_dataset.max_prediction_length,
         )
 
-        model_path = self._find_file(artifacts_uri, "model_full.pt")
+        model_path = self._find_file(local_dir, "model_full.pt")
         logger.info("Loading full model from %s", model_path)
         self._model = torch.load(model_path, weights_only=False, map_location="cpu")
         self._model.eval()
@@ -108,21 +116,24 @@ class HeadwayPredictor(Predictor):
                 if col in df.columns:
                     df[col] = df[col].fillna("None").astype(str)
 
-            # time_idx must exist and be monotonically increasing
+            # time_idx must exist as integer and be monotonically increasing
             if "time_idx" not in df.columns:
                 df["time_idx"] = range(len(df))
+            else:
+                df["time_idx"] = df["time_idx"].astype(int)
 
             # target column must exist (required by TimeSeriesDataSet)
             if "service_headway" not in df.columns:
                 df["service_headway"] = 0.0
 
-            # Fabricate a future row for the decoder window.
-            # time_idx is NOT a model feature (removed from
-            # time_varying_known_reals to eliminate target leakage),
-            # so the gap value doesn't affect predictions.
-            last_row = df.iloc[-1].copy()
-            last_row["time_idx"] = int(last_row["time_idx"]) + 1
-            df = pd.concat([df, pd.DataFrame([last_row])], ignore_index=True)
+            # NOTE: We intentionally do NOT fabricate a dummy future row.
+            # With predict=True, TimeSeriesDataSet places the LAST
+            # observation in the decoder (as the prediction target) and
+            # all preceding observations in the encoder — exactly matching
+            # how the training DataLoader builds windows.
+            # Adding a dummy row shifts the encoder boundary by one step,
+            # corrupting the per-window EncoderNormalizer statistics and
+            # producing catastrophically wrong predictions.
 
             prepared.append({"group_id": group_id, "dataframe": df})
 
@@ -187,6 +198,44 @@ class HeadwayPredictor(Predictor):
         return {"predictions": prediction_results}
 
     # ── helpers ──────────────────────────────────────────────────────
+    @staticmethod
+    def _download_gcs_artifacts(gcs_uri: str) -> str:
+        """Download all files from a GCS URI to a local temp directory."""
+        from google.cloud import storage as gcs_storage
+        import tempfile
+
+        local_dir = tempfile.mkdtemp(prefix="cpr_artifacts_")
+        logger.info("Downloading GCS artifacts from %s to %s", gcs_uri, local_dir)
+
+        # Parse gs://bucket/prefix
+        path = gcs_uri.replace("gs://", "")
+        bucket_name = path.split("/")[0]
+        prefix = "/".join(path.split("/")[1:])
+        if prefix and not prefix.endswith("/"):
+            prefix += "/"
+
+        client = gcs_storage.Client()
+        bucket = client.bucket(bucket_name)
+        blobs = list(bucket.list_blobs(prefix=prefix))
+
+        if not blobs:
+            raise FileNotFoundError(
+                f"No artifacts found at {gcs_uri}. "
+                f"Bucket={bucket_name}, prefix={prefix}"
+            )
+
+        for blob in blobs:
+            # Skip "directory" markers
+            if blob.name.endswith("/"):
+                continue
+            rel_path = blob.name[len(prefix):]
+            local_path = os.path.join(local_dir, rel_path)
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            blob.download_to_filename(local_path)
+            logger.info("  Downloaded %s (%.1f MB)", rel_path, blob.size / 1e6)
+
+        return local_dir
+
     @staticmethod
     def _find_file(base_dir: str, filename: str) -> str:
         """Find a file in base_dir or any subdirectory."""

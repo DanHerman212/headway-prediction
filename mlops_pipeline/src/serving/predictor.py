@@ -214,16 +214,13 @@ def _predict_instance(instance: Dict[str, Any]) -> Dict[str, Any]:
     group_id = instance["group_id"]
     df = _build_dataframe(instance)
 
-    # Add a "future" row so the dataset can form a decoder window.
-    # from_dataset(predict=True) needs at least 1 step beyond encoder.
-    last_row = df.iloc[-1].copy()
-
-    # time_idx is used only as a structural index (not a model feature).
-    # Simply increment by 1 so from_dataset(predict=True) can form the
-    # decoder window.
-    last_row["time_idx"] = int(last_row["time_idx"]) + 1
-    # Keep service_headway from last observation (forward-fill).
-    df = pd.concat([df, pd.DataFrame([last_row])], ignore_index=True)
+    # NOTE: We intentionally do NOT fabricate a dummy future row.
+    # With predict=True, TimeSeriesDataSet places the LAST observation
+    # in the decoder (as the prediction target) and all preceding
+    # observations in the encoder — exactly matching how the training
+    # DataLoader builds windows.  Adding a dummy row shifts the encoder
+    # boundary by one step, corrupting the per-window EncoderNormalizer
+    # statistics and producing catastrophically wrong predictions.
 
     # Build dataset using from_dataset — inherits fitted encoders/normalizers
     try:
