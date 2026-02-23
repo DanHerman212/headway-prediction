@@ -2,62 +2,46 @@
 """
 deploy_endpoint.py
 ------------------
-Standalone script to deploy the latest registered headway-tft model
-to a Vertex AI Prediction Endpoint with Model Monitoring.
-
-Steps:
-  1. Find the latest 'headway-tft' model in Vertex AI Model Registry
-  2. Create or reuse the prediction endpoint
-  3. Deploy the model to the endpoint
-  4. Generate training data stats baseline for monitoring
-  5. Create a Model Monitoring job (feature drift + skew detection)
+Deploy the latest headway-tft model to a Vertex AI endpoint with monitoring.
 
 Usage:
   python scripts/deploy_endpoint.py
-  python scripts/deploy_endpoint.py --skip-monitoring   # deploy only, no monitoring
-  python scripts/deploy_endpoint.py --dry-run            # print what would happen
+  python scripts/deploy_endpoint.py --refresh-image
+  python scripts/deploy_endpoint.py --skip-monitoring
 """
 
 import argparse
-import json
 import logging
 import os
 import sys
-import time
-from typing import Dict, List, Optional
 
 import pandas as pd
 from google.cloud import aiplatform
 from google.cloud import storage as gcs_storage
-from google.protobuf import json_format
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# ──────────────────────────────────────────────────────────────
-# Constants
-# ──────────────────────────────────────────────────────────────
+# -- Config --
 PROJECT_ID = "realtime-headway-prediction"
 LOCATION = "us-east1"
 MODEL_DISPLAY_NAME = "headway-tft"
 ENDPOINT_DISPLAY_NAME = "headway-prediction-endpoint"
+
 ARTIFACT_BUCKET = "gs://mlops-artifacts-realtime-headway-prediction"
 TRAINING_DATA_URI = f"{ARTIFACT_BUCKET}/data/training_data.parquet"
-MONITORING_DATASET_URI = f"{ARTIFACT_BUCKET}/monitoring/training_baseline.csv"
+MONITORING_BASELINE_URI = f"{ARTIFACT_BUCKET}/monitoring/training_baseline.csv"
 PREDICT_SCHEMA_URI = f"{ARTIFACT_BUCKET}/monitoring/predict_instance_schema.yaml"
 ANALYSIS_SCHEMA_URI = f"{ARTIFACT_BUCKET}/monitoring/analysis_instance_schema.yaml"
 
-# Local schema files (checked into repo under infra/schemas/)
-_SCHEMA_DIR = os.path.join(os.path.dirname(__file__), "..", "infra", "schemas")
+SERVING_CONTAINER_URI = (
+    "us-east1-docker.pkg.dev/realtime-headway-prediction/"
+    "mlops-images/headway-serving-cpr:latest"
+)
 
-# Machine for serving — ONNX on CPU is plenty fast for single-step predictions
 MACHINE_TYPE = "n1-standard-4"
+SCHEMA_DIR = os.path.join(os.path.dirname(__file__), "..", "infra", "schemas")
 
-# Features the model sees at serving time (numeric only for drift monitoring)
-# These must match the feature columns the predictor.py sends to the ONNX model.
 MONITORED_FEATURES = [
     "service_headway",
     "preceding_train_gap",
@@ -75,394 +59,219 @@ MONITORED_FEATURES = [
     "day_of_week",
 ]
 
-# Serving container image — CPR (Custom Prediction Routine)
-SERVING_CONTAINER_URI = (
-    "us-east1-docker.pkg.dev/realtime-headway-prediction/"
-    "mlops-images/headway-serving-cpr:latest"
-)
-
-# Default drift threshold per feature (Jensen-Shannon divergence)
-DEFAULT_DRIFT_THRESHOLD = 0.3
-
-# ──────────────────────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────────────────────
+DRIFT_THRESHOLD = 0.3
 
 
-def _reregister_model(old_model: aiplatform.Model) -> aiplatform.Model:
-    """Re-register the model with the same artifacts but a fresh container image pull.
-
-    Vertex AI resolves container image tags to digests at registration time.
-    When the serving container is rebuilt (e.g., to fix a bug), the existing
-    model resource still points to the OLD digest.  This function uploads a
-    new model version that forces Vertex AI to pull the latest image.
-    """
-    artifact_uri = old_model.gca_resource.artifact_uri
-    labels = dict(old_model.labels) if old_model.labels else {}
-    description = old_model.gca_resource.description or ""
-
-    logger.info("Re-registering model with fresh container image...")
-    logger.info("  artifact_uri: %s", artifact_uri)
-    logger.info("  container:    %s", SERVING_CONTAINER_URI)
-
-    new_model = aiplatform.Model.upload(
-        display_name=MODEL_DISPLAY_NAME,
-        artifact_uri=artifact_uri,
-        serving_container_image_uri=SERVING_CONTAINER_URI,
-        serving_container_predict_route="/predict",
-        serving_container_health_route="/health",
-        serving_container_ports=[8080],
-        labels=labels,
-        description=description + " [image-refresh]",
-    )
-    logger.info("New model registered: %s", new_model.resource_name)
-    return new_model
-
-
-def _find_latest_model() -> aiplatform.Model:
-    """Find the most recently created 'headway-tft' model in the registry."""
+def find_model(refresh_image=False):
+    """Find the latest headway-tft model. Optionally re-register with fresh image."""
     models = aiplatform.Model.list(
         filter=f'display_name="{MODEL_DISPLAY_NAME}"',
         order_by="create_time desc",
     )
     if not models:
+        logger.error("No model found with display_name='%s'.", MODEL_DISPLAY_NAME)
+        sys.exit(1)
+
+    model = models[0]
+    logger.info("Found model: %s (created %s)", model.resource_name, model.create_time)
+
+    if not refresh_image:
+        return model
+
+    logger.info("Re-registering model with fresh container image...")
+    new_model = aiplatform.Model.upload(
+        display_name=MODEL_DISPLAY_NAME,
+        artifact_uri=model.gca_resource.artifact_uri,
+        serving_container_image_uri=SERVING_CONTAINER_URI,
+        serving_container_predict_route="/predict",
+        serving_container_health_route="/health",
+        serving_container_ports=[8080],
+        labels=dict(model.labels) if model.labels else {},
+        description=(model.gca_resource.description or "").replace(" [image-refresh]", "")
+        + " [image-refresh]",
+    )
+    logger.info("New model: %s", new_model.resource_name)
+    try:
+        model.delete()
+        logger.info("Deleted old model: %s", model.resource_name)
+    except Exception as e:
+        logger.warning("Could not delete old model: %s", e)
+    return new_model
+
+
+def create_endpoint():
+    """Create a new endpoint. Exits if one already exists."""
+    existing = aiplatform.Endpoint.list(
+        filter=f'display_name="{ENDPOINT_DISPLAY_NAME}"',
+    )
+    if existing:
+        eid = existing[0].resource_name.split("/")[-1]
         logger.error(
-            "No model found with display_name='%s'. "
-            "Run the training pipeline first (python mlops_pipeline/run.py --mode training).",
-            MODEL_DISPLAY_NAME,
+            "Endpoint '%s' already exists. Delete it first:\n"
+            "  gcloud ai endpoints delete %s --region=%s --quiet",
+            ENDPOINT_DISPLAY_NAME, eid, LOCATION,
         )
         sys.exit(1)
 
-    latest = models[0]
-    logger.info(
-        "Found model: %s (created %s)",
-        latest.resource_name,
-        latest.create_time.strftime("%Y-%m-%d %H:%M:%S"),
-    )
-    # Log labels (test metrics, run_id, etc.)
-    if latest.labels:
-        for k, v in latest.labels.items():
-            logger.info("  label: %s = %s", k, v)
-    return latest
-
-
-def _get_or_create_endpoint() -> aiplatform.Endpoint:
-    """Reuse existing endpoint or create a new one."""
-    endpoints = aiplatform.Endpoint.list(
-        filter=f'display_name="{ENDPOINT_DISPLAY_NAME}"',
-    )
-    if endpoints:
-        endpoint = endpoints[0]
-        logger.info("Reusing existing endpoint: %s", endpoint.resource_name)
-        return endpoint
-
-    logger.info("Creating new endpoint: %s", ENDPOINT_DISPLAY_NAME)
+    logger.info("Creating endpoint: %s", ENDPOINT_DISPLAY_NAME)
     endpoint = aiplatform.Endpoint.create(
         display_name=ENDPOINT_DISPLAY_NAME,
         project=PROJECT_ID,
         location=LOCATION,
     )
-    logger.info("Created endpoint: %s", endpoint.resource_name)
+    logger.info("Created: %s", endpoint.resource_name)
     return endpoint
 
 
-def _deploy_model(
-    endpoint: aiplatform.Endpoint,
-    model: aiplatform.Model,
-    dry_run: bool = False,
-) -> None:
-    """Deploy the model to the endpoint, replacing any existing deployment."""
-    # Check if model is already deployed
-    deployed_models = endpoint.gca_resource.deployed_models
-    if deployed_models:
-        existing_ids = [dm.id for dm in deployed_models]
-        logger.info(
-            "Endpoint has %d existing deployment(s): %s",
-            len(existing_ids),
-            existing_ids,
-        )
-        if not dry_run:
-            logger.info("Undeploying existing model(s) before deploying new version...")
-            for dm in deployed_models:
-                endpoint.undeploy(deployed_model_id=dm.id)
-                logger.info("  Undeployed %s", dm.id)
-
-    if dry_run:
-        logger.info("[DRY RUN] Would deploy model %s to endpoint %s",
-                     model.resource_name, endpoint.resource_name)
-        return
-
-    logger.info(
-        "Deploying model to endpoint (machine_type=%s)...",
-        MACHINE_TYPE,
-    )
+def deploy_model(endpoint, model):
+    """Deploy model to endpoint. Blocks until ready (~15-20 min)."""
+    logger.info("Deploying model (machine_type=%s)... ~15-20 minutes.", MACHINE_TYPE)
     endpoint.deploy(
         model=model,
         deployed_model_display_name=f"{MODEL_DISPLAY_NAME}-serving",
         machine_type=MACHINE_TYPE,
         min_replica_count=1,
-        max_replica_count=1,  # scale to 1 for now; increase when traffic warrants
+        max_replica_count=1,
         traffic_percentage=100,
         enable_access_logging=True,
+        deploy_request_timeout=1800,
     )
     logger.info("Model deployed successfully.")
 
 
-def _generate_monitoring_baseline(dry_run: bool = False) -> str:
-    """Generate a training feature baseline CSV for Model Monitoring.
-
-    Downloads the training parquet, extracts the monitored feature columns,
-    and uploads a CSV to GCS. Returns the GCS URI of the baseline CSV.
-    """
+def upload_monitoring_baseline():
+    """Generate and upload a training feature baseline CSV for monitoring."""
     logger.info("Generating monitoring baseline from %s", TRAINING_DATA_URI)
-
-    if dry_run:
-        logger.info("[DRY RUN] Would generate baseline CSV at %s", MONITORING_DATASET_URI)
-        return MONITORING_DATASET_URI
-
-    # Read the training parquet
     df = pd.read_parquet(TRAINING_DATA_URI)
-    logger.info("Loaded training data: %d rows, %d columns", len(df), len(df.columns))
-
-    # Keep only the features that matter for monitoring
     available = [f for f in MONITORED_FEATURES if f in df.columns]
-    missing = [f for f in MONITORED_FEATURES if f not in df.columns]
-    if missing:
-        logger.warning("Features not in training data (skipped): %s", missing)
-
     baseline_df = df[available].dropna()
-    logger.info(
-        "Baseline subset: %d rows, %d features: %s",
-        len(baseline_df),
-        len(available),
-        available,
-    )
+    logger.info("Baseline: %d rows, %d features", len(baseline_df), len(available))
 
-    # Write CSV to a temp file, upload to GCS
     csv_path = "/tmp/training_baseline.csv"
     baseline_df.to_csv(csv_path, index=False)
 
-    # Upload to GCS
-    dest = MONITORING_DATASET_URI.replace("gs://", "")
-    bucket_name = dest.split("/")[0]
-    blob_path = "/".join(dest.split("/")[1:])
-
+    dest = MONITORING_BASELINE_URI.replace("gs://", "")
+    bucket_name, blob_path = dest.split("/", 1)
     client = gcs_storage.Client()
-    bucket = client.bucket(bucket_name)
-    bucket.blob(blob_path).upload_from_filename(csv_path)
-    logger.info("Uploaded baseline CSV to %s (%d rows)", MONITORING_DATASET_URI, len(baseline_df))
+    client.bucket(bucket_name).blob(blob_path).upload_from_filename(csv_path)
+    logger.info("Uploaded baseline to %s", MONITORING_BASELINE_URI)
 
-    # Upload schema YAML files alongside the baseline
-    for schema_name, gcs_uri in [
+    for name, uri in [
         ("predict_instance_schema.yaml", PREDICT_SCHEMA_URI),
         ("analysis_instance_schema.yaml", ANALYSIS_SCHEMA_URI),
     ]:
-        local_schema = os.path.join(_SCHEMA_DIR, schema_name)
-        if not os.path.exists(local_schema):
-            logger.warning("Schema file not found: %s", local_schema)
-            continue
-        dest = gcs_uri.replace("gs://", "")
-        b_name = dest.split("/")[0]
-        b_path = "/".join(dest.split("/")[1:])
-        client.bucket(b_name).blob(b_path).upload_from_filename(local_schema)
-        logger.info("Uploaded schema %s to %s", schema_name, gcs_uri)
+        local = os.path.join(SCHEMA_DIR, name)
+        if os.path.exists(local):
+            d = uri.replace("gs://", "")
+            b, p = d.split("/", 1)
+            client.bucket(b).blob(p).upload_from_filename(local)
+            logger.info("Uploaded %s", name)
 
-    return MONITORING_DATASET_URI
+    return MONITORING_BASELINE_URI
 
 
-def _create_monitoring_job(
-    endpoint: aiplatform.Endpoint,
-    baseline_uri: str,
-    dry_run: bool = False,
-) -> None:
-    """Create a Vertex AI Model Monitoring job on the endpoint.
+def create_monitoring_job(endpoint, baseline_uri):
+    """Create a Model Monitoring job on the endpoint."""
+    thresholds = {f: DRIFT_THRESHOLD for f in MONITORED_FEATURES}
 
-    Configures:
-      - Prediction drift detection (compare recent predictions to baseline)
-      - Feature skew detection (compare serving inputs to training distribution)
-      - Logging to BigQuery for all requests/responses
-    """
-    if dry_run:
-        logger.info(
-            "[DRY RUN] Would create Model Monitoring job on endpoint %s "
-            "with baseline %s",
-            endpoint.resource_name,
-            baseline_uri,
+    # Check for existing active job on this endpoint
+    try:
+        all_jobs = aiplatform.ModelDeploymentMonitoringJob.list(
+            project=PROJECT_ID, location=LOCATION,
         )
-        return
+        active = [
+            j for j in all_jobs
+            if getattr(j, "endpoint", None)
+            and endpoint.resource_name in j.endpoint
+            and j.state.name not in (
+                "JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED"
+            )
+        ]
+        if active:
+            logger.info("Monitoring job already exists: %s", active[0].resource_name)
+            return
+    except Exception as e:
+        logger.warning("Could not check existing monitoring jobs: %s", e)
 
-    # Build drift detection config — threshold per feature
-    drift_thresholds = {
-        feat: DEFAULT_DRIFT_THRESHOLD for feat in MONITORED_FEATURES
-    }
-    skew_thresholds = {
-        feat: DEFAULT_DRIFT_THRESHOLD for feat in MONITORED_FEATURES
-    }
-
-    # Objective config: skew + drift
-    skew_config = aiplatform.model_monitoring.SkewDetectionConfig(
-        data_source=baseline_uri,
-        skew_thresholds=skew_thresholds,
-        target_field="service_headway",
-        data_format="csv",
-    )
-    drift_config = aiplatform.model_monitoring.DriftDetectionConfig(
-        drift_thresholds=drift_thresholds,
-    )
-    objective_config = aiplatform.model_monitoring.ObjectiveConfig(
-        skew_detection_config=skew_config,
-        drift_detection_config=drift_config,
-    )
-
-    # Sampling — log 100% of requests initially (low traffic; reduce later)
-    random_sampling = aiplatform.model_monitoring.RandomSampleConfig(
-        sample_rate=1.0,
-    )
-
-    # Alert — email notification on threshold breach
-    alert_config = aiplatform.model_monitoring.EmailAlertConfig(
-        user_emails=["dan.herman@me.com"],
-    )
-
-    # Schedule — run monitoring analysis every hour during initial deployment.
-    # Once baseline JS divergence scores stabilize (~1 week), consider widening
-    # to 6h or 24h via the Vertex AI console or by re-running this script.
-    schedule_config = aiplatform.model_monitoring.ScheduleConfig(
-        monitor_interval=1,  # hours
-    )
-
-    # Check if a monitoring job already exists for this endpoint
-    existing_jobs = aiplatform.ModelDeploymentMonitoringJob.list(
-        filter=f'endpoint="{endpoint.resource_name}"',
+    logger.info("Creating monitoring job...")
+    job = aiplatform.ModelDeploymentMonitoringJob.create(
+        display_name=f"{MODEL_DISPLAY_NAME}-monitoring",
+        endpoint=endpoint,
+        logging_sampling_strategy=aiplatform.model_monitoring.RandomSampleConfig(
+            sample_rate=1.0,
+        ),
+        schedule_config=aiplatform.model_monitoring.ScheduleConfig(
+            monitor_interval=1,
+        ),
+        alert_config=aiplatform.model_monitoring.EmailAlertConfig(
+            user_emails=["dan.herman@me.com"],
+        ),
+        objective_configs=aiplatform.model_monitoring.ObjectiveConfig(
+            skew_detection_config=aiplatform.model_monitoring.SkewDetectionConfig(
+                data_source=baseline_uri,
+                skew_thresholds=thresholds,
+                target_field="service_headway",
+                data_format="csv",
+            ),
+            drift_detection_config=aiplatform.model_monitoring.DriftDetectionConfig(
+                drift_thresholds=thresholds,
+            ),
+        ),
+        predict_instance_schema_uri=PREDICT_SCHEMA_URI,
+        analysis_instance_schema_uri=ANALYSIS_SCHEMA_URI,
         project=PROJECT_ID,
         location=LOCATION,
     )
-    active_jobs = [j for j in existing_jobs if j.state.name not in ("JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED")]
-
-    if active_jobs:
-        job = active_jobs[0]
-        logger.info(
-            "Model Monitoring job already exists: %s (state=%s). "
-            "Skipping creation — update via console or `gcloud` if config changes are needed.",
-            job.resource_name,
-            job.state.name,
-        )
-    else:
-        logger.info("Creating Model Monitoring job...")
-        job = aiplatform.ModelDeploymentMonitoringJob.create(
-            display_name=f"{MODEL_DISPLAY_NAME}-monitoring",
-            endpoint=endpoint,
-            logging_sampling_strategy=random_sampling,
-            schedule_config=schedule_config,
-            alert_config=alert_config,
-            objective_configs=objective_config,
-            predict_instance_schema_uri=PREDICT_SCHEMA_URI,
-            analysis_instance_schema_uri=ANALYSIS_SCHEMA_URI,
-            project=PROJECT_ID,
-            location=LOCATION,
-        )
-        logger.info("Model Monitoring job created: %s", job.resource_name)
-
-    logger.info(
-        "Monitoring will check for drift every 1 hour. "
-        "Thresholds: JS divergence > %.2f per feature.",
-        DEFAULT_DRIFT_THRESHOLD,
-    )
-
-
-# ──────────────────────────────────────────────────────────────
-# Main
-# ──────────────────────────────────────────────────────────────
+    logger.info("Monitoring job created: %s", job.resource_name)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Deploy headway-tft model to Vertex AI Endpoint with monitoring"
+        description="Deploy headway-tft to Vertex AI with monitoring",
     )
     parser.add_argument(
-        "--skip-monitoring",
-        action="store_true",
-        help="Deploy the model but skip Model Monitoring setup",
+        "--refresh-image", action="store_true",
+        help="Re-register model to pick up a rebuilt container image",
     )
     parser.add_argument(
-        "--monitoring-only",
-        action="store_true",
-        help="Skip deployment — only set up monitoring + smoke test on existing endpoint",
-    )
-    parser.add_argument(
-        "--refresh-image",
-        action="store_true",
-        help="Re-register the model to pick up a newly built serving container image",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print what would happen without making any changes",
+        "--skip-monitoring", action="store_true",
+        help="Deploy only, skip monitoring setup",
     )
     args = parser.parse_args()
 
-    # Initialize Vertex AI SDK
     aiplatform.init(project=PROJECT_ID, location=LOCATION)
 
-    if not args.monitoring_only:
-        # Step 1: Find the latest registered model
-        logger.info("=" * 60)
-        logger.info("Step 1: Finding latest registered model")
-        logger.info("=" * 60)
-        model = _find_latest_model()
+    # 1. Find model
+    logger.info("=" * 60)
+    logger.info("Step 1: Finding model")
+    logger.info("=" * 60)
+    model = find_model(refresh_image=args.refresh_image)
 
-        if args.refresh_image:
-            logger.info("--refresh-image: re-registering model with new container image")
-            model = _reregister_model(model)
+    # 2. Create endpoint
+    logger.info("=" * 60)
+    logger.info("Step 2: Creating endpoint")
+    logger.info("=" * 60)
+    endpoint = create_endpoint()
 
-        # Step 2: Get or create the endpoint
-        logger.info("=" * 60)
-        logger.info("Step 2: Getting or creating endpoint")
-        logger.info("=" * 60)
-        endpoint = _get_or_create_endpoint()
+    # 3. Deploy
+    logger.info("=" * 60)
+    logger.info("Step 3: Deploying model")
+    logger.info("=" * 60)
+    deploy_model(endpoint, model)
 
-        # Step 3: Deploy model to endpoint
-        logger.info("=" * 60)
-        logger.info("Step 3: Deploying model to endpoint")
-        logger.info("=" * 60)
-        _deploy_model(endpoint, model, dry_run=args.dry_run)
-    else:
-        logger.info("=" * 60)
-        logger.info("--monitoring-only: skipping deploy, resolving existing endpoint")
-        logger.info("=" * 60)
-        model = _find_latest_model()
-        endpoint = _get_or_create_endpoint()
-
-    # Step 4: Model Monitoring
+    # 4. Monitoring
     if not args.skip_monitoring:
         logger.info("=" * 60)
-        logger.info("Step 4a: Generating monitoring baseline")
+        logger.info("Step 4: Setting up monitoring")
         logger.info("=" * 60)
-        baseline_uri = _generate_monitoring_baseline(dry_run=args.dry_run)
+        baseline_uri = upload_monitoring_baseline()
+        create_monitoring_job(endpoint, baseline_uri)
 
-        logger.info("=" * 60)
-        logger.info("Step 4b: Creating Model Monitoring job")
-        logger.info("=" * 60)
-        _create_monitoring_job(endpoint, baseline_uri, dry_run=args.dry_run)
-    else:
-        logger.info("Skipping Model Monitoring (--skip-monitoring)")
-
-    # Summary
+    # Done
     logger.info("=" * 60)
-    logger.info("DEPLOYMENT COMPLETE")
-    logger.info("=" * 60)
-    logger.info("  Model:    %s", model.resource_name)
+    logger.info("DONE")
     logger.info("  Endpoint: %s", endpoint.resource_name)
-    logger.info(
-        "  Endpoint URL: https://%s-aiplatform.googleapis.com/v1/%s:predict",
-        LOCATION,
-        endpoint.resource_name,
-    )
-    if not args.skip_monitoring:
-        logger.info("  Monitoring: ENABLED (1h interval, JS threshold %.2f)",
-                     DEFAULT_DRIFT_THRESHOLD)
-    if args.monitoring_only:
-        logger.info("  Mode: monitoring-only (deployment skipped)")
+    logger.info("  Monitoring: %s", "ENABLED" if not args.skip_monitoring else "SKIPPED")
     logger.info("=" * 60)
 
 

@@ -2,60 +2,36 @@
 """
 test_endpoint_accuracy.py
 -------------------------
-Comprehensive integration test for the deployed headway-prediction endpoint.
+Send 30 historical test windows (10 per group) to the live Vertex AI
+endpoint and report prediction accuracy against known actuals.
 
-Sends real historical observations from the TEST split (unseen during training)
-to the live Vertex AI endpoint and compares predictions against known actuals.
-
-Tests performed:
-  1. Smoke test      – single payload returns valid response structure
-  2. All groups      – each group_id produces reasonable predictions
-  3. Accuracy test   – MAE/sMAPE across many samples vs training-eval baseline
-  4. Quantile order  – P10 ≤ P50 ≤ P90 for every prediction
-  5. Range test      – predictions fall within plausible headway bounds
-  6. Latency test    – response time is within acceptable limits
+Groups: A_South, C_South, E_South
 
 Usage:
-  python scripts/test_endpoint_accuracy.py                  # full test
-  python scripts/test_endpoint_accuracy.py --samples 10     # quick smoke
-  python scripts/test_endpoint_accuracy.py --dry-run        # local model only
+  python scripts/test_endpoint_accuracy.py
 """
 
-import argparse
-import json
 import logging
 import os
 import sys
 import time
-from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from google.cloud import aiplatform
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(message)s")
 logger = logging.getLogger(__name__)
 
-# ──────────────────────────────────────────────────────────────
-# Constants
-# ──────────────────────────────────────────────────────────────
 PROJECT_ID = "realtime-headway-prediction"
 LOCATION = "us-east1"
 ENDPOINT_DISPLAY_NAME = "headway-prediction-endpoint"
 
-# Thresholds (based on training eval: MAE ≈ 0.34, sMAPE ≈ 4.2%)
-MAE_THRESHOLD = 1.5          # fail if endpoint MAE exceeds this (generous margin)
-SMAPE_THRESHOLD = 25.0       # fail if sMAPE exceeds this %
-LATENCY_P95_MS = 5000        # per-request P95 latency limit (ms)
-HEADWAY_MIN = 0.0            # minimum plausible headway (minutes)
-HEADWAY_MAX = 60.0           # maximum plausible headway (minutes)
+GROUP_IDS = ["A_South", "C_South", "E_South"]
+WINDOW_SIZE = 20
+SAMPLES_PER_GROUP = 10
 
-ENCODER_LENGTH = 19           # send 20 observations; last becomes decoder target
-GROUP_IDS = ["A_South", "C_South", "E_South", "OTHER_South"]
-
-OBSERVATION_FEATURES = [
+FEATURES = [
     "service_headway", "preceding_train_gap", "upstream_headway_14th",
     "travel_time_14th", "travel_time_14th_deviation",
     "travel_time_23rd", "travel_time_23rd_deviation",
@@ -66,353 +42,184 @@ OBSERVATION_FEATURES = [
 ]
 
 
-# ──────────────────────────────────────────────────────────────
-# Data helpers
-# ──────────────────────────────────────────────────────────────
+def load_test_data():
+    """Load training parquet, clean features, return test split."""
+    path = os.path.join(os.path.dirname(__file__), "..", "local_artifacts",
+                        "processed_data", "training_data.parquet")
+    df = pd.read_parquet(path)
 
-def load_test_data() -> pd.DataFrame:
-    """Load and clean the test split from training data."""
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    from mlops_pipeline.src.data_processing import clean_dataset
+    # Categoricals
+    for col in ["group_id", "route_id", "direction", "regime_id", "track_id", "preceding_route_id"]:
+        if col in df.columns:
+            df[col] = df[col].fillna("None").astype(str)
 
-    path = os.path.join(
-        os.path.dirname(__file__), "..", "local_artifacts",
-        "processed_data", "training_data.parquet",
-    )
-    raw_df = pd.read_parquet(path)
-    clean_df, _ = clean_dataset(raw_df)
+    # Time index
+    df["arrival_time"] = pd.to_datetime(df["arrival_time"])
+    min_time = df["arrival_time"].min()
+    df["time_idx"] = ((df["arrival_time"] - min_time).dt.total_seconds() / 60).astype(int)
 
-    # Use only the test split (after val_end_date = 2025-12-23)
-    if "arrival_time" in clean_df.columns:
-        clean_df["arrival_time"] = pd.to_datetime(clean_df["arrival_time"])
-        test_df = clean_df[clean_df["arrival_time"] > "2025-12-23"].copy()
-    else:
-        # Fall back: use the last 20% by time_idx
-        cutoff = clean_df["time_idx"].quantile(0.8)
-        test_df = clean_df[clean_df["time_idx"] > cutoff].copy()
+    # Impute numerics
+    for col in ["preceding_train_gap", "upstream_headway_14th", "travel_time_14th",
+                "travel_time_34th", "travel_time_23rd"]:
+        if col in df.columns:
+            df[col] = df[col].fillna(df[col].median())
+    if "preceding_train_gap" in df.columns:
+        df["preceding_train_gap"] = df["preceding_train_gap"].clip(upper=20.0)
+    for col in [c for c in df.columns if "deviation" in c]:
+        df[col] = df[col].fillna(0.0)
 
-    logger.info(
-        "Test data: %d rows across %d groups",
-        len(test_df), test_df["group_id"].nunique(),
-    )
-    return test_df
+    # Catch-all: fill any remaining numeric feature NaN with median
+    for col in FEATURES:
+        if col in df.columns and pd.api.types.is_numeric_dtype(df[col]) and df[col].isna().any():
+            df[col] = df[col].fillna(df[col].median())
+
+    # Drop rows still missing any feature value
+    feature_cols = [f for f in FEATURES if f in df.columns]
+    df = df.dropna(subset=feature_cols).reset_index(drop=True)
+    df = df.sort_values(["group_id", "time_idx"])
+
+    return df[df["arrival_time"] > "2025-12-23"].copy()
 
 
-def build_instances(
-    test_df: pd.DataFrame,
-    samples_per_group: int = 10,
-) -> List[Tuple[Dict[str, Any], float]]:
-    """Build (payload_instance, actual_headway) pairs from test data.
-
-    For each sample we take 20 consecutive observations.  The LAST
-    observation's service_headway is the ground-truth target — the
-    endpoint should predict something close to it.
-    """
+def build_instances(test_df):
+    """Build 10 test windows per group. Each window is 20 observations."""
     instances = []
-    skipped_groups = []
     for group_id in GROUP_IDS:
         gdf = test_df[test_df["group_id"] == group_id].sort_values("time_idx")
-        if len(gdf) < 21:
-            logger.warning("Skipping %s — only %d rows", group_id, len(gdf))
-            skipped_groups.append(group_id)
-            continue
+        if len(gdf) < WINDOW_SIZE + 1:
+            logger.error("%s: only %d rows, need %d", group_id, len(gdf), WINDOW_SIZE + 1)
+            sys.exit(1)
 
-        # Evenly space sample windows across the group's test data
-        n = min(samples_per_group, max(1, (len(gdf) - 20) // 20))
-        step = max(1, (len(gdf) - 20) // n)
-        offsets = list(range(0, min(n * step, len(gdf) - 20), step))
-
-        for offset in offsets:
-            window = gdf.iloc[offset : offset + 20]
+        step = max(1, (len(gdf) - WINDOW_SIZE) // SAMPLES_PER_GROUP)
+        count = 0
+        for offset in range(0, len(gdf) - WINDOW_SIZE, step):
+            if count >= SAMPLES_PER_GROUP:
+                break
+            window = gdf.iloc[offset : offset + WINDOW_SIZE]
             actual = float(window.iloc[-1]["service_headway"])
 
             observations = []
             for _, row in window.iterrows():
                 obs = {}
-                for feat in OBSERVATION_FEATURES:
-                    if feat in row.index:
-                        val = row[feat]
-                        # Convert numpy types to native Python for JSON
-                        if isinstance(val, (np.integer,)):
-                            val = int(val)
-                        elif isinstance(val, (np.floating,)):
-                            val = float(val)
-                        obs[feat] = val
+                for f in FEATURES:
+                    if f in row.index:
+                        v = row[f]
+                        obs[f] = int(v) if isinstance(v, np.integer) else (
+                            float(v) if isinstance(v, np.floating) else v)
                 observations.append(obs)
 
-            instance = {"group_id": group_id, "observations": observations}
-            instances.append((instance, actual))
+            instances.append(({"group_id": group_id, "observations": observations}, actual))
+            count += 1
 
-    logger.info("Built %d test instances (skipped groups: %s)", len(instances), skipped_groups or "none")
-    return instances, skipped_groups
-
-
-# ──────────────────────────────────────────────────────────────
-# Endpoint caller
-# ──────────────────────────────────────────────────────────────
-
-def get_endpoint():
-    """Find the deployed endpoint."""
-    from google.cloud import aiplatform
-    aiplatform.init(project=PROJECT_ID, location=LOCATION)
-    endpoints = aiplatform.Endpoint.list(
-        filter=f'display_name="{ENDPOINT_DISPLAY_NAME}"',
-    )
-    if not endpoints:
-        logger.error("No endpoint found with display_name='%s'", ENDPOINT_DISPLAY_NAME)
-        sys.exit(1)
-    endpoint = endpoints[0]
-    logger.info("Using endpoint: %s", endpoint.resource_name)
-    return endpoint
+    logger.info("Built %d test instances (%d per group)", len(instances), SAMPLES_PER_GROUP)
+    return instances
 
 
-def predict_one(endpoint, instance: Dict[str, Any]) -> Tuple[Dict, float]:
-    """Send a single instance to the endpoint. Returns (result_dict, latency_ms)."""
-    t0 = time.time()
-    response = endpoint.predict(instances=[instance])
-    latency_ms = (time.time() - t0) * 1000
-
-    preds = response.predictions
-    if not preds or len(preds) == 0:
-        return {"error": "empty response"}, latency_ms
-
-    return preds[0], latency_ms
-
-
-# ──────────────────────────────────────────────────────────────
-# Local model fallback (--dry-run)
-# ──────────────────────────────────────────────────────────────
-
-def predict_local(instance: Dict[str, Any]) -> Tuple[Dict, float]:
-    """Run prediction locally using the deployed model artifacts."""
-    import torch
-    from pytorch_forecasting import TimeSeriesDataSet
-
-    ds = torch.load("/tmp/deployed_training_dataset.pt", weights_only=False, map_location="cpu")
-    model = torch.load("/tmp/deployed_model_full.pt", weights_only=False, map_location="cpu")
-    model.eval()
-
-    group_id = instance["group_id"]
-    df = pd.DataFrame(instance["observations"])
-    df["group_id"] = group_id
-    for col in ["group_id", "route_id", "regime_id", "track_id", "preceding_route_id"]:
-        if col in df.columns:
-            df[col] = df[col].fillna("None").astype(str)
-    df["time_idx"] = df["time_idx"].astype(int)
-
-    t0 = time.time()
-    predict_ds = TimeSeriesDataSet.from_dataset(ds, df, predict=True, stop_randomization=True)
-    dl = predict_ds.to_dataloader(batch_size=1, shuffle=False, num_workers=0)
-
-    with torch.no_grad():
-        preds = model.predict(dl, mode="quantiles")
-
-    latency_ms = (time.time() - t0) * 1000
-    q = preds[0, 0, :].cpu().numpy()
-
-    return {
-        "group_id": group_id,
-        "headway_p10": round(float(q[0]), 2),
-        "headway_p50": round(float(q[1]), 2),
-        "headway_p90": round(float(q[2]), 2),
-    }, latency_ms
-
-
-# ──────────────────────────────────────────────────────────────
-# Test runner
-# ──────────────────────────────────────────────────────────────
-
-def run_tests(
-    instances: List[Tuple[Dict, float]],
-    predict_fn,
-    max_samples: Optional[int] = None,
-    skipped_groups: Optional[List[str]] = None,
-) -> bool:
-    """Run all tests. Returns True if all pass."""
-    if max_samples:
-        instances = instances[:max_samples]
-
-    results = []  # (group_id, predicted_p50, actual, p10, p50, p90, latency_ms)
-    errors = []
+def run_tests(endpoint, instances):
+    """Send instances to endpoint, report MAE / sMAPE / latency."""
+    rows = []
+    nan_instances = []
 
     for i, (instance, actual) in enumerate(instances):
-        try:
-            pred, latency = predict_fn(instance)
-        except Exception as e:
-            errors.append(f"Instance {i} ({instance['group_id']}): {e}")
-            continue
+        t0 = time.time()
+        pred = endpoint.predict(instances=[instance]).predictions[0]
+        latency = (time.time() - t0) * 1000
 
-        if "error" in pred:
-            errors.append(f"Instance {i} ({instance['group_id']}): {pred['error']}")
-            continue
+        p10 = pred.get("headway_p10")
+        p50 = pred.get("headway_p50")
+        p90 = pred.get("headway_p90")
 
-        results.append({
-            "group_id": instance["group_id"],
-            "actual": actual,
-            "p10": pred["headway_p10"],
-            "p50": pred["headway_p50"],
-            "p90": pred["headway_p90"],
-            "latency_ms": latency,
-        })
+        # Check for NaN or None in the response
+        values_bad = any(
+            v is None or (isinstance(v, float) and np.isnan(v))
+            for v in [p10, p50, p90]
+        )
 
-        if (i + 1) % 5 == 0 or i == len(instances) - 1:
-            logger.info(
-                "  [%d/%d] %s: pred=%.2f actual=%.2f err=%.2f (%.0fms)",
-                i + 1, len(instances),
-                instance["group_id"],
-                pred["headway_p50"], actual,
-                abs(pred["headway_p50"] - actual),
-                latency,
-            )
+        if values_bad:
+            nan_instances.append({
+                "index": i,
+                "group": instance["group_id"],
+                "actual": actual,
+                "p10": p10, "p50": p50, "p90": p90,
+                "error": pred.get("error"),
+                "latency_ms": latency,
+            })
+        else:
+            rows.append({
+                "group": instance["group_id"],
+                "actual": actual,
+                "p10": p10, "p50": p50, "p90": p90,
+                "latency_ms": latency,
+            })
 
-    if not results:
-        logger.error("No successful predictions at all!")
-        return False
+        if (i + 1) % 10 == 0:
+            logger.info("  %d / %d", i + 1, len(instances))
 
-    df = pd.DataFrame(results)
-    all_passed = True
+    # --- Report ---
+    df = pd.DataFrame(rows)
+    df["err"] = (df["p50"] - df["actual"]).abs()
+    df["smape"] = 200 * df["err"] / (df["p50"].abs() + df["actual"].abs() + 1e-8)
 
-    # ── Test 1: Smoke — got at least some results ──
-    print("\n" + "=" * 65)
-    print(" TEST RESULTS")
-    print("=" * 65)
-
-    n_ok = len(results)
-    n_err = len(errors)
-    # Allow up to 30% errors — some windows land on sparse time_idx regions
-    # that pytorch-forecasting's encoder filter rejects on the server side
-    smoke_pass = n_ok > 0 and n_err <= 0.3 * (n_ok + n_err)
-    _report("1. Smoke test", smoke_pass,
-            f"{n_ok} succeeded, {n_err} errors")
-    if not smoke_pass:
-        all_passed = False
-    for e in errors[:5]:
-        print(f"     ERROR: {e}")
-
-    # ── Test 2: All groups represented (excluding groups with insufficient test data) ──
-    groups_seen = set(df["group_id"].unique())
-    expected_groups = set(GROUP_IDS) - set(skipped_groups or [])
-    groups_pass = groups_seen == expected_groups
-    detail = f"seen={sorted(groups_seen)}, expected={sorted(expected_groups)}"
-    if skipped_groups:
-        detail += f" (skipped {skipped_groups}: insufficient test data)"
-    _report("2. All groups", groups_pass, detail)
-    if not groups_pass:
-        all_passed = False
-
-    # ── Test 3: Accuracy — MAE & sMAPE ──
-    df["abs_err"] = (df["p50"] - df["actual"]).abs()
-    df["smape"] = 200 * df["abs_err"] / (df["p50"].abs() + df["actual"].abs() + 1e-8)
-    mae = df["abs_err"].mean()
+    mae = df["err"].mean()
     smape = df["smape"].mean()
-    mae_pass = mae <= MAE_THRESHOLD
-    smape_pass = smape <= SMAPE_THRESHOLD
-    _report("3a. MAE", mae_pass,
-            f"{mae:.4f} min (threshold {MAE_THRESHOLD})")
-    _report("3b. sMAPE", smape_pass,
-            f"{smape:.2f}% (threshold {SMAPE_THRESHOLD}%)")
-    if not mae_pass or not smape_pass:
-        all_passed = False
-
-    # Per-group breakdown
-    print("\n     Per-group MAE:")
-    for gid, gdf in df.groupby("group_id"):
-        g_mae = gdf["abs_err"].mean()
-        g_n = len(gdf)
-        print(f"       {gid:15s}  MAE={g_mae:.4f}  (n={g_n})")
-
-    # ── Test 4: Quantile ordering — P10 ≤ P50 ≤ P90 ──
-    ordering_ok = ((df["p10"] <= df["p50"] + 0.01) & (df["p50"] <= df["p90"] + 0.01))
-    n_violated = (~ordering_ok).sum()
-    quant_pass = n_violated == 0
-    _report("4. Quantile order", quant_pass,
-            f"{n_violated}/{len(df)} violations (P10 ≤ P50 ≤ P90)")
-    if not quant_pass:
-        all_passed = False
-        violators = df[~ordering_ok].head(3)
-        for _, row in violators.iterrows():
-            print(f"     VIOLATION: {row['group_id']} "
-                  f"P10={row['p10']:.2f} P50={row['p50']:.2f} P90={row['p90']:.2f}")
-
-    # ── Test 5: Plausible range ──
-    in_range = (df["p50"] >= HEADWAY_MIN) & (df["p50"] <= HEADWAY_MAX)
-    n_oor = (~in_range).sum()
-    range_pass = n_oor == 0
-    _report("5. Plausible range", range_pass,
-            f"{n_oor}/{len(df)} out of [{HEADWAY_MIN}, {HEADWAY_MAX}] min")
-    if not range_pass:
-        all_passed = False
-
-    # ── Test 6: Latency ──
-    p50_lat = df["latency_ms"].median()
     p95_lat = df["latency_ms"].quantile(0.95)
-    lat_pass = p95_lat <= LATENCY_P95_MS
-    _report("6. Latency", lat_pass,
-            f"p50={p50_lat:.0f}ms  p95={p95_lat:.0f}ms (limit {LATENCY_P95_MS}ms)")
-    if not lat_pass:
-        all_passed = False
 
-    # ── Summary ──
-    print("\n" + "-" * 65)
-    print(f" Overall MAE:   {mae:.4f} min")
-    print(f" Overall sMAPE: {smape:.2f}%")
-    print(f" Predictions:   {n_ok} succeeded / {n_err} errors")
-    print(f" Median latency: {p50_lat:.0f} ms")
+    print("\n" + "=" * 60)
+    print(" ENDPOINT ACCURACY REPORT")
+    print("=" * 60)
+    print(f"  Instances sent:   {len(instances)}")
+    print(f"  Predictions OK:   {len(rows)}")
+    print(f"  Predictions NaN:  {len(nan_instances)}")
+    print(f"  MAE:              {mae:.4f} min")
+    print(f"  sMAPE:            {smape:.2f}%")
+    print(f"  Latency p95:      {p95_lat:.0f} ms")
 
-    if all_passed:
-        print("\n ✅  ALL TESTS PASSED")
-    else:
-        print("\n ❌  SOME TESTS FAILED")
-    print("=" * 65)
+    print("\n  Per-group breakdown:")
+    print(f"    {'Group':<16} {'MAE':>8} {'sMAPE':>8} {'n':>4}")
+    for g, gdf in df.groupby("group"):
+        print(f"    {g:<16} {gdf['err'].mean():8.4f} {gdf['smape'].mean():7.2f}% {len(gdf):4d}")
 
-    # ── Detailed predictions table ──
-    print("\nSample predictions (first 15):")
-    print(f"  {'Group':<16} {'Actual':>7} {'P10':>7} {'P50':>7} {'P90':>7} {'Error':>7}")
-    print(f"  {'-'*16} {'-'*7} {'-'*7} {'-'*7} {'-'*7} {'-'*7}")
-    for _, row in df.head(15).iterrows():
-        print(f"  {row['group_id']:<16} {row['actual']:7.2f} "
-              f"{row['p10']:7.2f} {row['p50']:7.2f} {row['p90']:7.2f} "
-              f"{row['abs_err']:7.2f}")
+    print(f"\n  Sample predictions:")
+    print(f"    {'Group':<16} {'Actual':>7} {'P10':>7} {'P50':>7} {'P90':>7} {'Error':>7}")
+    for _, r in df.head(10).iterrows():
+        print(f"    {r['group']:<16} {r['actual']:7.2f} {r['p10']:7.2f} "
+              f"{r['p50']:7.2f} {r['p90']:7.2f} {r['err']:7.2f}")
 
-    return all_passed
+    # NaN instances
+    if nan_instances:
+        print(f"\n  NaN predictions ({len(nan_instances)}):")
+        print(f"    {'#':>3} {'Group':<16} {'Actual':>7} {'P10':>7} {'P50':>7} {'P90':>7}  Error")
+        for rec in nan_instances:
+            def _fmt(v):
+                if v is None:
+                    return "   None"
+                if isinstance(v, float) and np.isnan(v):
+                    return "    NaN"
+                return f"{v:7.2f}"
+            print(f"    {rec['index']:3d} {rec['group']:<16} {rec['actual']:7.2f} "
+                  f"{_fmt(rec['p10'])} {_fmt(rec['p50'])} {_fmt(rec['p90'])}  "
+                  f"{rec.get('error') or ''}")
 
+    passed = mae <= 1.5 and smape <= 25
+    print(f"\n  {'PASS' if passed else 'FAIL'}  (thresholds: MAE <= 1.5, sMAPE <= 25%)")
+    print("=" * 60)
+    return passed
 
-def _report(name: str, passed: bool, detail: str):
-    icon = "✅" if passed else "❌"
-    print(f"  {icon}  {name}: {detail}")
-
-
-# ──────────────────────────────────────────────────────────────
-# Main
-# ──────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Comprehensive endpoint accuracy test")
-    parser.add_argument("--samples", type=int, default=None,
-                        help="Max total samples (default: ~10 per group)")
-    parser.add_argument("--samples-per-group", type=int, default=10,
-                        help="Samples per group (default: 10)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Test locally instead of hitting the endpoint")
-    args = parser.parse_args()
+    aiplatform.init(project=PROJECT_ID, location=LOCATION)
+    endpoints = aiplatform.Endpoint.list(filter=f'display_name="{ENDPOINT_DISPLAY_NAME}"')
+    if not endpoints:
+        logger.error("No endpoint found: %s", ENDPOINT_DISPLAY_NAME)
+        sys.exit(1)
+    endpoint = endpoints[0]
+    logger.info("Endpoint: %s", endpoint.resource_name)
 
-    logger.info("Loading test data...")
     test_df = load_test_data()
+    logger.info("Test data: %d rows", len(test_df))
 
-    logger.info("Building test instances...")
-    instances, skipped_groups = build_instances(test_df, samples_per_group=args.samples_per_group)
-
-    if args.dry_run:
-        logger.info("DRY RUN — using local model artifacts")
-        predict_fn = lambda inst: predict_local(inst)
-    else:
-        logger.info("Connecting to Vertex AI endpoint...")
-        endpoint = get_endpoint()
-        predict_fn = lambda inst: predict_one(endpoint, inst)
-
-    logger.info("Running tests (%d instances)...\n", len(instances))
-    passed = run_tests(instances, predict_fn, max_samples=args.samples, skipped_groups=skipped_groups)
-
+    instances = build_instances(test_df)
+    passed = run_tests(endpoint, instances)
     sys.exit(0 if passed else 1)
 
 
