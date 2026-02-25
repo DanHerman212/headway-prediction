@@ -64,9 +64,8 @@ def _build_eval_dataframe(
     # Reconstruct timestamps via lookup table (group_id, time_idx) → arrival_time_dt
     time_idx = x["decoder_time_idx"].cpu().view(-1).numpy()
     lookup_key = time_lookup.set_index(['group_id', 'time_idx'])['arrival_time_dt']
-    timestamps = pd.array([
-        lookup_key.get((g, int(t))) for g, t in zip(groups, time_idx)
-    ], dtype='datetime64[ns]')
+    ts_raw = [lookup_key.get((g, int(t))) for g, t in zip(groups, time_idx)]
+    timestamps = pd.to_datetime(ts_raw, utc=True)
 
     return pd.DataFrame({
         "group": groups,
