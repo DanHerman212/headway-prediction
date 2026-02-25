@@ -58,7 +58,7 @@ def run_vizier_study_op(
     _p = source_whl_uri.replace("gs://", ""); _b, _k = _p.split("/", 1)
     _f = os.path.join(tempfile.gettempdir(), os.path.basename(_k))
     _gcs.Client().bucket(_b).blob(_k).download_to_filename(_f)
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--no-deps", _f])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "--no-deps", _f])
 
     import json
     import torch

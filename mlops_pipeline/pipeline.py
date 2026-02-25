@@ -72,7 +72,7 @@ def fetch_vizier_params_op(
     _p = source_whl_uri.replace("gs://", ""); _b, _k = _p.split("/", 1)
     _f = os.path.join(tempfile.gettempdir(), os.path.basename(_k))
     _gcs.Client().bucket(_b).blob(_k).download_to_filename(_f)
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--no-deps", _f])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "--no-deps", _f])
 
     import json
     from omegaconf import OmegaConf
@@ -97,7 +97,7 @@ def ingest_data_op(
     _p = source_whl_uri.replace("gs://", ""); _b, _k = _p.split("/", 1)
     _f = os.path.join(tempfile.gettempdir(), os.path.basename(_k))
     _gcs.Client().bucket(_b).blob(_k).download_to_filename(_f)
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--no-deps", _f])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "--no-deps", _f])
 
     from mlops_pipeline.src.steps.ingest_data import ingest_data
     df = ingest_data(file_path=file_path)
@@ -120,7 +120,7 @@ def process_data_op(
     _p = source_whl_uri.replace("gs://", ""); _b, _k = _p.split("/", 1)
     _f = os.path.join(tempfile.gettempdir(), os.path.basename(_k))
     _gcs.Client().bucket(_b).blob(_k).download_to_filename(_f)
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--no-deps", _f])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "--no-deps", _f])
 
     import torch
     import pandas as pd
@@ -155,7 +155,7 @@ def train_model_op(
     _p = source_whl_uri.replace("gs://", ""); _b, _k = _p.split("/", 1)
     _f = os.path.join(tempfile.gettempdir(), os.path.basename(_k))
     _gcs.Client().bucket(_b).blob(_k).download_to_filename(_f)
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--no-deps", _f])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "--no-deps", _f])
 
     import json
     import torch
@@ -199,7 +199,7 @@ def evaluate_model_op(
     _p = source_whl_uri.replace("gs://", ""); _b, _k = _p.split("/", 1)
     _f = os.path.join(tempfile.gettempdir(), os.path.basename(_k))
     _gcs.Client().bucket(_b).blob(_k).download_to_filename(_f)
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--no-deps", _f])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "--no-deps", _f])
 
     import json
     import torch
@@ -256,7 +256,7 @@ def register_model_op(
     _p = source_whl_uri.replace("gs://", ""); _b, _k = _p.split("/", 1)
     _f = os.path.join(tempfile.gettempdir(), os.path.basename(_k))
     _gcs.Client().bucket(_b).blob(_k).download_to_filename(_f)
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--no-deps", _f])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "--no-deps", _f])
 
     import json
     import torch
