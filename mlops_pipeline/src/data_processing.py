@@ -58,6 +58,35 @@ def clean_dataset(data: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     # Sort final dataframe
     df = df.sort_values(['group_id', 'time_idx'])
 
+    # 6. Clip extreme headway outliers — p99 ≈ 29 min.
+    #    Values beyond this are service disruptions / overnight gaps that
+    #    disproportionately inflate MAE.  Cap at 30 min.
+    HEADWAY_CAP = 30.0
+    if 'service_headway' in df.columns:
+        df['service_headway'] = df['service_headway'].clip(upper=HEADWAY_CAP)
+
+    # 7. Lag and rolling features derived from service_headway.
+    #    shift(1) ensures only *past* values are used (no leakage).
+    g = df.groupby('group_id')['service_headway']
+    df['headway_lag_1'] = g.shift(1)
+    df['rolling_mean_5'] = g.shift(1).rolling(window=5, min_periods=3).mean().reset_index(level=0, drop=True)
+    df['rolling_std_5']  = g.shift(1).rolling(window=5, min_periods=3).std().reset_index(level=0, drop=True)
+
+    # 8. Drop rows where lag/rolling are NaN (first few per group).
+    #    Then re-index time_idx sequentially so there are no gaps.
+    n_before = len(df)
+    df = df.dropna(subset=['headway_lag_1', 'rolling_mean_5'])
+    df['time_idx'] = df.groupby('group_id').cumcount()
+    n_after = len(df)
+    import logging
+    logging.getLogger(__name__).info(
+        "Lag/rolling feature creation: dropped %d rows (%.1f%%), %d remain",
+        n_before - n_after, 100 * (n_before - n_after) / n_before, n_after,
+    )
+
+    # Fill any remaining NaN in rolling_std (groups with < 2 valid values)
+    df['rolling_std_5'] = df['rolling_std_5'].fillna(0.0)
+
     # Build lookup table: (group_id, time_idx) → arrival_time_dt
     time_lookup = df[['group_id', 'time_idx', 'arrival_time_dt']].copy()
 

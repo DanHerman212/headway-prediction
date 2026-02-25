@@ -439,6 +439,52 @@ class CalculateTravelTimeDeviationFn(beam.DoFn):
         yield element
 
 
+class RollingHeadwayStatsFn(beam.DoFn):
+    """
+    Stateful DoFn that computes lag and rolling statistics on service_headway.
+
+    For each group_id, maintains a circular buffer of the last 5 headways.
+    Emits:
+      - headway_lag_1:  the previous headway (None on first event)
+      - rolling_mean_5: mean of up to 5 past headways
+      - rolling_std_5:  std of up to 5 past headways
+
+    Partitioned by group_id so state is per-group.
+    Only operates on target station rows (those with service_headway).
+    """
+    BUFFER = ReadModifyWriteStateSpec('hw_buffer', PickleCoder())
+
+    def process(self, element, buffer=beam.DoFn.StateParam(BUFFER)):
+        key, record = element
+
+        hw = record.get('service_headway')
+        if hw is None:
+            yield record
+            return
+
+        buf = buffer.read() or []
+
+        # lag_1 = most recent past headway
+        record['headway_lag_1'] = buf[-1] if buf else None
+
+        # rolling stats from buffer (all past values, not current)
+        if len(buf) >= 3:
+            import statistics
+            record['rolling_mean_5'] = statistics.mean(buf[-5:])
+            record['rolling_std_5'] = statistics.stdev(buf[-5:]) if len(buf[-5:]) > 1 else 0.0
+        else:
+            record['rolling_mean_5'] = None
+            record['rolling_std_5'] = None
+
+        # Append current headway to buffer (keep last 5)
+        buf.append(hw)
+        if len(buf) > 5:
+            buf = buf[-5:]
+        buffer.write(buf)
+
+        yield record
+
+
 class ReindexTimeInGroupsFn(beam.DoFn):
     """
     Re-generates 'time_idx' to be strictly sequential (0, 1, 2...) 

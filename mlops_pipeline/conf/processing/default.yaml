@@ -42,6 +42,9 @@ time_varying_unknown_categoricals:
 
 time_varying_unknown_reals:
   - "service_headway"
+  - "headway_lag_1"
+  - "rolling_mean_5"
+  - "rolling_std_5"
   - "preceding_train_gap"
   - "upstream_headway_14th"
   - "travel_time_14th"
@@ -66,3 +69,6 @@ scalers:
   travel_time_34th_deviation: "standard"
   empirical_median: "standard"
   day_of_week: "standard"
+  headway_lag_1: "standard"
+  rolling_mean_5: "standard"
+  rolling_std_5: "standard"

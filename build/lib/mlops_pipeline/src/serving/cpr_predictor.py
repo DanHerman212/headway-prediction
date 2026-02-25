@@ -126,6 +126,18 @@ class HeadwayPredictor(Predictor):
             if "service_headway" not in df.columns:
                 df["service_headway"] = 0.0
 
+            # Derive lag/rolling features from encoder headway history.
+            # These must match what data_processing.py computes at training time.
+            hw = df["service_headway"]
+            df["headway_lag_1"] = hw.shift(1)
+            df["rolling_mean_5"] = hw.shift(1).rolling(window=5, min_periods=3).mean()
+            df["rolling_std_5"]  = hw.shift(1).rolling(window=5, min_periods=3).std().fillna(0.0)
+            # Back-fill the first few rows so the DataFrame has no NaNs
+            # (the encoder window is long enough that only edge rows are affected)
+            df["headway_lag_1"] = df["headway_lag_1"].bfill()
+            df["rolling_mean_5"] = df["rolling_mean_5"].bfill()
+            df["rolling_std_5"] = df["rolling_std_5"].bfill()
+
             # NOTE: We intentionally do NOT fabricate a dummy future row.
             # With predict=True, TimeSeriesDataSet places the LAST
             # observation in the decoder (as the prediction target) and

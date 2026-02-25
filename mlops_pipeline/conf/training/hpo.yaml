@@ -9,9 +9,9 @@ num_workers: 8
 pin_memory: true
 
 # Trainer Parameters
-max_epochs: 15                    # Reduced from 100
+max_epochs: 20                    # Increased from 15 for harder leakage-free task
 gradient_clip_val: 0.1
-limit_train_batches: 0.5          # Use only 50% of data per epoch for speed
+limit_train_batches: 0.7          # 70% of data — more representative trial eval
 precision: "bf16-mixed"
 accelerator: "auto"
 devices: 1
