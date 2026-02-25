@@ -94,7 +94,7 @@ def process_data_op(
     train_ds_out: Output[Dataset],
     val_ds_out: Output[Dataset],
     test_ds_out: Output[Dataset],
-    time_anchor_out: Output[Artifact],
+    time_lookup_out: Output[Dataset],
 ):
     """Clean data and create train/val/test TimeSeriesDataSet splits."""
     import torch
@@ -106,13 +106,12 @@ def process_data_op(
     with open(config_yaml.path) as f:
         config = OmegaConf.create(f.read())
 
-    train_ds, val_ds, test_ds, anchor_iso = process_data(raw_data=df, config=config)
+    train_ds, val_ds, test_ds, time_lookup = process_data(raw_data=df, config=config)
 
     torch.save(train_ds, train_ds_out.path)
     torch.save(val_ds, val_ds_out.path)
     torch.save(test_ds, test_ds_out.path)
-    with open(time_anchor_out.path, "w") as f:
-        f.write(anchor_iso)
+    time_lookup.to_parquet(time_lookup_out.path, index=False)
 
 
 @dsl.component(base_image=TRAINING_IMAGE)
@@ -154,7 +153,7 @@ def evaluate_model_op(
     test_ds_in: Input[Dataset],
     config_yaml: Input[Artifact],
     run_name: str,
-    time_anchor_in: Input[Artifact],
+    time_lookup_in: Input[Dataset],
     test_mae_out: Output[Artifact],
     test_smape_out: Output[Artifact],
     rush_hour_html: Output[HTML],
@@ -163,6 +162,7 @@ def evaluate_model_op(
     """Evaluate on test set, produce plots, log metrics."""
     import json
     import torch
+    import pandas as pd
     from omegaconf import OmegaConf
     from mlops_pipeline.src.model_definitions import create_model
     from mlops_pipeline.src.steps.evaluate_model import evaluate_model
@@ -171,8 +171,7 @@ def evaluate_model_op(
     test_dataset = torch.load(test_ds_in.path, weights_only=False)
     with open(config_yaml.path) as f:
         config = OmegaConf.create(f.read())
-    with open(time_anchor_in.path) as f:
-        anchor = f.read().strip()
+    time_lookup = pd.read_parquet(time_lookup_in.path)
 
     # Reconstruct model from state_dict using training dataset params
     model = create_model(training_dataset, config)
@@ -183,7 +182,7 @@ def evaluate_model_op(
         test_dataset=test_dataset,
         config=config,
         run_name=run_name,
-        time_anchor_iso=anchor,
+        time_lookup=time_lookup,
     )
 
     # Write metric outputs as JSON strings
@@ -308,7 +307,7 @@ def headway_training_pipeline(
         test_ds_in=process_task.outputs["test_ds_out"],
         config_yaml=config_task.outputs["config_out"],
         run_name=run_name,
-        time_anchor_in=process_task.outputs["time_anchor_out"],
+        time_lookup_in=process_task.outputs["time_lookup_out"],
     )
 
     # 6. Register model in Vertex AI Model Registry

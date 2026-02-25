@@ -33,6 +33,8 @@ time_varying_known_reals:
   - "day_of_week"
   - "hour_sin"
   - "hour_cos"
+  - "month_sin"
+  - "month_cos"
   - "empirical_median"
 
 time_varying_unknown_categoricals:

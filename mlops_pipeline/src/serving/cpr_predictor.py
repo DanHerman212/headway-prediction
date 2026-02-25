@@ -116,16 +116,11 @@ class HeadwayPredictor(Predictor):
                 if col in df.columns:
                     df[col] = df[col].fillna("None").astype(str)
 
-            # time_idx must exist as integer and be monotonically increasing.
-            # We preserve the original physical-time values because the training
-            # dataset uses add_relative_time_idx=True, which derives a
-            # relative_time_idx feature from the raw time_idx gaps.
-            # Re-indexing to contiguous integers changes that derived feature
-            # and breaks predictions.
-            if "time_idx" not in df.columns:
-                df["time_idx"] = range(len(df))
-            else:
-                df["time_idx"] = df["time_idx"].astype(int)
+            # time_idx must be sequential integers (0, 1, 2, ...).
+            # The training data uses sequential time_idx per group — this
+            # ensures relative_time_idx (derived by TimeSeriesDataSet) is
+            # always 1 between consecutive observations, matching training.
+            df["time_idx"] = range(len(df))
 
             # target column must exist (required by TimeSeriesDataSet)
             if "service_headway" not in df.columns:

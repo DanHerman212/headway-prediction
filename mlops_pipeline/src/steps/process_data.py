@@ -9,20 +9,20 @@ from ..data_processing import clean_dataset, create_datasets
 def process_data(
     raw_data: pd.DataFrame,
     config: DictConfig,
-) -> Tuple[TimeSeriesDataSet, TimeSeriesDataSet, TimeSeriesDataSet, str]:
+) -> Tuple[TimeSeriesDataSet, TimeSeriesDataSet, TimeSeriesDataSet, pd.DataFrame]:
     """
     Cleans the data and creates the TimeSeriesDataSet splits.
 
-    Returns the three dataset splits plus the time anchor (ISO-8601 string
-    of global min arrival_time_dt) so the evaluation step can map time_idx
-    values back to human-readable timestamps.
+    Returns the three dataset splits plus a time_lookup DataFrame
+    mapping (group_id, time_idx) → arrival_time_dt so the evaluation
+    step can reconstruct human-readable timestamps.
     """
     # 1. Clean physics/imputation
-    cleaned_df, time_anchor_iso = clean_dataset(raw_data)
+    cleaned_df, time_lookup = clean_dataset(raw_data)
 
     # 2. Create splits based on config cutoffs
-    training, validation, test, time_anchor_iso = create_datasets(
-        cleaned_df, config.processing, time_anchor_iso
+    training, validation, test = create_datasets(
+        cleaned_df, config.processing
     )
 
-    return training, validation, test, time_anchor_iso
+    return training, validation, test, time_lookup

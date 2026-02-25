@@ -43,7 +43,7 @@ def _build_eval_dataframe(
     predictions: torch.Tensor,
     x: Dict[str, torch.Tensor],
     test_dataset: TimeSeriesDataSet,
-    time_anchor: pd.Timestamp,
+    time_lookup: pd.DataFrame,
 ) -> pd.DataFrame:
     """Flatten model outputs + actuals into a DataFrame with real timestamps."""
     actuals = x["decoder_target"].cpu().view(-1).numpy()
@@ -61,9 +61,12 @@ def _build_eval_dataframe(
     # Derive route from group_id (e.g. "A_South" -> "A")
     routes = np.array([str(g).split("_")[0] for g in groups])
 
-    # Reconstruct timestamps from time_idx
+    # Reconstruct timestamps via lookup table (group_id, time_idx) → arrival_time_dt
     time_idx = x["decoder_time_idx"].cpu().view(-1).numpy()
-    timestamps = time_anchor + pd.to_timedelta(time_idx, unit="min")
+    lookup_key = time_lookup.set_index(['group_id', 'time_idx'])['arrival_time_dt']
+    timestamps = pd.array([
+        lookup_key.get((g, int(t))) for g, t in zip(groups, time_idx)
+    ], dtype='datetime64[ns]')
 
     return pd.DataFrame({
         "group": groups,
@@ -176,7 +179,7 @@ def evaluate_model(
     test_dataset: TimeSeriesDataSet,
     config: DictConfig,
     run_name: str,
-    time_anchor_iso: str = "",
+    time_lookup: pd.DataFrame = None,
 ) -> Tuple[float, float, str, str]:
     """Evaluate TFT on the test set.
 
@@ -187,7 +190,9 @@ def evaluate_model(
     config : DictConfig
     run_name : str
         Pipeline run identifier for experiment logging.
-    time_anchor_iso : str
+    time_lookup : pd.DataFrame
+        Lookup table with columns (group_id, time_idx, arrival_time_dt)
+        for reconstructing real timestamps from sequential time_idx.
 
     Returns
     -------
@@ -243,8 +248,9 @@ def evaluate_model(
 
     # -- 4. Prediction plot -------------------------------------------------
     logger.info("Building prediction plot ...")
-    time_anchor = pd.Timestamp(time_anchor_iso)
-    df = _build_eval_dataframe(predictions, x, test_dataset, time_anchor)
+    if time_lookup is None:
+        time_lookup = pd.DataFrame(columns=['group_id', 'time_idx', 'arrival_time_dt'])
+    df = _build_eval_dataframe(predictions, x, test_dataset, time_lookup)
     fig = build_prediction_figure(df)
     rush_html = fig.to_html(full_html=True, include_plotlyjs="cdn")
 

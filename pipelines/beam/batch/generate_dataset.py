@@ -15,7 +15,8 @@ from pipelines.beam.transforms.transforms import (EnrichRecordFn,
                                                    EnrichWithEmpiricalFn,
                                                    CalculateUpstreamTravelTimeFn,
                                                    CalculateUpstreamHeadwayFn,
-                                                   CalculateTravelTimeDeviationFn)
+                                                   CalculateTravelTimeDeviationFn,
+                                                   ReindexTimeInGroupsFn)
 
 # --- define schema for parque export ---
 output_schema = pa.schema([
@@ -36,6 +37,8 @@ output_schema = pa.schema([
     ('day_of_week',pa.int64()),
     ('hour_sin',pa.float64()),
     ('hour_cos',pa.float64()),
+    ('month_sin',pa.float64()),
+    ('month_cos',pa.float64()),
     ('regime_id',pa.string()),
     ('track_id',pa.string()),
 
@@ -356,8 +359,16 @@ def run(argv=None):
             | 'FilterMissingTargets' >> beam.Filter(lambda x: x.get('service_headway') is not None)
         )
 
-        write_to_parque = (
+        # --- STEP 10: Assign Sequential time_idx per group ---
+        reindexed = (
             final_training_data
+            | 'KeyByGroupReindex' >> beam.Map(lambda x: (x.get('group_id', 'Unknown'), x))
+            | 'GroupForReindex' >> beam.GroupByKey()
+            | 'AssignSeqTimeIdx' >> beam.ParDo(ReindexTimeInGroupsFn())
+        )
+
+        write_to_parque = (
+            reindexed
             | 'SanitizeTypes' >> beam.Map(sanitize_record)
             | 'WriteToParquet' >> beam.io.WriteToParquet(
                 file_path_prefix=f"{known_args.temp_location.rstrip('/')}/training_data",

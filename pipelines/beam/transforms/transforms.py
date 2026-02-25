@@ -8,9 +8,13 @@ import math
 class EnrichRecordFn(beam.DoFn):
     """
     Consolidated row-level feature engineering.
-    1. time_idx: minutes since epoch
-    2. group_id: route_id + direction (e.g. "A_South")
-    3. route_id: clean route_id (map rare routes to OTHER)
+    1. group_id: route_id + direction (e.g. "A_South")
+    2. route_id: clean route_id (map rare routes to OTHER)
+    3. cyclical time features: hour_sin/cos, month_sin/cos
+
+    NOTE: time_idx is NOT computed here. It is assigned sequentially
+    per group_id downstream (via ReindexTimeInGroupsFn) to avoid
+    data leakage — minutes-since-epoch differences equal headway.
     """
     
     ALLOWED_ROUTES = {'A', 'C', 'E'}
@@ -34,13 +38,12 @@ class EnrichRecordFn(beam.DoFn):
         else:
             dt = raw_time
 
-        # --- FEATURE 1: time_idx ---
-        time_idx = None
+        # --- timestamp (kept for downstream sorting / headway calc) ---
+        timestamp = None
         if dt:
             timestamp = dt.timestamp()
-            time_idx = int(timestamp / 60)
 
-        # --- FEATURE 3: route_id cleaning ---
+        # --- FEATURE 1: route_id cleaning ---
         raw_route = element.get('route_id')
         clean_route = 'OTHER'
         if raw_route in self.ALLOWED_ROUTES:
@@ -68,25 +71,25 @@ class EnrichRecordFn(beam.DoFn):
             if hour >= 22 or hour < 5:
                 regime = 'Night'
         
-        # --- FEATURE 6: Cyclical Time ---
-        rads = 0.0
+        # --- FEATURE 4: Cyclical Time (hour + month) ---
+        hour_rads = 0.0
+        month_rads = 0.0
         if dt:
             # using exact hour + fractional minute for smoother signal
             distinct_hour = dt.hour + (dt.minute / 60.0)
+            hour_rads = (distinct_hour / 24.0) * 2 * math.pi
 
-            # 2 * pi * t / 24
-            rads = (distinct_hour / 24.0) * 2 * math.pi
-        
-        # --- FEATURE 7: day_of_week ---
+            # month cyclical: use (month-1 + day/31) for smooth transition
+            month_frac = (dt.month - 1) + (dt.day / 31.0)
+            month_rads = (month_frac / 12.0) * 2 * math.pi
+
+        # --- FEATURE 5: day_of_week ---
         day_of_week = None
         if dt:
             day_of_week = dt.weekday()
 
         # --- CONSTRUCT OUTPUT ---
         new_element = element.copy()
-        
-        if time_idx is not None:
-            new_element['time_idx'] = time_idx
         
         new_element['route_id'] = clean_route 
         
@@ -98,8 +101,10 @@ class EnrichRecordFn(beam.DoFn):
         new_element['regime_id'] = regime
 
         if dt:
-            new_element['hour_sin'] = math.sin(rads)
-            new_element['hour_cos'] = math.cos(rads)
+            new_element['hour_sin'] = math.sin(hour_rads)
+            new_element['hour_cos'] = math.cos(hour_rads)
+            new_element['month_sin'] = math.sin(month_rads)
+            new_element['month_cos'] = math.cos(month_rads)
             new_element['day_of_week'] = day_of_week
             new_element['timestamp'] = timestamp
             

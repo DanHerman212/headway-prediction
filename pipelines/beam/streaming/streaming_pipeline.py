@@ -89,7 +89,8 @@ FEATURE_FIELDS = [
     "empirical_median",
     "hour_sin",
     "hour_cos",
-    "time_idx",
+    "month_sin",
+    "month_cos",
     "regime_id",
 ]
 
@@ -133,7 +134,7 @@ def _log_target_station(element):
         "\n║   tt_dev_34th:        %s"
         "\n║   empirical_median:   %s"
         "\n║   hour_sin/cos:       %s / %s"
-        "\n║   time_idx:           %s"
+        "\n║   month_sin/cos:      %s / %s"
         "\n║   regime_id:          %s"
         "\n╚══════════════════════════════════════════════════",
         gid, route, track, trip, at,
@@ -149,7 +150,7 @@ def _log_target_station(element):
         features["travel_time_34th_deviation"],
         features["empirical_median"],
         features["hour_sin"], features["hour_cos"],
-        features["time_idx"],
+        features["month_sin"], features["month_cos"],
         features["regime_id"],
     )
     return element
@@ -315,7 +316,8 @@ def run(argv=None):
             "empirical_median",
             "hour_sin",
             "hour_cos",
-            "time_idx",
+            "month_sin",
+            "month_cos",
         ]
 
         def _has_all_features(element):

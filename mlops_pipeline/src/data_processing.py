@@ -6,16 +6,16 @@ from pytorch_forecasting.data import GroupNormalizer
 from pytorch_forecasting.data.encoders import EncoderNormalizer
 from typing import Dict, Tuple
 
-def clean_dataset(data: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
+def clean_dataset(data: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Apply physics-based cleaning, imputation, and time indexing.
+    Apply physics-based cleaning and imputation.
 
     Returns
     -------
-    (df, time_anchor_iso)
-        Cleaned DataFrame and the ISO-8601 string of the global minimum
-        arrival_time_dt, so downstream consumers can convert time_idx
-        back to real timestamps.
+    (df, time_lookup)
+        Cleaned DataFrame (with sequential time_idx from upstream parquet)
+        and a lookup table mapping (group_id, time_idx) → arrival_time_dt
+        so the evaluation module can reconstruct real timestamps.
     """
     df = data.copy()
 
@@ -51,18 +51,17 @@ def clean_dataset(data: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
     if 'travel_time_23rd' in df.columns:
         df['travel_time_23rd'] = df['travel_time_23rd'].fillna(df['travel_time_23rd'].median())
 
-    # 5. Correct Time Index (Physical Time)
-    # Calculate absolute minutes elapsed since the global minimum time
-    min_time = df['arrival_time_dt'].min()
-    df['time_idx'] = ((df['arrival_time_dt'] - min_time).dt.total_seconds() / 60).astype(int)
+    # 5. Time Index — imported from parquet (sequential per group).
+    #    No computation here; the upstream batch pipeline
+    #    (ReindexTimeInGroupsFn) already assigned 0, 1, 2... per group_id.
 
     # Sort final dataframe
     df = df.sort_values(['group_id', 'time_idx'])
 
-    # Return the anchor so callers can map time_idx → real timestamps
-    time_anchor_iso = min_time.isoformat()
-    
-    return df, time_anchor_iso
+    # Build lookup table: (group_id, time_idx) → arrival_time_dt
+    time_lookup = df[['group_id', 'time_idx', 'arrival_time_dt']].copy()
+
+    return df, time_lookup
 
 def get_slice_with_lookback(full_df: pd.DataFrame, start_date, end_date, lookback: int):
     """
@@ -86,7 +85,7 @@ def get_slice_with_lookback(full_df: pd.DataFrame, start_date, end_date, lookbac
     
     return core_df
 
-def create_datasets(data: pd.DataFrame, config: DictConfig, time_anchor_iso: str = ""):
+def create_datasets(data: pd.DataFrame, config: DictConfig):
     """
     Splits the data and initializes TimeSeriesDataSet objects based on the configuration.
 
@@ -96,8 +95,6 @@ def create_datasets(data: pd.DataFrame, config: DictConfig, time_anchor_iso: str
         Cleaned DataFrame from ``clean_dataset``.
     config : DictConfig
         Processing section of the Hydra config.
-    time_anchor_iso : str
-        ISO-8601 timestamp of the global min arrival_time_dt (time_idx=0).
     """
     # Parse cutoffs (handle timestamps safely)
     is_tz_aware = data['arrival_time_dt'].dt.tz is not None
@@ -147,4 +144,4 @@ def create_datasets(data: pd.DataFrame, config: DictConfig, time_anchor_iso: str
     validation = TimeSeriesDataSet.from_dataset(training, val_df_input, predict=False, stop_randomization=True)
     test = TimeSeriesDataSet.from_dataset(training, test_df_input, predict=False, stop_randomization=True)
 
-    return training, validation, test, time_anchor_iso
+    return training, validation, test
