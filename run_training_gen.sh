@@ -30,6 +30,9 @@ python -m pipelines.beam.batch.generate_dataset \
   --runner DataflowRunner \
   --region $GCP_REGION \
   --job_name $JOB_NAME \
-  --setup_file ./setup.py
+  --setup_file ./setup.py \
+  --worker_machine_type n2-highmem-4 \
+  --num_workers 1 \
+  --max_num_workers 3
 
 
