@@ -1,4 +1,4 @@
-"""
+rm -rf build/"""
 run.py — CLI entrypoint for Headway Prediction Pipelines on Vertex AI.
 
 Compiles the KFP v2 pipeline to JSON and submits it as a Vertex AI PipelineJob.
