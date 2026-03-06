@@ -24,6 +24,11 @@ from config import Config, get_config
 
 logger = logging.getLogger(__name__)
 
+# GTFS-RT VehicleStopStatus enum: 0=INCOMING_AT, 1=STOPPED_AT, 2=IN_TRANSIT_TO
+# HasField('current_status') returns False for IN_TRANSIT_TO (enum=2) in some
+# protobuf versions, so we map the raw int directly.
+_VEHICLE_STATUS_NAMES = {0: "INCOMING_AT", 1: "STOPPED_AT", 2: "IN_TRANSIT_TO"}
+
 
 class GTFSPoller:
     """Fetches GTFS-RT feed, converts to JSON, and publishes to Pub/Sub.
@@ -143,7 +148,7 @@ class GTFSPoller:
                         },
                         "current_stop_sequence": vehicle.current_stop_sequence if vehicle.HasField('current_stop_sequence') else None,
                         "stop_id": vehicle.stop_id if vehicle.HasField('stop_id') else None,
-                        "current_status": vehicle.VehicleStopStatus.Name(vehicle.current_status) if vehicle.HasField('current_status') else None,
+                        "current_status": _VEHICLE_STATUS_NAMES.get(vehicle.current_status, f"UNKNOWN({vehicle.current_status})"),
                         "timestamp": vehicle.timestamp if vehicle.HasField('timestamp') else None,
                     }
                     entity_dict["vehicle"] = vehicle_dict

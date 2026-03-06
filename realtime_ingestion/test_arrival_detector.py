@@ -159,9 +159,8 @@ def test_live(num_polls: int = 2, poll_interval: int = 30):
                     "trip_id": v.trip.trip_id if v.trip.HasField("trip_id") else None,
                     "route_id": v.trip.route_id if v.trip.HasField("route_id") else None,
                     "stop_id": v.stop_id if v.HasField("stop_id") else None,
-                    "current_status": (
-                        v.VehicleStopStatus.Name(v.current_status)
-                        if v.HasField("current_status") else None
+                    "current_status": {0: "INCOMING_AT", 1: "STOPPED_AT", 2: "IN_TRANSIT_TO"}.get(
+                        v.current_status, f"UNKNOWN({v.current_status})"
                     ),
                     "timestamp": v.timestamp if v.HasField("timestamp") else None,
                 }

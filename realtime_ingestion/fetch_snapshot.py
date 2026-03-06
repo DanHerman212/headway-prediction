@@ -10,6 +10,11 @@ import gtfs_realtime_pb2
 import nyct_subway_pb2
 from datetime import datetime, timezone
 
+# GTFS-RT VehicleStopStatus enum: 0=INCOMING_AT, 1=STOPPED_AT, 2=IN_TRANSIT_TO
+# HasField('current_status') returns False for IN_TRANSIT_TO (enum=2) in some
+# protobuf versions, so we map the raw int directly.
+_VEHICLE_STATUS_NAMES = {0: "INCOMING_AT", 1: "STOPPED_AT", 2: "IN_TRANSIT_TO"}
+
 URL = "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace"
 
 def main():
@@ -78,11 +83,7 @@ def main():
                 "trip_id": v.trip.trip_id if v.trip.HasField("trip_id") else None,
                 "route_id": v.trip.route_id if v.trip.HasField("route_id") else None,
                 "stop_id": v.stop_id if v.HasField("stop_id") else None,
-                "current_status": (
-                    v.VehicleStopStatus.Name(v.current_status)
-                    if v.HasField("current_status")
-                    else None
-                ),
+                "current_status": _VEHICLE_STATUS_NAMES.get(v.current_status, f"UNKNOWN({v.current_status})"),
                 "timestamp": v.timestamp if v.HasField("timestamp") else None,
             }
 
