@@ -24,8 +24,14 @@ import threading
 import time
 from datetime import datetime, timezone, timedelta
 
-POLLER_DIR = os.path.join(os.path.dirname(__file__), "..", "poller")
-sys.path.insert(0, POLLER_DIR)
+# On the VM the tarball is flat: grid_publisher.py, gtfs_realtime_pb2.py, etc.
+# sit in the same directory.  Locally they live in ../poller/.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_POLLER_DIR = os.path.join(_HERE, "..", "poller")
+if os.path.isdir(_POLLER_DIR):
+    sys.path.insert(0, _POLLER_DIR)
+else:
+    sys.path.insert(0, _HERE)
 
 import requests
 import gtfs_realtime_pb2
@@ -170,10 +176,12 @@ def main():
     parser.add_argument("--topic", default="graph-wavenet-snapshots",
                         help="Pub/Sub topic name (default: graph-wavenet-snapshots)")
     parser.add_argument("--poll-interval", type=float, default=30)
-    parser.add_argument(
-        "--node-dict", default=os.path.join(
-            os.path.dirname(__file__), "..", "..", "local_artifacts", "node_to_id.json"),
-    )
+    # On VM: node_to_id.json is in the same directory as this script.
+    # Locally: it's in local_artifacts/.
+    _default_dict = os.path.join(_HERE, "node_to_id.json")
+    if not os.path.exists(_default_dict):
+        _default_dict = os.path.join(_HERE, "..", "..", "local_artifacts", "node_to_id.json")
+    parser.add_argument("--node-dict", default=_default_dict)
     args = parser.parse_args()
 
     topic_path = f"projects/{args.project}/topics/{args.topic}"

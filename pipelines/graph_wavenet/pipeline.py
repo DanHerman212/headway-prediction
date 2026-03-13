@@ -44,15 +44,31 @@ from pipelines.graph_wavenet.transforms import LabelTimeToNextTrainFn
 logger = logging.getLogger(__name__)
 
 # BigQuery schema for the labeled output table
+# Feature columns (F=9): train_present, elapsed_headway, is_A, is_C, is_E,
+#                         time_sin, time_cos, dow_sin, dow_cos
+# Target column (Y):     time_to_next_train
 BQ_SCHEMA = (
     "snapshot_time:DATETIME,"
     "node_id:STRING,"
     "train_present:INTEGER,"
-    "route_id:STRING,"
-    "trip_id:STRING,"
-    "minutes_since_last_train:FLOAT,"
-    "time_to_next_train:FLOAT"
+    "elapsed_headway:INTEGER,"
+    "is_A:INTEGER,"
+    "is_C:INTEGER,"
+    "is_E:INTEGER,"
+    "time_sin:FLOAT,"
+    "time_cos:FLOAT,"
+    "dow_sin:FLOAT,"
+    "dow_cos:FLOAT,"
+    "time_to_next_train:INTEGER"
 )
+
+# Ordered column names for CSV output
+_COLUMNS = [
+    "snapshot_time", "node_id", "train_present", "elapsed_headway",
+    "is_A", "is_C", "is_E",
+    "time_sin", "time_cos", "dow_sin", "dow_cos",
+    "time_to_next_train",
+]
 
 
 def _explode_pubsub(message):
@@ -159,25 +175,20 @@ def run(argv=None):
             _ = (
                 labeled
                 | "FormatCSV" >> beam.Map(
-                    lambda r: ",".join(str(r.get(c, "")) for c in [
-                        "snapshot_time", "node_id", "train_present",
-                        "route_id", "trip_id",
-                        "minutes_since_last_train", "time_to_next_train",
-                    ])
+                    lambda r: ",".join(str(r.get(c, "")) for c in _COLUMNS)
                 )
                 | "WriteFile" >> beam.io.WriteToText(
                     known_args.output_file,
                     file_name_suffix=".csv",
-                    header="snapshot_time,node_id,train_present,route_id,"
-                           "trip_id,minutes_since_last_train,time_to_next_train",
+                    header=",".join(_COLUMNS),
                 )
             )
         else:
             _ = labeled | "Log" >> beam.Map(
                 lambda r: logger.info(
-                    "%s | %s | present=%d | since_last=%s | to_next=%s",
+                    "%s | %s | present=%d | headway=%s | to_next=%s",
                     r["snapshot_time"], r["node_id"], r["train_present"],
-                    r.get("minutes_since_last_train"),
+                    r.get("elapsed_headway"),
                     r.get("time_to_next_train"),
                 )
             )
